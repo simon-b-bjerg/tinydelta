@@ -164,7 +164,7 @@ Download a prebuilt static binary for Linux (amd64 or arm64) from the
 [releases page](https://github.com/simon-b-bjerg/tinydelta/releases):
 
 ```sh
-VERSION=v0.1.0   # pick the latest release
+VERSION=v1.0.0   # pick the latest release
 curl -fsSLO "https://github.com/simon-b-bjerg/tinydelta/releases/download/${VERSION}/tinydelta_${VERSION}_linux_amd64.tar.gz"
 tar -xzf "tinydelta_${VERSION}_linux_amd64.tar.gz"
 sudo install "tinydelta_${VERSION}_linux_amd64/tinydelta" /usr/local/bin/
@@ -505,14 +505,18 @@ patch sizes with open-vcdiff when `OPENVCDIFF_BIN` points at its
 
 ### Releases
 
-Pushing a tag of the form `vX.Y.Z` runs the
-[release workflow](.github/workflows/release.yml): it tests, builds
-static Linux binaries for amd64 and arm64 plus a C source archive with
-[`scripts/build-release.sh`](scripts/build-release.sh), and publishes
-them as a GitHub release with SHA-256 checksums.
+The [release workflow](.github/workflows/release.yml) tests the tagged
+code, builds static Linux binaries for amd64 and arm64 plus a C source
+archive with [`scripts/build-release.sh`](scripts/build-release.sh), and
+attaches them to the GitHub release with SHA-256 checksums. It runs when:
+
+- a tag of the form `vX.Y.Z` is pushed (it creates the release);
+- a release is published in the GitHub UI (it adds the files to it);
+- you start it by hand under Actions > Release > Run workflow and give
+  an existing tag.
 
 ```sh
-git tag v0.1.0 && git push origin v0.1.0
+git tag v1.0.0 && git push origin v1.0.0
 ```
 
 ### Contributing
