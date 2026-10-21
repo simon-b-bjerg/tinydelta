@@ -1,28 +1,53 @@
 name: Release
 
+# Builds the release archives and attaches them to the GitHub release for a
+# version tag. It runs when a v* tag is pushed, when a release is published
+# (for example one made by hand in the GitHub UI), or manually for an
+# existing tag. If the release already exists the files are uploaded to it,
+# otherwise the release is created.
 on:
   push:
     tags: ['v*']
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and publish, e.g. v0.1.0
+        required: true
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   release:
     name: Build and publish
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.TAG }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: false # the module has no dependencies, so no go.sum
       - name: Test
         run: go test ./...
       - name: Build release archives
-        run: scripts/build-release.sh "$GITHUB_REF_NAME"
+        run: scripts/build-release.sh "$TAG"
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --verify-tag --title "tinydelta $GITHUB_REF_NAME" --generate-notes
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --verify-tag --title "tinydelta $TAG" --generate-notes
+          fi
