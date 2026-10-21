@@ -462,6 +462,15 @@ patch:      2a 15 42 52 4f 57 4e 72 05 21          (10 bytes)
 05 21       ADD 1          (1<<2 | 1)    "!"
 ```
 
+### Stability
+
+The wire format is fixed for the 1.x releases: a patch made by any 1.x
+encoder decodes with any 1.x decoder, Go or C. The format has no version
+marker, so an incompatible change would be a new major version. Encoders
+may still produce different, usually smaller, patches for the same input
+in later releases; they stay valid for every 1.x decoder. The Go API
+follows [semantic versioning](https://semver.org).
+
 ## How the encoder works
 
 Both encoders find match candidates in the dictionary and in the target
