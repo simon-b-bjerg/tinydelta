@@ -10,13 +10,17 @@ permissions:
 
 jobs:
   go:
-    name: Go tests
+    name: Go tests (Go ${{ matrix.go }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go: ['1.21', stable] # 1.21 is the oldest version go.mod allows
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: ${{ matrix.go }}
+          cache: false # the module has no dependencies, so no go.sum
       - name: Check formatting
         run: |
           unformatted="$(gofmt -l .)"
@@ -33,7 +37,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: stable
+          cache: false
       - name: Install ARM toolchains and QEMU
         run: |
           sudo apt-get update

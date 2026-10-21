@@ -35,7 +35,7 @@ jobs:
           ref: refs/tags/${{ env.TAG }}
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: stable # release binaries use the current Go, not the go.mod minimum
           cache: false # the module has no dependencies, so no go.sum
       - name: Test
         run: go test ./...
