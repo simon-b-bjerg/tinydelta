@@ -57,17 +57,16 @@ files, in both directions:
 | tinydelta, greedy | 297 B | 237 B |
 | xdelta3 3.0, `-9 -S none` | 407 B | 336 B |
 | bsdiff 4.3 | 436 B | 455 B |
-| open-vcdiff, interleaved, then zlib `-9` | 498 B | 398 B |
-| open-vcdiff, interleaved | 677 B | 572 B |
+| open-vcdiff, interleaved, `-target_matches` | 677 B | 520 B |
 | zlib `-9` of the new file (no delta) | 916 B | 862 B |
 
 bsdiff is built for executables, where code shifts cause many small
 changes to addresses. Each patch carries a 32-byte header plus three
 bzip2 streams, which is a lot of fixed overhead for small files.
 
-Compressing a tinydelta patch afterwards doesn't help: the instructions
-already remove the redundancy zlib would find, and zlib's own overhead
-costs more than it saves at this size.
+Compressing a tinydelta patch afterwards barely helps at this size: the
+instructions already remove most of the redundancy zlib would find, and
+zlib's own overhead costs about as much as it saves.
 
 ## Why another delta format?
 
@@ -77,7 +76,7 @@ few hundred bytes of flash and use no RAM:
 - **VCDIFF (RFC 3284)** is a general format with windows, a 256-entry
   instruction code table, an address cache with near and same modes, and
   optional secondary compression. Its reference decoder, open-vcdiff, is
-  a C++ library. The smallest C decoder we found,
+  a C++ library. A small C decoder,
   [tiny-vcdiff](https://github.com/jue89/tiny-vcdiff), only reads
   open-vcdiff's interleaved output and still needs about 4 KB of code and
   3.2 KB of static RAM.
@@ -98,39 +97,52 @@ were built with `arm-none-eabi-gcc -Os -mthumb` and linked with
 
 | decoder | patch | code (Cortex-M0) | static RAM | stack |
 |---|---:|---:|---:|---:|
-| **tinydelta**, memory decoder | **4,530 B** | **404 B** | 0 | 64 B |
-| **tinydelta**, callback decoder | **4,530 B** | 772 B | 0 | ~190 B |
-| detools + heatshrink | 4,772 B | 1,984 B | 0 | ~1.6 KB |
-| tiny-vcdiff (open-vcdiff, interleaved) | 10,848 B | 3,953 B | 3,221 B | ~150 B |
+| **tinydelta**, memory decoder, greedy patch | **4,530 B** | **380 B** | 0 | 64 B |
+| **tinydelta**, memory decoder, optimal patch¹ | **4,431 B** | **380 B** | 0 | 64 B |
+| **tinydelta**, callback decoder, greedy patch | **4,530 B** | 712 B | 0 | ~190 B |
+| detools + heatshrink (default settings²) | 4,772 B | 1,948 B | 0 | ~1.6 KB |
+| tiny-vcdiff (open-vcdiff, interleaved) | 10,848 B | 3,881 B | 3,221 B | ~150 B |
 
-In short: the smallest decoder and no static RAM, with patches as small
-as or smaller than the alternatives. Each figure includes about 30-60 B
-of test harness, and the stack figures are sums of `-fstack-usage`
-frames.
+¹ `Encode` falls back to the greedy parse above roughly 100 KB (see
+[Go library](#go-library)), so it produces the greedy patch for this
+230 KB image. The optimal figure comes from lifting that limit,
+which took about 30 s on one core; the patch is about 2% smaller and
+decodes with the same decoder.
+
+² detools also offers firmware-specific data formats and other
+heatshrink window sizes, which were not tried and may give smaller
+patches (a larger window needs more RAM in the decoder).
+
+In short: the smallest of the decoders compared, with no static RAM and
+patches as small as or smaller than the alternatives. Code size is each
+decoder's own `.text` after linking, with the small test program that
+calls it subtracted. tinydelta's figures are the ones from
+[`scripts/c-size.sh`](scripts/c-size.sh); measured the same way as the
+others they come out within 4 B of these (378 B and 716 B). Stack
+figures are sums of `-fstack-usage` frames.
 
 What you give up:
 
-- **Speed is not the selling point.** On Linux, with in-memory
-  callbacks, every decoder here takes well under a millisecond for this
-  image. tiny-vcdiff was about 35% faster than tinydelta's callback
-  decoder at the same buffer size, and the memory decoder is the fastest
-  of all. On a device, flash access will dominate. Timings on real
-  hardware have not been measured.
+- **Speed was not compared.** The goal is a small decoder, not a fast
+  one. Decode speed has not been measured on a device, where flash
+  access will probably dominate, and no claim is made that it beats the
+  other decoders.
 - **Small patch reads.** The callback decoder reads the patch a few bytes
   at a time. On slow flash, wrap `patch_read` in a small buffer.
 - **No checksum, no VCDIFF compatibility.** Send a CRC or hash with the
   patch (see [On the device](#on-the-device)). Existing VCDIFF tools
   cannot read or write tinydelta patches.
 - **One firmware project.** These numbers come from one project and one
-  kind of change. Results on other firmware may differ.
+  kind of change. Data and use cases differ a lot, so compare the
+  formats on your own files before choosing; `tinydelta encode -v`
+  prints the patch size.
 
-The size of a firmware patch depends as much on the build as on the
-encoder: moving code and addresses is what makes patches large. A
-reproducible build with a stable layout helps every delta format, this
-one included. In the test above, a single changed string made the patch
-about 4.5 KB (2% of the image). Across MicroPython release builds, one
-pair gave a 132 B patch, while another pair whose builds were laid out
-differently gave about 20 KB.
+The size of a firmware patch depends heavily on the build, not only on
+the encoder. In the test above, changing one string made the patch about
+4.5 KB (2% of the image): the rebuilt image differed in several hundred
+places spread across it, which looks like moved addresses and offsets,
+and the data at the end was shifted by a few bytes. A reproducible build
+with a stable layout should help any delta format, this one included.
 
 ## Contents
 
