@@ -1,0 +1,6 @@
+# Real-world test data stays local; see config_test.go.
+testdata/private/
+
+# Release build output (scripts/build-release.sh).
+/dist/
+/build/
