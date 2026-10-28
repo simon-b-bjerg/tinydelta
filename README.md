@@ -381,15 +381,47 @@ tinydelta_result apply_patch(uint32_t dict_len, uint32_t patch_len,
 
 ### On the device
 
-- **Use a separate target region.** Erase it before decoding (or erase
-  as you write), and don't let it overlap the dictionary: patching in
-  place isn't supported.
-- **Verify before use.** The format has no checksum. Send a CRC or hash
-  of the expected target alongside the patch and check it before
-  switching over.
-- **Cap the output.** Set `out_cap` / `target_cap` to the size you
-  expect. A short, valid patch can describe a very large target, and
-  the decoders stop at the cap.
+A patch is deliberately bare: it has no header, no checksum, no length
+and no end marker. It doesn't say which dictionary it was made for, and
+a patch cut off between two instructions still decodes, into a shorter
+target. Those checks belong in your update protocol, which already has
+to carry the patch and usually has its own metadata.
+
+#### Suggested integration
+
+Send these alongside the patch, for example in the message or manifest
+that announces the update:
+
+| field | why |
+|---|---|
+| format version | the patch has no version marker of its own |
+| dictionary CRC or hash | applying a patch to the wrong base image decodes "successfully" into garbage |
+| patch length | the decoder runs until the patch ends, so a missing tail can't be detected from the patch alone |
+| target length | caps the output and detects a short result |
+| target CRC or hash | the final check that the result is exactly what was encoded |
+
+Use a CRC-32 against accidental damage, or a cryptographic hash such as
+SHA-256 when the update must also be authenticated. In that case, sign
+the metadata (or the target hash), not the patch: the same target can
+be described by different patches.
+
+Then, on the device:
+
+1. **Check the dictionary** against its CRC or hash before decoding.
+2. **Check the patch** has the announced length (and, if your transport
+   doesn't already guarantee it, its own CRC).
+3. **Decode into a separate region**, never over the dictionary:
+   patching in place isn't supported. Erase it first, or erase as you
+   write.
+4. **Cap the output at the target length**: pass it as `out_cap` /
+   `target_cap`. A short, valid patch can describe a very large target,
+   and the decoders stop at the cap.
+5. **Check the result**: `out_len` / `target_len` must equal the target
+   length, and the target's CRC or hash must match. Only then switch
+   over.
+
+On any failure, discard the target region and keep running from the
+dictionary.
 
 ## Wire format
 
