@@ -492,7 +492,16 @@ comparison at the cursor so that even 1–3 byte unchanged runs become a
 go test ./...          # Go tests, plus the C decoders if a C compiler is installed
 scripts/c-check.sh     # strict C build (-Wall -Wextra -Wconversion -Wswitch-enum ... -Werror)
 scripts/c-size.sh      # Cortex-M code size and stack (needs arm-none-eabi-gcc)
+go test -run '^$' -fuzz '^FuzzEncodeRoundTrip$' -fuzztime 5m .   # fuzz the encoders
 ```
+
+`FuzzEncodeRoundTrip` derives a target from a fuzzed dictionary with a
+fuzzed edit script and checks that both encoders' patches decode back to
+it, decode with an output cap of exactly the target length but not one
+byte less, respect `MaxInstructionLen`, and that the optimizing patch is
+never larger than the greedy one. `go test` runs its seed inputs; CI also
+fuzzes it for 60 s. Failing inputs land in `testdata/fuzz/` and become
+regression tests once committed.
 
 The C decoders are checked against the Go decoder on valid, truncated
 and corrupted patches, at several scratch-buffer and flash-page sizes,

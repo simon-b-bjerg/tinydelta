@@ -29,6 +29,9 @@ jobs:
         run: go vet ./...
       - name: Test (includes the C decoders, built with the runner's gcc)
         run: go test ./...
+      - name: Fuzz encode/decode round trips (60 s)
+        if: matrix.go == 'stable'
+        run: go test -run '^$' -fuzz '^FuzzEncodeRoundTrip$' -fuzztime 60s .
 
   c-arm:
     name: C library on 32-bit ARM
