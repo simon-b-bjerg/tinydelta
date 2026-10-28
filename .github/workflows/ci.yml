@@ -33,6 +33,18 @@ jobs:
         if: matrix.go == 'stable'
         run: go test -run '^$' -fuzz '^FuzzEncodeRoundTrip$' -fuzztime 60s .
 
+  windows:
+    name: Go tests on Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - name: Test (Go library and CLI)
+        run: go test ./...
+
   c-arm:
     name: C library on 32-bit ARM
     runs-on: ubuntu-latest

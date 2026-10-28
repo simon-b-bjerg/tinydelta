@@ -160,8 +160,8 @@ with a stable layout should help any delta format, this one included.
 
 ### Command-line tool
 
-Download a prebuilt static binary for Linux (amd64 or arm64) from the
-[releases page](https://github.com/simon-b-bjerg/tinydelta/releases):
+Download a prebuilt static binary for Linux or Windows (amd64 or arm64)
+from the [releases page](https://github.com/simon-b-bjerg/tinydelta/releases):
 
 ```sh
 VERSION=v1.0.0   # pick the latest release
@@ -169,6 +169,10 @@ curl -fsSLO "https://github.com/simon-b-bjerg/tinydelta/releases/download/${VERS
 tar -xzf "tinydelta_${VERSION}_linux_amd64.tar.gz"
 sudo install "tinydelta_${VERSION}_linux_amd64/tinydelta" /usr/local/bin/
 ```
+
+For Windows (amd64 or arm64), download
+`tinydelta_<version>_windows_amd64.zip` (or `_arm64`) from the same page, unzip it and
+put `tinydelta.exe` somewhere on your `PATH`.
 
 Each release includes `checksums.txt` with SHA-256 sums of its files.
 
@@ -524,9 +528,10 @@ patch sizes with open-vcdiff when `OPENVCDIFF_BIN` points at its
 ### Releases
 
 The [release workflow](.github/workflows/release.yml) tests the tagged
-code, builds static Linux binaries for amd64 and arm64 plus a C source
-archive with [`scripts/build-release.sh`](scripts/build-release.sh), and
-attaches them to the GitHub release with SHA-256 checksums. It runs when:
+code, builds static Linux and Windows binaries for amd64 and arm64 plus
+a C source archive with
+[`scripts/build-release.sh`](scripts/build-release.sh), and attaches
+them to the GitHub release with SHA-256 checksums. It runs when:
 
 - a tag of the form `vX.Y.Z` is pushed (it creates the release);
 - a release is published in the GitHub UI (it adds the files to it);
