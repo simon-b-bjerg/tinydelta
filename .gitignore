@@ -4,3 +4,4 @@ testdata/private/
 # Release build output (scripts/build-release.sh).
 /dist/
 /build/
+fuzz-artifacts/
