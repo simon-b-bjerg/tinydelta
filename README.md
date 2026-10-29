@@ -547,6 +547,40 @@ What is tested, and how:
 | C fuzzing ([`c/fuzz/fuzz_decode.c`](c/fuzz/fuzz_decode.c)) | libFuzzer with AddressSanitizer and UndefinedBehaviorSanitizer, seeded with patches from the Go encoders. Every input goes through an independent reference decoder written from the wire format, the memory decoder, and the callback decoder at scratch sizes 1, 7 and 64, each with and without the page cache. All must agree on the result and the target bytes, and the callbacks abort on any breach of the contract, as the sanitizers do on any memory error or undefined behaviour |
 | `scripts/c-check.sh` | the C library builds with strict warnings as errors, at scratch sizes 1, 7, 64 and 256 |
 
+#### How the fuzzing works
+
+A fuzzer runs a test over and over with generated inputs. It starts
+from a few seed inputs, mutates them (flips bits, inserts, deletes and
+splices bytes) and watches which code each input reaches. Inputs that
+reach new code are kept and mutated further, so over time it works its
+way into rarely taken paths, such as a varint cut off at its 5th byte
+or a copy that ends exactly at the end of the dictionary, that
+hand-written tests tend to miss. Both fuzzers check properties that
+must hold for every input, rather than comparing with expected output.
+
+There are two, one for each side of the format:
+
+- **`FuzzEncodeRoundTrip` tests the encoders** with Go's built-in
+  fuzzing. Each input is a dictionary, an edit script and an
+  instruction length limit. The target is built by applying the script
+  to the dictionary, so dictionary and target are related as in a real
+  update and the encoders produce every instruction type; two unrelated
+  random files would only give one long `ADD`. Both encoders must then
+  produce a patch that decodes back to the target and meets the checks
+  in the table above.
+- **`c/fuzz/fuzz_decode.c` tests the C decoders** with libFuzzer. Each
+  input is a raw patch with a dictionary and an output capacity, so the
+  fuzzer can produce anything: valid patches, truncated ones, out of
+  range offsets, oversized lengths. It starts from 300 real patches
+  from the Go encoders, so most inputs are nearly valid and reach deep
+  into the decoders instead of being rejected at the first byte. The C
+  decoders must give the same answer as a separate reference decoder,
+  for valid and invalid patches alike, and must never touch memory
+  outside their buffers. AddressSanitizer and
+  UndefinedBehaviorSanitizer turn any out-of-bounds access, overflow
+  or undefined behaviour into an immediate failure, even when the
+  output happens to be correct.
+
 What runs in CI, on every push to `main` and every pull request:
 
 | job | runs |
