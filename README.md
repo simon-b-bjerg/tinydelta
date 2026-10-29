@@ -40,8 +40,9 @@ no compression library.
   and `.bss`). All working state is on the stack, and the only other
   memory is buffers you pass in, so the decoders are reentrant.
 - **Verified.** The C decoders are tested against the Go decoder on
-  valid, truncated and corrupted patches, on x86-64 and 32-bit ARM, in
-  CI.
+  valid, truncated and corrupted patches, on x86-64 and 32-bit ARM, and
+  fuzzed with address and undefined-behaviour sanitizers, in CI
+  ([Tests](#tests)).
 - **Simple, documented format.** The full wire format fits on one page
   ([below](#wire-format)), so a decoder in another language is an
   afternoon's work.
@@ -527,35 +528,89 @@ comparison at the cursor so that even 1–3 byte unchanged runs become a
 ```sh
 go test ./...          # Go tests, plus the C decoders if a C compiler is installed
 scripts/c-check.sh     # strict C build (-Wall -Wextra -Wconversion -Wswitch-enum ... -Werror)
+scripts/c-fuzz.sh 300  # fuzz the C decoders for 5 min (needs clang with libFuzzer)
 scripts/c-size.sh      # Cortex-M code size and stack (needs arm-none-eabi-gcc)
 go test -run '^$' -fuzz '^FuzzEncodeRoundTrip$' -fuzztime 5m .   # fuzz the encoders
 ```
 
-`FuzzEncodeRoundTrip` derives a target from a fuzzed dictionary with a
-fuzzed edit script and checks that both encoders' patches decode back to
-it, decode with an output cap of exactly the target length but not one
-byte less, respect `MaxInstructionLen`, and that the optimizing patch is
-never larger than the greedy one. `go test` runs its seed inputs; CI also
-fuzzes it for 60 s. Failing inputs land in `testdata/fuzz/` and become
-regression tests once committed.
+### Tests
 
-The C decoders are checked against the Go decoder on valid, truncated
-and corrupted patches, at several scratch-buffer and flash-page sizes,
-while the test driver polices the callback contract (sequential
-whole-page programming, no reads of unwritten data). To run those tests
-on another architecture, set a cross compiler and an emulator, as CI
-does for 32-bit ARM:
+What is tested, and how:
+
+| test | what it checks |
+|---|---|
+| Go unit tests (`decode_test.go`, `format_test.go`) | each instruction, varint and zigzag edge cases, the 32-bit varint limit, and that malformed patches (truncated, out of range, forward `COPY_TARGET`, huge `ADD`) fail cleanly instead of panicking |
+| Round trips (`interop_test.go`, `limit_test.go`) | both encoders on fixed 3 KB fixtures and random mutations decode back exactly; `MaxInstructionLen` is respected; the optimizing encoder is never worse than greedy |
+| `FuzzEncodeRoundTrip` (Go fuzzing) | derives a target from a fuzzed dictionary with a fuzzed edit script (overwrite, insert, delete, repeat, append); both encoders' patches must decode back to it, decode with an output cap of exactly the target length but fail one byte short, respect `MaxInstructionLen`, and the optimizing patch must not be larger than the greedy one |
+| `TestCDecoderMatchesGo`, `TestCIODecoderMatchesGo` | both C decoders against the Go decoder on valid, truncated and corrupted patches and too-small output buffers, at several scratch-buffer and flash-page sizes; the test driver polices the callback contract (sequential whole-page programming, no reads of unwritten data) |
+| `TestCIODecoderCallbackFailures` | a failing read, write or flush callback stops decoding with `TINYDELTA_ERR_IO` |
+| C fuzzing ([`c/fuzz/fuzz_decode.c`](c/fuzz/fuzz_decode.c)) | libFuzzer with AddressSanitizer and UndefinedBehaviorSanitizer, seeded with patches from the Go encoders. Every input goes through an independent reference decoder written from the wire format, the memory decoder, and the callback decoder at scratch sizes 1, 7 and 64, each with and without the page cache. All must agree on the result and the target bytes, and the callbacks abort on any breach of the contract, as the sanitizers do on any memory error or undefined behaviour |
+| `scripts/c-check.sh` | the C library builds with strict warnings as errors, at scratch sizes 1, 7, 64 and 256 |
+
+#### How the fuzzing works
+
+A fuzzer runs a test over and over with generated inputs. It starts
+from a few seed inputs, mutates them (flips bits, inserts, deletes and
+splices bytes) and watches which code each input reaches. Inputs that
+reach new code are kept and mutated further, so over time it works its
+way into rarely taken paths, such as a varint cut off at its 5th byte
+or a copy that ends exactly at the end of the dictionary, that
+hand-written tests tend to miss. Both fuzzers check properties that
+must hold for every input, rather than comparing with expected output.
+
+There are two, one for each side of the format:
+
+- **`FuzzEncodeRoundTrip` tests the encoders** with Go's built-in
+  fuzzing. Each input is a dictionary, an edit script and an
+  instruction length limit. The target is built by applying the script
+  to the dictionary, so dictionary and target are related as in a real
+  update and the encoders produce every instruction type; two unrelated
+  random files would only give one long `ADD`. Both encoders must then
+  produce a patch that decodes back to the target and meets the checks
+  in the table above.
+- **`c/fuzz/fuzz_decode.c` tests the C decoders** with libFuzzer. Each
+  input is a raw patch with a dictionary and an output capacity, so the
+  fuzzer can produce anything: valid patches, truncated ones, out of
+  range offsets, oversized lengths. It starts from 300 real patches
+  from the Go encoders, so most inputs are nearly valid and reach deep
+  into the decoders instead of being rejected at the first byte. The C
+  decoders must give the same answer as a separate reference decoder,
+  for valid and invalid patches alike, and must never touch memory
+  outside their buffers. AddressSanitizer and
+  UndefinedBehaviorSanitizer turn any out-of-bounds access, overflow
+  or undefined behaviour into an immediate failure, even when the
+  output happens to be correct.
+
+What runs in CI, on every push to `main` and every pull request:
+
+| job | runs |
+|---|---|
+| Go tests (Go 1.21 and current) | `gofmt`, `go vet`, `go test ./...` (including the C decoder tests, built with gcc on x86-64); on current Go also 60 s of `FuzzEncodeRoundTrip` |
+| C decoders fuzzed | `scripts/c-fuzz.sh 60`; crashing inputs are uploaded as a build artifact |
+| Go tests on Windows | `go test ./...` for the library and the CLI |
+| C library on 32-bit ARM | `scripts/c-check.sh` for x86-64 and ARM, the C decoder tests on 32-bit ARM under QEMU, and the Cortex-M code size and stack report (informational) |
+
+Not covered: the C code is not built or run on a 16-bit target, and
+nothing runs on a real microcontroller; the Cortex-M figures are
+measured from the compiled code, not on hardware.
+
+To run the C decoder tests on another architecture, set a cross
+compiler and an emulator, as CI does for 32-bit ARM:
 
 ```sh
 TINYDELTA_CC="arm-linux-gnueabihf-gcc -static" TINYDELTA_C_RUNNER=qemu-arm go test -run TestC .
 ```
 
+A failing input from `FuzzEncodeRoundTrip` lands in `testdata/fuzz/`
+and becomes a regression test once committed. One from
+`scripts/c-fuzz.sh` lands in `fuzz-artifacts/`; replay it by passing
+the file to the built `fuzz_decode` binary.
+
 Optional tests use local data when present: `TestRealConfigs`
 round-trips every pair of `*.cfg` files in each subdirectory of
-`testdata/private/` (git-ignored,
-or set `TINYDELTA_CONFIG_DIR`), and `TestSizeVsOpenVCDiff` compares
-patch sizes with open-vcdiff when `OPENVCDIFF_BIN` points at its
-`vcdiff` binary.
+`testdata/private/` (git-ignored, or set `TINYDELTA_CONFIG_DIR`), and
+`TestSizeVsOpenVCDiff` compares patch sizes with open-vcdiff when
+`OPENVCDIFF_BIN` points at its `vcdiff` binary.
 
 ### Releases
 

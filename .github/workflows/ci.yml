@@ -33,6 +33,31 @@ jobs:
         if: matrix.go == 'stable'
         run: go test -run '^$' -fuzz '^FuzzEncodeRoundTrip$' -fuzztime 60s .
 
+  c-fuzz:
+    name: C decoders fuzzed (ASan + UBSan)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - name: Install clang with libFuzzer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-18 libclang-rt-18-dev
+      - name: Fuzz for 60 s
+        env:
+          CLANG: clang-18
+        run: scripts/c-fuzz.sh 60
+      - name: Upload crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: c-fuzz-artifacts
+          path: fuzz-artifacts/
+          if-no-files-found: ignore
+
   windows:
     name: Go tests on Windows
     runs-on: windows-latest
