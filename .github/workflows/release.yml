@@ -1,38 +1,49 @@
 name: Release
 
 # Builds the release archives and attaches them to the GitHub release for a
-# version tag. It runs when a v* tag is pushed, when a release is published
-# (for example one made by hand in the GitHub UI), or manually for an
-# existing tag. If the release already exists the files are uploaded to it,
-# otherwise the release is created.
+# version tag. It publishes when a v* tag is pushed, when a release is
+# published (for example one made by hand in the GitHub UI), or when run
+# manually with an existing tag. If the release already exists the files are
+# uploaded to it, otherwise the release is created.
+#
+# Without a tag it only builds: run it manually and leave the tag empty, or
+# open a pull request that changes the release build. The archives are then
+# attached to the workflow run as an artifact, and nothing is published.
 on:
   push:
     tags: ['v*']
   release:
     types: [published]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - scripts/build-release.sh
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to build and publish, e.g. v0.1.0
-        required: true
+        description: Existing tag to build and publish, e.g. v1.0.0. Leave empty to only build the selected branch, without publishing.
+        required: false
+        default: ''
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
+  group: release-${{ inputs.tag || github.event.release.tag_name || github.ref }}
   cancel-in-progress: false
 
 jobs:
   release:
-    name: Build and publish
+    name: ${{ (inputs.tag || github.event.release.tag_name || github.ref_type == 'tag') && 'Build and publish' || 'Build only' }}
     runs-on: ubuntu-latest
     env:
-      TAG: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
+      # Empty for a build-only run.
+      TAG: ${{ inputs.tag || github.event.release.tag_name || (github.ref_type == 'tag' && github.ref_name) || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: refs/tags/${{ env.TAG }}
+          # The tag when publishing; otherwise the branch or pull request.
+          ref: ${{ env.TAG && format('refs/tags/{0}', env.TAG) || '' }}
       - uses: actions/setup-go@v5
         with:
           go-version: stable # release binaries use the current Go, not the go.mod minimum
@@ -40,8 +51,17 @@ jobs:
       - name: Test
         run: go test ./...
       - name: Build release archives
-        run: scripts/build-release.sh "$TAG"
+        run: |
+          version="${TAG:-dev-${GITHUB_SHA::7}}"
+          scripts/build-release.sh "$version"
+      - name: Upload archives to the workflow run (build only)
+        if: env.TAG == ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-archives
+          path: dist/
       - name: Publish GitHub release
+        if: env.TAG != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
