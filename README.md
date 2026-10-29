@@ -629,6 +629,13 @@ them to the GitHub release with SHA-256 checksums. It runs when:
 git tag v1.0.0 && git push origin v1.0.0
 ```
 
+To try the release build without publishing anything, start it by hand
+and leave the tag empty: it builds the selected branch, versioned
+`dev-<commit>`, and attaches the archives to the workflow run as
+`release-archives`, where you can download them. A pull request that
+changes the release workflow or `scripts/build-release.sh` does the
+same automatically.
+
 ### Contributing
 
 Issues and pull requests are welcome. Please keep `go test ./...` and
