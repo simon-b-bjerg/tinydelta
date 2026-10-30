@@ -779,7 +779,9 @@ Publishing to PyPI needs a one-time setup on pypi.org: add a trusted
 publisher for the project `tinydelta` with this repository, the
 workflow `release.yml` and the environment `pypi`. Release tags must be
 `vX.Y.Z` or `vX.Y.Z-alpha.N`/`-beta.N`/`-rc.N`, which become Python
-versions `X.Y.Z` and `X.Y.ZaN`/`bN`/`rcN`.
+versions `X.Y.Z` and `X.Y.ZaN`/`bN`/`rcN`. A tag with a suffix is
+published as a pre-release, on GitHub and on PyPI, so it never becomes
+the latest release and pip only installs it when asked for.
 
 ### Contributing
 

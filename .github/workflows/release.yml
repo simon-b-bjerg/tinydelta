@@ -72,10 +72,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A tag with a suffix (v1.2.0-rc.1) is a pre-release: not shown as
+          # the latest release. PyPI treats it as a pre-release too.
+          prerelease=()
+          [[ "$TAG" == *-* ]] && prerelease=(--prerelease)
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/* --clobber
           else
-            gh release create "$TAG" dist/* \
+            gh release create "$TAG" dist/* "${prerelease[@]}" \
               --verify-tag --title "tinydelta $TAG" --generate-notes
           fi
 
