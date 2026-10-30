@@ -415,7 +415,8 @@ page at a time at increasing, page-aligned offsets, plus a final partial
 page. Reads come from flash for data already programmed and from the
 page buffer for the rest, including reads that span both.
 
-Example: patch, dictionary and target in three regions of one SPI flash.
+<details>
+<summary>Example: patch, dictionary and target in three regions of one SPI flash</summary>
 
 ```c
 #include "tinydelta_cache.h"
@@ -448,6 +449,8 @@ tinydelta_result apply_patch(uint32_t dict_len, uint32_t patch_len,
     return tinydelta_decode_io(&io, target_len);   /* TINYDELTA_OK on success */
 }
 ```
+
+</details>
 
 ### Your own decoder
 
@@ -702,12 +705,16 @@ What is tested, and how:
 | `TestCDecoderMatchesGo`, `TestCIODecoderMatchesGo` | both C decoders against the Go decoder on valid, truncated and corrupted patches and too-small output buffers, at several scratch-buffer and flash-page sizes; the test driver polices the callback contract (sequential whole-page programming, no reads of unwritten data) |
 | `TestCIODecoderCallbackFailures` | a failing read, write or flush callback stops decoding with `TINYDELTA_ERR_IO` |
 | `TestVectors`, `TestCVectors` | the Go decoder, the C memory decoder and the C callback decoder (every scratch size, with and without the page cache) against every [conformance vector](#conformance-vectors) |
-| C fuzzing ([`c/fuzz/fuzz_decode.c`](c/fuzz/fuzz_decode.c)) | libFuzzer with AddressSanitizer and UndefinedBehaviorSanitizer, seeded with patches from the Go encoders. Every input goes through an independent reference decoder written from the wire format, the memory decoder, and the callback decoder at scratch sizes 1, 7 and 64, each with and without the page cache. All must agree on the result and the target bytes, and the callbacks abort on any breach of the contract, as the sanitizers do on any memory error or undefined behaviour. The input can also make any one callback call fail, and the callback decoder must then report `TINYDELTA_ERR_IO` |
+| C fuzzing ([`c/fuzz/fuzz_decode.c`](c/fuzz/fuzz_decode.c)) | libFuzzer with AddressSanitizer and UndefinedBehaviorSanitizer: every input through an independent reference decoder and all C decoder configurations, which must agree exactly; any memory error, undefined behaviour or breach of the callback contract fails; injected callback failures must give `TINYDELTA_ERR_IO` |
 | `scripts/c-check.sh` | the C library builds with strict warnings as errors, at scratch sizes 1, 7, 64 and 256 |
 | `scripts/c-analyze.sh` | static analysis of the C library with GCC's analyzer, the Clang Static Analyzer and clang-tidy (bug-finding checks, see [`c/.clang-tidy`](c/.clang-tidy)); any finding fails |
 | CodeQL | GitHub's code scanning, security and quality queries, over the Go code and the C library; results in the repository's Security tab |
 
-#### How the fuzzing works
+Not covered: nothing runs on a real microcontroller; the Cortex-M and
+MSP430 figures are measured from the compiled code, not on hardware.
+
+<details>
+<summary>How the fuzzing works</summary>
 
 A fuzzer runs a test over and over with generated inputs. It starts
 from a few seed inputs, mutates them (flips bits, inserts, deletes and
@@ -741,7 +748,10 @@ There are two, one for each side of the format:
   or undefined behaviour into an immediate failure, even when the
   output happens to be correct.
 
-What runs in CI, on every push to `main` and every pull request:
+</details>
+
+<details>
+<summary>What runs in CI, on every push to <code>main</code> and every pull request</summary>
 
 | job | runs |
 |---|---|
@@ -756,8 +766,10 @@ What runs in CI, on every push to `main` and every pull request:
 | C library on 32-bit ARM | `scripts/c-check.sh` for x86-64 and ARM, the C decoder tests on 32-bit ARM under QEMU, and the Cortex-M code size and stack report (informational) |
 | C library on MSP430 | `scripts/c-check.sh` for 16-bit MSP430 and MSP430X (small and large memory models), the C decoder tests on MSP430X under GNU's MSP430 instruction simulator, and the MSP430 code size and stack report (informational). The toolchain is built from GNU sources by [`scripts/msp430-toolchain.sh`](scripts/msp430-toolchain.sh) and cached |
 
-Not covered: nothing runs on a real microcontroller; the Cortex-M and
-MSP430 figures are measured from the compiled code, not on hardware.
+</details>
+
+<details>
+<summary>Running the C tests on another architecture (ARM, MSP430)</summary>
 
 To run the C decoder tests on another architecture, set a cross
 compiler and an emulator, as CI does for 32-bit ARM:
@@ -776,6 +788,11 @@ TINYDELTA_CC="msp430-elf-gcc -mcpu=msp430x -mlarge -msim" \
 TINYDELTA_C_RUNNER="scripts/sim-run.sh msp430-elf-run" go test -run TestC .
 ```
 
+</details>
+
+<details>
+<summary>When a fuzzer finds a failing input</summary>
+
 A failing input from `FuzzEncodeRoundTrip` lands in `testdata/fuzz/`
 and becomes a regression test once committed; hex dump it with
 `TINYDELTA_FUZZ_DUMP=<file> go test -run TestDumpFuzzInput -v .`. One
@@ -784,11 +801,18 @@ split into header, dictionary and patch; replay it by passing the file
 to the built `fuzz_decode` binary. In CI, both are also hex dumped in
 the log and shown as an annotation on the failed job.
 
+</details>
+
+<details>
+<summary>Optional tests with local data</summary>
+
 Optional tests use local data when present: `TestRealConfigs`
 round-trips every pair of `*.cfg` files in each subdirectory of
 `testdata/private/` (git-ignored, or set `TINYDELTA_CONFIG_DIR`), and
 `TestSizeVsOpenVCDiff` compares patch sizes with open-vcdiff when
 `OPENVCDIFF_BIN` points at its `vcdiff` binary.
+
+</details>
 
 ### Releases
 
