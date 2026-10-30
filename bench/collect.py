@@ -207,12 +207,15 @@ def main():
                 name, item.name, len(item.versions), len(item.skipped),
                 ": " + " ".join(c[:12] for c in item.skipped[:10]) if item.skipped else ""))
             if len(item.versions) < 2:
-                failed.append(name)
+                # Nothing to pair; run.py leaves it out.
+                failed.append((name, item))
     annotate("notice", "Corpus", "\n".join(report))
-    if failed:
-        for name in sorted(set(failed)):
-            annotate("error", "Build log of %s (end)" % name, tail(os.path.join(cache, "build-%s.log" % name)))
-        sys.exit("collect: too few versions to compare; see the build logs in %s" % cache)
+    for name, item in failed:
+        annotate("warning", "Left out: %s/%s" % (name, item.name),
+                 "%d version(s) in the commit range, too few to compare. Build log (end):\n%s"
+                 % (len(item.versions), tail(os.path.join(cache, "build-%s.log" % name))))
+    if len(failed) == sum(len(corpus[n]["items"]) for n in collectors if n in corpus):
+        sys.exit("collect: no item has two versions to compare")
 
 
 if __name__ == "__main__":

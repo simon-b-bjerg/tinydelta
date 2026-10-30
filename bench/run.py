@@ -120,7 +120,10 @@ def main():
             kind = corpus[name]["kind"]
             for item in sorted(os.listdir(os.path.join(builds, name))):
                 folder = os.path.join(builds, name, item)
-                versions = json.load(open(os.path.join(folder, "versions.json")))
+                index = os.path.join(folder, "versions.json")
+                versions = json.load(open(index)) if os.path.exists(index) else []
+                if len(versions) < 2:
+                    continue  # nothing to pair (reported by collect.py)
                 for step in corpus["steps"]:
                     for i in range(len(versions) - step):
                         a, b = versions[i], versions[i + step]

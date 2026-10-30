@@ -14,7 +14,7 @@
   "dtb": {
     "kind": "device tree",
     "repo": "https://git.kernel.org/pub/scm/linux/kernel/git/devicetree/devicetree-rebasing.git",
-    "from": "v7.2-dts",
+    "from": "v7.0-dts",
     "to": "v7.3-dts",
     "max_versions": 25,
     "items": [
