@@ -65,7 +65,7 @@ const cCapacity = 8 << 10
 
 // cDriver feeds files to the C reference decoder (c/tinydelta_decode.c):
 // driver <dict> <patch> <out> <out_cap>. It exits 0 on success, 1 when the
-// decoder rejects the input.
+// decoder rejects the input, after printing the result code.
 const cDriver = `#include <stdio.h>
 #include <stdlib.h>
 #include "tinydelta.h"
@@ -76,7 +76,11 @@ const cDriver = `#include <stdio.h>
 	uint8_t *d = slurp(argv[1], &dn), *p = slurp(argv[2], &pn);
 	uint32_t cap = (uint32_t)atol(argv[4]);
 	uint8_t *o = malloc(cap ? cap : 1);
-	if (tinydelta_decode(d, dn, p, pn, o, cap, &on) != TINYDELTA_OK) return 1;
+	tinydelta_result rc = tinydelta_decode(d, dn, p, pn, o, cap, &on);
+	if (rc != TINYDELTA_OK) {
+		printf("%d\n", rc);
+		return 1;
+	}
 	FILE *fp = fopen(argv[3], "wb");
 	fwrite(o, 1, on, fp);
 	fclose(fp);
@@ -111,6 +115,17 @@ func cCommand(bin string, args ...string) *exec.Cmd {
 	return exec.Command(bin, args...)
 }
 
+// buildCDriver compiles cDriver with the memory decoder and returns the
+// binary's path.
+func buildCDriver(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "decode")
+	os.WriteFile(filepath.Join(dir, "driver.c"), []byte(cDriver), 0o644)
+	cCompile(t, bin, "c/tinydelta_decode.c", filepath.Join(dir, "driver.c"))
+	return bin
+}
+
 // TestCDecoderMatchesGo compiles the C reference decoder (skipped when no C
 // compiler is installed) and checks it against Decode: on valid patches
 // from both encoders it must reproduce the target exactly, and on
@@ -118,9 +133,7 @@ func cCommand(bin string, args ...string) *exec.Cmd {
 // must accept or reject exactly the inputs Go does, with identical output.
 func TestCDecoderMatchesGo(t *testing.T) {
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "decode")
-	os.WriteFile(filepath.Join(dir, "driver.c"), []byte(cDriver), 0o644)
-	cCompile(t, bin, "c/tinydelta_decode.c", filepath.Join(dir, "driver.c"))
+	bin := buildCDriver(t)
 
 	var failure string // how the last failed run ended, for test messages
 	cDecode := func(dict, patch []byte, capacity int) ([]byte, bool) {

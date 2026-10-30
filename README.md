@@ -9,6 +9,8 @@
   <a href="https://github.com/simon-b-bjerg/tinydelta/actions/workflows/ci.yml"><img src="https://github.com/simon-b-bjerg/tinydelta/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/simon-b-bjerg/tinydelta/actions/workflows/ci.yml"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsimon-b-bjerg%2Ftinydelta%2Fbadges%2Fcoverage-go.json" alt="Go coverage"></a>
   <a href="https://github.com/simon-b-bjerg/tinydelta/actions/workflows/ci.yml"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsimon-b-bjerg%2Ftinydelta%2Fbadges%2Fcoverage-c.json" alt="C coverage"></a>
+  <a href="#conformance-vectors"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsimon-b-bjerg%2Ftinydelta%2Fbadges%2Fconformance.json" alt="Conformance vectors"></a>
+  <a href="https://github.com/simon-b-bjerg/tinydelta/actions/workflows/codeql.yml"><img src="https://github.com/simon-b-bjerg/tinydelta/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
   <a href="https://github.com/simon-b-bjerg/tinydelta/releases"><img src="https://img.shields.io/github/v/release/simon-b-bjerg/tinydelta?sort=semver" alt="Release"></a>
   <a href="https://pkg.go.dev/github.com/simon-b-bjerg/tinydelta"><img src="https://pkg.go.dev/badge/github.com/simon-b-bjerg/tinydelta.svg" alt="Go Reference"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
@@ -440,11 +442,13 @@ are:
 - **The end.** Write the last, partial page once, and only after the
   whole patch decoded successfully.
 
-To test it, add it to the C fuzzer
-([`c/fuzz/fuzz_decode.c`](c/fuzz/fuzz_decode.c)) next to the bundled
-decoders. Every input there already goes through an independent
-reference decoder, and yours must give the same result and the same
-target bytes.
+To test it, first run it against the
+[conformance vectors](#conformance-vectors): each one gives a
+dictionary, a patch and a capacity, and the exact result. Then add it to
+the C fuzzer ([`c/fuzz/fuzz_decode.c`](c/fuzz/fuzz_decode.c)) next to
+the bundled decoders. Every input there already goes through an
+independent reference decoder, and yours must give the same result and
+the same target bytes.
 
 ### On the device
 
@@ -574,6 +578,31 @@ may still produce different, usually smaller, patches for the same input
 in later releases; they stay valid for every 1.x decoder. The Go API
 follows [semantic versioning](https://semver.org).
 
+### Conformance vectors
+
+[`testdata/vectors.txt`](testdata/vectors.txt) lists what a decoder
+must produce for a given dictionary, patch and output capacity: the
+target, or which error. It is a plain text file, one vector per line in
+hex, so a decoder in any language can be checked against it; the Go
+decoder and both C decoders are (`TestVectors`, `TestCVectors`).
+
+The hand-written vectors cover each instruction and the edges of the
+rules: varints of every length up to the 5-byte limit, non-minimal
+varints, `COPY` with length 0, copies ending exactly at the end of the
+dictionary or one byte past it, `COPY_TARGET` overlapping its own
+output or pointing at or past the write position, truncated operands,
+and capacities exactly reached and one byte short. A few more are real
+encoder output (`gen-*`).
+
+They also settle one thing this section leaves open: an instruction is
+checked against the capacity as soon as its length is known, before its
+operands are read. So an instruction that is both too large and
+malformed, such as a truncated `ADD` past the capacity, is
+`TOO_LARGE`.
+
+Vectors are only ever added. If a decoder change makes an existing one
+fail, the change breaks the format.
+
 ## How the encoder works
 
 Both encoders find match candidates in the dictionary and in the target
@@ -594,6 +623,7 @@ comparison at the cursor so that even 1–3 byte unchanged runs become a
 ```sh
 go test ./...          # Go tests, plus the C decoders if a C compiler is installed
 scripts/c-check.sh     # strict C build (-Wall -Wextra -Wconversion -Wswitch-enum ... -Werror)
+scripts/c-analyze.sh   # static analysis: gcc -fanalyzer, clang --analyze, clang-tidy
 scripts/c-fuzz.sh 300 fuzz-corpus   # fuzz the C decoders for 5 min, keeping the corpus (needs clang with libFuzzer)
 scripts/c-coverage.sh fuzz-corpus   # how much of the C library the fuzzer reaches (needs llvm-cov)
 scripts/c-size.sh      # Cortex-M code size and stack (needs arm-none-eabi-gcc)
@@ -612,8 +642,11 @@ What is tested, and how:
 | `FuzzEncodeRoundTrip` (Go fuzzing) | derives a target from a fuzzed dictionary with a fuzzed edit script (overwrite, insert, delete, repeat, append); both encoders' patches must decode back to it, decode with an output cap of exactly the target length but fail one byte short, respect `MaxInstructionLen`, and the optimizing patch must not be larger than the greedy one |
 | `TestCDecoderMatchesGo`, `TestCIODecoderMatchesGo` | both C decoders against the Go decoder on valid, truncated and corrupted patches and too-small output buffers, at several scratch-buffer and flash-page sizes; the test driver polices the callback contract (sequential whole-page programming, no reads of unwritten data) |
 | `TestCIODecoderCallbackFailures` | a failing read, write or flush callback stops decoding with `TINYDELTA_ERR_IO` |
+| `TestVectors`, `TestCVectors` | the Go decoder, the C memory decoder and the C callback decoder (every scratch size, with and without the page cache) against every [conformance vector](#conformance-vectors) |
 | C fuzzing ([`c/fuzz/fuzz_decode.c`](c/fuzz/fuzz_decode.c)) | libFuzzer with AddressSanitizer and UndefinedBehaviorSanitizer, seeded with patches from the Go encoders. Every input goes through an independent reference decoder written from the wire format, the memory decoder, and the callback decoder at scratch sizes 1, 7 and 64, each with and without the page cache. All must agree on the result and the target bytes, and the callbacks abort on any breach of the contract, as the sanitizers do on any memory error or undefined behaviour. The input can also make any one callback call fail, and the callback decoder must then report `TINYDELTA_ERR_IO` |
 | `scripts/c-check.sh` | the C library builds with strict warnings as errors, at scratch sizes 1, 7, 64 and 256 |
+| `scripts/c-analyze.sh` | static analysis of the C library with GCC's analyzer, the Clang Static Analyzer and clang-tidy (bug-finding checks, see [`c/.clang-tidy`](c/.clang-tidy)); any finding fails |
+| CodeQL | GitHub's code scanning, security and quality queries, over the Go code and the C library; results in the repository's Security tab |
 
 #### How the fuzzing works
 
@@ -656,8 +689,10 @@ What runs in CI, on every push to `main` and every pull request:
 | Go tests (Go 1.21 and current) | `gofmt`, `go vet`, `go test ./...` (including the C decoder tests, built with gcc on x86-64); on current Go also 60 s of `FuzzEncodeRoundTrip` |
 | C decoders fuzzed | `scripts/c-fuzz.sh 60`; crashing inputs are hex dumped in the log and uploaded as a build artifact. Then `scripts/c-coverage.sh` reports how much of the C library the corpus reaches, with the lines it never reaches, in the job summary |
 | Go coverage | `go test -cover` over the library and the CLI, per function in the job summary |
-| Update coverage badges | on pushes to `main` only: writes the Go and C coverage figures for the badges above to the `badges` branch |
+| Update coverage badges | on pushes to `main` only: writes the Go and C coverage figures and the number of conformance vectors for the badges above to the `badges` branch |
 | Go tests on Windows | `go test ./...` for the library and the CLI |
+| C static analysis | `scripts/c-analyze.sh` |
+| CodeQL (separate workflow, also weekly) | CodeQL over the Go code and the C library |
 | C library on 32-bit ARM | `scripts/c-check.sh` for x86-64 and ARM, the C decoder tests on 32-bit ARM under QEMU, and the Cortex-M code size and stack report (informational) |
 | C library on MSP430 | `scripts/c-check.sh` for 16-bit MSP430 and MSP430X (small and large memory models), the C decoder tests on MSP430X under GNU's MSP430 instruction simulator, and the MSP430 code size and stack report (informational). The toolchain is built from GNU sources by [`scripts/msp430-toolchain.sh`](scripts/msp430-toolchain.sh) and cached |
 

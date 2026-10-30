@@ -1,0 +1,18 @@
+# clang-tidy settings for the C library, used by scripts/c-analyze.sh.
+# All bug-finding check groups, every finding an error, except:
+#   misc-include-cleaner                  wants <stdint.h> in every file;
+#                                         the library's own headers provide it
+#   bugprone-easily-swappable-parameters  flags every pair of adjacent
+#                                         uint32_t parameters (offset,
+#                                         length), the shape of the whole API
+Checks: >
+  -*,
+  bugprone-*,
+  cert-*,
+  clang-analyzer-*,
+  misc-*,
+  portability-*,
+  performance-*,
+  -misc-include-cleaner,
+  -bugprone-easily-swappable-parameters
+WarningsAsErrors: '*'
