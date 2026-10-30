@@ -26,7 +26,7 @@ const cIODriver = `#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "tinydelta_cache.h"
-
+` + cDriverHelpers + `
 static uint8_t *dict, *patch, *target, *flash;
 static uint32_t dict_len, patch_len, cap, produced, flushed, page;
 static int final_seen;
@@ -88,20 +88,9 @@ static int fl_wr(void *c, uint32_t off, const uint8_t *b, uint32_t n) {
 	return 0;
 }
 
-static uint8_t *slurp(const char *f, uint32_t *n) {
-	FILE *fp = fopen(f, "rb");
-	if (!fp) exit(2);
-	fseek(fp, 0, SEEK_END);
-	long l = ftell(fp);
-	fseek(fp, 0, SEEK_SET);
-	uint8_t *b = malloc(l ? (size_t)l : 1);
-	if (fread(b, 1, (size_t)l, fp) != (size_t)l) exit(2);
-	fclose(fp);
-	*n = (uint32_t)l;
-	return b;
-}
 
 int main(int argc, char **argv) {
+	args_from_file(&argc, &argv);
 	if (argc != 6 && argc != 7) return 2;
 	page = (uint32_t)atol(argv[1]);
 	dict = slurp(argv[2], &dict_len);
@@ -176,7 +165,11 @@ func runCIO(t *testing.T, bin string, page int, dict, patch []byte, capacity int
 		out, _ := os.ReadFile(o)
 		return out, "", true
 	case errors.As(err, &exit) && exit.ExitCode() == 1:
-		return nil, string(bytes.TrimSpace(stdout)), false
+		code := string(bytes.TrimSpace(stdout))
+		if code == "" { // not the decoder's result code: show what happened
+			code = fmt.Sprintf("none; exit 1, stderr %q", bytes.TrimSpace(exit.Stderr))
+		}
+		return nil, code, false
 	default:
 		t.Fatalf("C I/O decoder (page %d): %v: %s", page, err, stdout)
 		return nil, "", false
@@ -226,8 +219,11 @@ func TestCIODecoderMatchesGo(t *testing.T) {
 		pairs = append(pairs, pair{fmt.Sprintf("mutation %d", i), base, tgt})
 	}
 
-	const capacity = 1 << 20
+	const capacity = cCapacity
 	for _, p := range pairs {
+		if len(p.tgt) >= capacity {
+			t.Fatalf("%s: target does not fit cCapacity", p.name)
+		}
 		for _, enc := range []struct {
 			name string
 			fn   func(dict, target []byte, maxLen int) []byte
@@ -285,7 +281,7 @@ func TestCIODecoderCallbackFailures(t *testing.T) {
 	for _, b := range bins {
 		for _, page := range []int{0, 7} {
 			for n := 1; n <= 40; n++ {
-				_, code, ok := runCIO(t, b.path, page, dict, patch, 1<<20, fmt.Sprint(n))
+				_, code, ok := runCIO(t, b.path, page, dict, patch, cCapacity, fmt.Sprint(n))
 				if ok {
 					break // fewer than n callback calls: nothing left to fail
 				}
