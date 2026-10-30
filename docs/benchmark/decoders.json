@@ -1,0 +1,75 @@
+{
+  "_comment": "What each tool's decoder costs on the device, for the trade-off graph (plot.py): footprint = code + buffers (+ the old file, if plus_old_file), stack excluded. code is .text in bytes, null where no microcontroller build exists (the point is then a lower bound). buffers is RAM the decoder needs besides its stack: dictionaries, windows, caches. stack is recorded but not counted. With plus_old_file, the decoder holds the whole old file in RAM; the graph adds the median old-file size of each kind of data. basis says where each number comes from: measured (bench/decoder-size.sh, Cortex-M0, -Os) or the tool's documentation.",
+  "tinydelta": {
+    "label": "tinydelta",
+    "code": 670,
+    "buffers": 0,
+    "stack": 200,
+    "plus_old_file": false,
+    "basis": "measured: callback decoder, Cortex-M0, -Os: 670 B code with arm-none-eabi-gcc 13.2 (712 B with 10.3, as in the README); no static RAM or buffers, ~200 B stack"
+  },
+  "tinydelta_zlib": {
+    "label": "tinydelta + zlib",
+    "code": null,
+    "buffers": 32768,
+    "stack": null,
+    "plus_old_file": false,
+    "basis": "tinydelta plus an inflate decoder (code not measured, so a lower bound) with a 32 KB window: the patches are compressed with zlib's default 15-bit window"
+  },
+  "hpatchlite_4k": {
+    "label": "HPatchLite, 4 KB dict.",
+    "code": 2229,
+    "buffers": 4096,
+    "stack": null,
+    "plus_old_file": false,
+    "basis": "code: 662 B for the patch code (HPatchLite README, built with Mbed Studio) plus 1,567 B for the tinyuz decompressor (measured, bench/decoder-size.sh: object code, so possibly including functions a decoder does not call); buffers: one decompression dictionary plus an input cache of at least 3 B (HPatchLite README)"
+  },
+  "hpatchlite_32k": {
+    "label": "HPatchLite, 32 KB dict.",
+    "code": 2229,
+    "buffers": 32768,
+    "stack": null,
+    "plus_old_file": false,
+    "basis": "as HPatchLite, 4 KB dict., with the default 32 KB dictionary"
+  },
+  "detools": {
+    "label": "detools (heatshrink)",
+    "code": 1948,
+    "buffers": 0,
+    "stack": 1600,
+    "plus_old_file": false,
+    "basis": "measured with detools' default heatshrink settings, Cortex-M0: 1,948 B code, no static RAM, ~1.6 KB stack (README benchmark)"
+  },
+  "bsdiff": {
+    "label": "bsdiff",
+    "code": null,
+    "buffers": 2350000,
+    "stack": null,
+    "plus_old_file": false,
+    "basis": "bzip2 manual: decompressing 900 KB blocks needs about 3.7 MB, or 2.3 MB in small mode; bspatch also holds the old and new file in memory"
+  },
+  "zstd": {
+    "label": "zstd --patch-from",
+    "code": null,
+    "buffers": 0,
+    "stack": null,
+    "plus_old_file": true,
+    "basis": "zstd --patch-from uses the whole old file as its window, so the decoder needs at least the old file in memory"
+  },
+  "openvcdiff": {
+    "label": "open-vcdiff",
+    "code": null,
+    "buffers": 0,
+    "stack": null,
+    "plus_old_file": true,
+    "basis": "open-vcdiff's decoder (C++) works on the whole dictionary in memory"
+  },
+  "xdelta3": {
+    "label": "xdelta3",
+    "code": null,
+    "buffers": 0,
+    "stack": null,
+    "plus_old_file": true,
+    "basis": "xdelta3 keeps the source in memory in blocks (default 8 MB window), which covers the whole old file at these sizes"
+  }
+}

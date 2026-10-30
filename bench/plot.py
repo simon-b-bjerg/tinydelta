@@ -262,6 +262,9 @@ def patch_share(rows, out):
     save(fig, out, "patch_share")
 
 
+FOREST_MIN, FOREST_MAX = 0.1, 10  # the forest graph's axis; lines beyond end in an arrowhead
+
+
 def forest(rows, out):
     kinds = kinds_of(rows)
     steps = sorted({r["step"] for r in rows})
@@ -283,8 +286,14 @@ def forest(rows, out):
                 if not rs:
                     continue
                 y = row + offsets[step]
-                ax.plot([percentile(rs, 10), percentile(rs, 90)], [y, y], color=color, linewidth=2,
+                lo, hi = percentile(rs, 10), percentile(rs, 90)
+                ax.plot([max(lo, FOREST_MIN), min(hi, FOREST_MAX)], [y, y], color=color, linewidth=2,
                         solid_capstyle="round")
+                # A line running past the axis ends in an arrowhead there.
+                if lo < FOREST_MIN:
+                    ax.plot([FOREST_MIN], [y], marker="<", markersize=6, color=color)
+                if hi > FOREST_MAX:
+                    ax.plot([FOREST_MAX], [y], marker=">", markersize=6, color=color)
                 filled = step == steps[0]
                 ax.plot([geomean(rs)], [y], marker="o", markersize=7, color=color,
                         markerfacecolor=color if filled else SURFACE, markeredgewidth=2 if not filled else 1.5,
@@ -292,6 +301,7 @@ def forest(rows, out):
         ax.set_yticks(range(len(tools)), labels, fontsize=9, color=INK)
         ax.invert_yaxis()
         ax.set_xscale("log")
+        ax.set_xlim(FOREST_MIN, FOREST_MAX)
         log_axis(ax.xaxis)
         n = len([r for r in rows if r["kind"] == kind])
         ax.set_title("%s (%d pairs)" % (kind, n), fontsize=11, color=INK, loc="left")
@@ -301,7 +311,8 @@ def forest(rows, out):
     axes[0][0].legend(handles=handles, frameon=False, fontsize=8, loc="lower right", labelcolor=INK,
                       bbox_to_anchor=(1.0, 1.0), ncol=len(steps))
     axes[-1][0].set_xlabel("tinydelta's patch size ÷ the tool's (log scale)   ← tinydelta smaller · larger →\n"
-                           "dot: geometric mean · line: 10th-90th percentile", fontsize=9, color=MUTED, labelpad=8)
+                           "dot: geometric mean · line: 10th-90th percentile, arrowhead where it runs past the axis",
+                           fontsize=9, color=MUTED, labelpad=8)
     # Title and reading line, placed in inches from the top so they hold
     # for any figure height.
     height = fig.get_figheight()
@@ -335,8 +346,10 @@ def pair_scatter(rows, out):
                        alpha=0.75, edgecolors=SURFACE, linewidths=0.6, label=kind)
         ax.set_xscale("log")
         ax.set_yscale("log")
-        log_axis(ax.xaxis)
-        log_axis(ax.yaxis)
+        for axis in (ax.xaxis, ax.yaxis):  # decades only: the range spans several
+            axis.set_major_locator(ticker.LogLocator(base=10))
+            axis.set_major_formatter(ticker.FuncFormatter(lambda x, _: "{:,.0f}".format(x)))
+            axis.set_minor_formatter(ticker.NullFormatter())
         ax.set_xlim(lo, hi)
         ax.set_ylim(lo, hi)
         ax.set_aspect("equal")
@@ -348,6 +361,40 @@ def pair_scatter(rows, out):
     axes[0][0].legend(frameon=False, fontsize=8, loc="upper left", labelcolor=INK)
     fig.tight_layout()
     save(fig, out, "pairs")
+
+
+def place_labels(fig, ax, points):
+    """Labels each point at the first of a few positions around it where
+    the label overlaps no other label, no point and stays inside the panel;
+    the least crowded position otherwise."""
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    box = ax.get_window_extent(renderer)
+    dots = [ax.transData.transform((x, y)) for x, y, _ in points]
+    placed = []
+    offsets = [(dx, dy * reach, ha, va) for reach in (1, 3, 5)
+               for dx, dy, ha, va in [(8, 4, "left", "bottom"), (8, -4, "left", "top"),
+                                      (-8, 4, "right", "bottom"), (-8, -4, "right", "top"),
+                                      (0, 3, "center", "bottom"), (0, -3, "center", "top")]]
+    for (x, y, label), dot in zip(points, dots):
+        best = None
+        for dx, dy, ha, va in offsets:
+            text = ax.annotate(label, (x, y), xytext=(dx, dy), textcoords="offset points",
+                               ha=ha, va=va, fontsize=8, color=INK)
+            extent = text.get_window_extent(renderer).expanded(1.05, 1.15)
+            cost = 3 * sum(extent.overlaps(other) for other in placed)
+            cost += sum(1 for d in dots if d is not dot and extent.contains(*d))
+            cost += 0 if (extent.x0 >= box.x0 and extent.x1 <= box.x1 and extent.y0 >= box.y0
+                          and extent.y1 <= box.y1) else 5
+            if best is None or cost < best[0]:
+                if best:
+                    best[1].remove()
+                best = (cost, text, extent)
+            else:
+                text.remove()
+            if cost == 0:
+                break
+        placed.append(best[2])
 
 
 def tradeoff(rows, out):
@@ -379,19 +426,10 @@ def tradeoff(rows, out):
             ax.plot([footprint], [share], marker=">" if lower_bound else "o", markersize=9,
                     color=colors.get(column[key], INK), markeredgecolor=SURFACE, markeredgewidth=1.5, linestyle="")
             points.append((footprint, share, d["label"] + (" (at least)" if lower_bound else "")))
-        # A label goes below its point when another point sits close above
-        # it (within a factor of 4 in footprint and 1.4 in size).
-        # Labels of the right-most points go to their left, so they stay
-        # inside the panel.
-        right = max(x for x, _, _ in points)
-        for x, y, label in points:
-            crowded = any((x2, y2) != (x, y) and 0.25 < x2 / x < 4 and 1 < y2 / y < 1.4 for x2, y2, _ in points)
-            left = x > right / 20
-            ax.annotate(label, (x, y), xytext=(-8 if left else 8, -12 if crowded else 4),
-                        textcoords="offset points", ha="right" if left else "left", fontsize=8, color=INK)
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.margins(x=0.12, y=0.12)
+        place_labels(fig, ax, points)
         ax.xaxis.set_major_locator(ticker.LogLocator(base=10))
         ax.xaxis.set_major_formatter(ticker.FuncFormatter(
             lambda x, _: "%g MB" % (x / 1e6) if x >= 1e6 else "%g KB" % (x / 1e3) if x >= 1e3 else "%g B" % x))

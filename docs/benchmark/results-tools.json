@@ -1,0 +1,9 @@
+{
+ "tinydelta": "tinydelta v0.0.0-20261030220345-1c9efcc6f34d",
+ "openvcdiff": "open-vcdiff 868f459a8d815125c2457f8c74b12493853100f9",
+ "xdelta3": "Xdelta version 3.0.11",
+ "bsdiff": "bsdiff 4.3-23",
+ "detools": "detools 0.53.0",
+ "hpatchlite": "HPatchLite v1.0.2",
+ "zstd": "Zstandard CLI (64-bit) v1.5.7"
+}

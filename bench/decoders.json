@@ -2,11 +2,11 @@
   "_comment": "What each tool's decoder costs on the device, for the trade-off graph (plot.py): footprint = code + buffers (+ the old file, if plus_old_file), stack excluded. code is .text in bytes, null where no microcontroller build exists (the point is then a lower bound). buffers is RAM the decoder needs besides its stack: dictionaries, windows, caches. stack is recorded but not counted. With plus_old_file, the decoder holds the whole old file in RAM; the graph adds the median old-file size of each kind of data. basis says where each number comes from: measured (bench/decoder-size.sh, Cortex-M0, -Os) or the tool's documentation.",
   "tinydelta": {
     "label": "tinydelta",
-    "code": 670,
+    "code": 720,
     "buffers": 0,
     "stack": 200,
     "plus_old_file": false,
-    "basis": "measured: callback decoder, Cortex-M0, -Os: 670 B code with arm-none-eabi-gcc 13.2 (712 B with 10.3, as in the README); no static RAM or buffers, ~200 B stack"
+    "basis": "measured: callback decoder, Cortex-M0, -Os: 720 B code with arm-none-eabi-gcc 13.2; no static RAM or buffers, ~200 B stack"
   },
   "tinydelta_zlib": {
     "label": "tinydelta + zlib",
@@ -18,15 +18,15 @@
   },
   "hpatchlite_4k": {
     "label": "HPatchLite, 4 KB dict.",
-    "code": null,
+    "code": 2229,
     "buffers": 4096,
     "stack": null,
     "plus_old_file": false,
-    "basis": "HPatchLite README: one decompression dictionary plus an input cache of at least 3 B; code from bench/decoder-size.sh once measured"
+    "basis": "code: 662 B for the patch code (HPatchLite README, built with Mbed Studio) plus 1,567 B for the tinyuz decompressor (measured, bench/decoder-size.sh: object code, so possibly including functions a decoder does not call); buffers: one decompression dictionary plus an input cache of at least 3 B (HPatchLite README)"
   },
   "hpatchlite_32k": {
     "label": "HPatchLite, 32 KB dict.",
-    "code": null,
+    "code": 2229,
     "buffers": 32768,
     "stack": null,
     "plus_old_file": false,

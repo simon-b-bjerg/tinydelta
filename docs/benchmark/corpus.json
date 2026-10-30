@@ -1,0 +1,27 @@
+{
+  "_comment": "Benchmark corpus: which versions to build and compare. Every corpus walks consecutive commits in a fixed range of a public repository, so the inputs are reproducible from this file alone. See bench/README.md.",
+  "micropython": {
+    "kind": "firmware",
+    "repo": "https://github.com/micropython/micropython",
+    "from": "v1.25.0",
+    "to": "v1.26.0",
+    "max_versions": 25,
+    "items": [
+      {"name": "stm32-NUCLEO_F091RC", "port": "stm32", "board": "NUCLEO_F091RC"},
+      {"name": "stm32-PYBV11", "port": "stm32", "board": "PYBV11"}
+    ]
+  },
+  "dtb": {
+    "kind": "device tree",
+    "repo": "https://git.kernel.org/pub/scm/linux/kernel/git/devicetree/devicetree-rebasing.git",
+    "from": "v7.0-dts",
+    "to": "v7.3-dts",
+    "max_versions": 25,
+    "items": [
+      {"name": "rk3588-rock-5b", "dts": "src/arm64/rockchip/rk3588-rock-5b.dts"},
+      {"name": "imx8mp-evk", "dts": "src/arm64/freescale/imx8mp-evk.dts"},
+      {"name": "k3-am625-sk", "dts": "src/arm64/ti/k3-am625-sk.dts"}
+    ]
+  },
+  "steps": [1, 5]
+}
