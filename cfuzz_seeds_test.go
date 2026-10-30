@@ -54,12 +54,17 @@ func TestWriteCFuzzSeeds(t *testing.T) {
 		}
 
 		// Header: output capacity (little-endian), dictionary length, page
-		// size byte; see the input layout in fuzz_decode.c.
+		// size byte, callback call to fail (0: none); see the input layout
+		// in fuzz_decode.c.
 		capacity := maxTarget
 		if i%5 == 0 {
 			capacity = len(target) // exactly enough
 		}
-		seed := []byte{byte(capacity), byte(capacity >> 8), byte(len(dict)), byte(r.Intn(256))}
+		failAt := 0
+		if i%4 == 3 {
+			failAt = 1 + r.Intn(60)
+		}
+		seed := []byte{byte(capacity), byte(capacity >> 8), byte(len(dict)), byte(r.Intn(256)), byte(failAt)}
 		seed = append(append(seed, dict...), patch...)
 		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("seed%03d", i)), seed, 0o644); err != nil {
 			t.Fatal(err)

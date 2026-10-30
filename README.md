@@ -7,6 +7,8 @@
 
 <p align="center">
   <a href="https://github.com/simon-b-bjerg/tinydelta/actions/workflows/ci.yml"><img src="https://github.com/simon-b-bjerg/tinydelta/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/simon-b-bjerg/tinydelta/actions/workflows/ci.yml"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsimon-b-bjerg%2Ftinydelta%2Fbadges%2Fcoverage-go.json" alt="Go coverage"></a>
+  <a href="https://github.com/simon-b-bjerg/tinydelta/actions/workflows/ci.yml"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsimon-b-bjerg%2Ftinydelta%2Fbadges%2Fcoverage-c.json" alt="C coverage"></a>
   <a href="https://github.com/simon-b-bjerg/tinydelta/releases"><img src="https://img.shields.io/github/v/release/simon-b-bjerg/tinydelta?sort=semver" alt="Release"></a>
   <a href="https://pkg.go.dev/github.com/simon-b-bjerg/tinydelta"><img src="https://pkg.go.dev/badge/github.com/simon-b-bjerg/tinydelta.svg" alt="Go Reference"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
@@ -551,7 +553,8 @@ comparison at the cursor so that even 1–3 byte unchanged runs become a
 ```sh
 go test ./...          # Go tests, plus the C decoders if a C compiler is installed
 scripts/c-check.sh     # strict C build (-Wall -Wextra -Wconversion -Wswitch-enum ... -Werror)
-scripts/c-fuzz.sh 300  # fuzz the C decoders for 5 min (needs clang with libFuzzer)
+scripts/c-fuzz.sh 300 fuzz-corpus   # fuzz the C decoders for 5 min, keeping the corpus (needs clang with libFuzzer)
+scripts/c-coverage.sh fuzz-corpus   # how much of the C library the fuzzer reaches (needs llvm-cov)
 scripts/c-size.sh      # Cortex-M code size and stack (needs arm-none-eabi-gcc)
 scripts/c-size-msp430.sh  # MSP430 code size and stack (needs msp430-elf-gcc)
 go test -run '^$' -fuzz '^FuzzEncodeRoundTrip$' -fuzztime 5m .   # fuzz the encoders
@@ -568,7 +571,7 @@ What is tested, and how:
 | `FuzzEncodeRoundTrip` (Go fuzzing) | derives a target from a fuzzed dictionary with a fuzzed edit script (overwrite, insert, delete, repeat, append); both encoders' patches must decode back to it, decode with an output cap of exactly the target length but fail one byte short, respect `MaxInstructionLen`, and the optimizing patch must not be larger than the greedy one |
 | `TestCDecoderMatchesGo`, `TestCIODecoderMatchesGo` | both C decoders against the Go decoder on valid, truncated and corrupted patches and too-small output buffers, at several scratch-buffer and flash-page sizes; the test driver polices the callback contract (sequential whole-page programming, no reads of unwritten data) |
 | `TestCIODecoderCallbackFailures` | a failing read, write or flush callback stops decoding with `TINYDELTA_ERR_IO` |
-| C fuzzing ([`c/fuzz/fuzz_decode.c`](c/fuzz/fuzz_decode.c)) | libFuzzer with AddressSanitizer and UndefinedBehaviorSanitizer, seeded with patches from the Go encoders. Every input goes through an independent reference decoder written from the wire format, the memory decoder, and the callback decoder at scratch sizes 1, 7 and 64, each with and without the page cache. All must agree on the result and the target bytes, and the callbacks abort on any breach of the contract, as the sanitizers do on any memory error or undefined behaviour |
+| C fuzzing ([`c/fuzz/fuzz_decode.c`](c/fuzz/fuzz_decode.c)) | libFuzzer with AddressSanitizer and UndefinedBehaviorSanitizer, seeded with patches from the Go encoders. Every input goes through an independent reference decoder written from the wire format, the memory decoder, and the callback decoder at scratch sizes 1, 7 and 64, each with and without the page cache. All must agree on the result and the target bytes, and the callbacks abort on any breach of the contract, as the sanitizers do on any memory error or undefined behaviour. The input can also make any one callback call fail, and the callback decoder must then report `TINYDELTA_ERR_IO` |
 | `scripts/c-check.sh` | the C library builds with strict warnings as errors, at scratch sizes 1, 7, 64 and 256 |
 
 #### How the fuzzing works
@@ -610,7 +613,9 @@ What runs in CI, on every push to `main` and every pull request:
 | job | runs |
 |---|---|
 | Go tests (Go 1.21 and current) | `gofmt`, `go vet`, `go test ./...` (including the C decoder tests, built with gcc on x86-64); on current Go also 60 s of `FuzzEncodeRoundTrip` |
-| C decoders fuzzed | `scripts/c-fuzz.sh 60`; crashing inputs are uploaded as a build artifact |
+| C decoders fuzzed | `scripts/c-fuzz.sh 60`; crashing inputs are hex dumped in the log and uploaded as a build artifact. Then `scripts/c-coverage.sh` reports how much of the C library the corpus reaches, with the lines it never reaches, in the job summary |
+| Go coverage | `go test -cover` over the library and the CLI, per function in the job summary |
+| Update coverage badges | on pushes to `main` only: writes the Go and C coverage figures for the badges above to the `badges` branch |
 | Go tests on Windows | `go test ./...` for the library and the CLI |
 | C library on 32-bit ARM | `scripts/c-check.sh` for x86-64 and ARM, the C decoder tests on 32-bit ARM under QEMU, and the Cortex-M code size and stack report (informational) |
 | C library on MSP430 | `scripts/c-check.sh` for 16-bit MSP430 and MSP430X (small and large memory models), the C decoder tests on MSP430X under GNU's MSP430 instruction simulator, and the MSP430 code size and stack report (informational). The toolchain is built from GNU sources by [`scripts/msp430-toolchain.sh`](scripts/msp430-toolchain.sh) and cached |
@@ -636,9 +641,12 @@ TINYDELTA_C_RUNNER="scripts/sim-run.sh msp430-elf-run" go test -run TestC .
 ```
 
 A failing input from `FuzzEncodeRoundTrip` lands in `testdata/fuzz/`
-and becomes a regression test once committed. One from
-`scripts/c-fuzz.sh` lands in `fuzz-artifacts/`; replay it by passing
-the file to the built `fuzz_decode` binary.
+and becomes a regression test once committed; hex dump it with
+`TINYDELTA_FUZZ_DUMP=<file> go test -run TestDumpFuzzInput -v .`. One
+from `scripts/c-fuzz.sh` lands in `fuzz-artifacts/` and is hex dumped,
+split into header, dictionary and patch; replay it by passing the file
+to the built `fuzz_decode` binary. In CI, both are also hex dumped in
+the log and shown as an annotation on the failed job.
 
 Optional tests use local data when present: `TestRealConfigs`
 round-trips every pair of `*.cfg` files in each subdirectory of

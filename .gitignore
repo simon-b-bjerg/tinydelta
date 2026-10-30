@@ -5,3 +5,4 @@ testdata/private/
 /dist/
 /build/
 fuzz-artifacts/
+fuzz-corpus/

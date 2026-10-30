@@ -2,8 +2,13 @@ package tinydelta
 
 import (
 	"bytes"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"math/rand"
+	"os"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -142,4 +147,43 @@ func FuzzEncodeRoundTrip(f *testing.F) {
 			t.Fatalf("optimizing patch %d B is larger than greedy patch %d B", sizes[1], sizes[0])
 		}
 	})
+}
+
+// TestDumpFuzzInput hex dumps a FuzzEncodeRoundTrip input, such as a
+// failing one the fuzzer wrote to testdata/fuzz/, from the file named by
+// $TINYDELTA_FUZZ_DUMP; it is skipped when that is unset. It shows the
+// arguments as the fuzz function sees them, plus the target derived from
+// them, so a failure can be read and turned into a regression test.
+func TestDumpFuzzInput(t *testing.T) {
+	path := os.Getenv("TINYDELTA_FUZZ_DUMP")
+	if path == "" {
+		t.Skip("TINYDELTA_FUZZ_DUMP not set")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Corpus file format: a "go test fuzz v1" line, then one Go literal per
+	// argument: []byte("..."), then uint16(n).
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 4 || lines[0] != "go test fuzz v1" {
+		t.Fatalf("%s: not a FuzzEncodeRoundTrip corpus file", path)
+	}
+	var args [2][]byte
+	for i := range args {
+		literal, ok := strings.CutPrefix(lines[1+i], "[]byte(")
+		literal, ok2 := strings.CutSuffix(literal, ")")
+		value, err := strconv.Unquote(literal)
+		if !ok || !ok2 || err != nil {
+			t.Fatalf("%s: argument %d: cannot parse %q", path, i+1, lines[1+i])
+		}
+		args[i] = []byte(value)
+	}
+	dict, script := args[0], args[1]
+	if len(dict) > fuzzMaxSize {
+		dict = dict[:fuzzMaxSize]
+	}
+	fmt.Printf("maxLen: %s\n\ndict (%d B):\n%s\nscript (%d B):\n%s\ntarget (%d B):\n%s",
+		lines[3], len(dict), hex.Dump(dict), len(script), hex.Dump(script),
+		len(applyEdits(dict, script)), hex.Dump(applyEdits(dict, script)))
 }
