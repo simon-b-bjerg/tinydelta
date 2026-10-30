@@ -7,10 +7,11 @@ Writes to <output dir>:
     summary.md        per kind of data and commit step: how tinydelta's patch
                       size compares with each other tool (geometric mean,
                       median, 10th/90th percentile of the size ratio, share
-                      of pairs where tinydelta is smaller), and each tool's
-                      patch size as a share of the target
+                      of pairs where tinydelta is smaller), plain and
+                      zlib-compressed, and each tool's patch size as a share
+                      of the target
     ratio_ecdf.svg    distribution of tinydelta's patch size divided by each
-                      other tool's, per kind of data
+                      other tool's, per kind of data; plain and zlib-compressed
     patch_share.svg   each tool's patch size as a share of the target
 Needs matplotlib.
 """
@@ -34,8 +35,15 @@ OTHERS = [  # fixed order: categorical slots 1-4, plus a line style each
     ("xdelta3", "xdelta3", "#1baf7a", "-."),
     ("bsdiff", "bsdiff", "#eda100", ":"),
 ]
-TINY = ("tinydelta", "tinydelta", "#0b0b0b")
 SURFACE, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#6b6a64", "#e4e3de"
+# tinydelta's variants, best first: optimal at any size is "tinydelta" in
+# the comparisons when present; the others appear in the patch-size tables.
+TINY_VARIANTS = [
+    ("tinydelta_optimal", "tinydelta (optimal)", INK),
+    ("tinydelta", "tinydelta (library default)", "#3d3c38"),
+    ("tinydelta_greedy", "tinydelta (greedy)", "#8a8983"),
+    ("tinydelta_zlib", "tinydelta + zlib", MUTED),
+]
 
 
 def load(path):
@@ -59,9 +67,21 @@ def geomean(values):
     return math.exp(sum(math.log(v) for v in values) / len(values))
 
 
-def ratios(rows, other):
+def tiny_key(rows):
+    """The tinydelta column the comparisons use: optimal at any size if
+    measured, else the library's default."""
+    return "tinydelta_optimal" if "tinydelta_optimal" in rows[0] else "tinydelta"
+
+
+def ratios(rows, other, tiny):
     # Both sizes are at least a few bytes for real pairs; guard anyway.
-    return [max(r["tinydelta"], 1) / max(r[other], 1) for r in rows if other in r]
+    return [max(r[tiny], 1) / max(r[other], 1) for r in rows if other in r and tiny in r]
+
+
+def stats(rs):
+    return "%.2f | %.2f | %.2f-%.2f | %d%%" % (
+        geomean(rs), statistics.median(rs), percentile(rs, 10), percentile(rs, 90),
+        round(100 * sum(1 for x in rs if x < 1) / len(rs)))
 
 
 def log_axis(axis, unit=""):
@@ -88,9 +108,14 @@ def summary(rows, tools_file, out):
     if os.path.exists(tools_file):
         versions = json.load(open(tools_file))
         lines += ["Tools: " + "; ".join("%s (%s)" % (k, v) for k, v in versions.items()), ""]
+    tiny = tiny_key(rows)
+    zlib_measured = "tinydelta_zlib" in rows[0]
     lines += [
-        "Ratio = tinydelta's patch size / the other tool's. Below 1: tinydelta is smaller.",
-        "Geometric mean is the right average for ratios; wins counts pairs where tinydelta is smaller.",
+        "Ratio = tinydelta's patch size / the other tool's; below 1, tinydelta is smaller. "
+        "Geometric mean is the right average for ratios; \"smaller\" is the share of pairs where "
+        "tinydelta is smaller. tinydelta is %s%s." % (
+            "the optimal encoder at any size" if tiny == "tinydelta_optimal" else "the library default",
+            "; tinydelta + zlib is that patch at zlib level 9, against the same tools" if zlib_measured else ""),
         "",
     ]
     for kind in kinds:
@@ -101,18 +126,20 @@ def summary(rows, tools_file, out):
                       "%d pairs from %s; median target %s bytes." % (
                           len(sel), ", ".join(items), "{:,}".format(int(statistics.median(r["target_bytes"] for r in sel)))),
                       "",
-                      "| vs | geo. mean | median | p10 | p90 | tinydelta smaller |",
-                      "|---|---:|---:|---:|---:|---:|"]
+                      "| tinydelta vs | geo. mean | median | p10-p90 | smaller |"
+                      + (" + zlib: geo. mean | median | p10-p90 | smaller |" if zlib_measured else ""),
+                      "|---|---:|---:|---:|---:|" + ("---:|---:|---:|---:|" if zlib_measured else "")]
             for key, label, _, _ in OTHERS:
-                rs = ratios(sel, key)
+                rs = ratios(sel, key, tiny)
                 if not rs:
                     continue
-                lines.append("| %s | %.2f | %.2f | %.2f | %.2f | %d%% |" % (
-                    label, geomean(rs), statistics.median(rs), percentile(rs, 10), percentile(rs, 90),
-                    round(100 * sum(1 for x in rs if x < 1) / len(rs))))
+                row = "| %s | %s |" % (label, stats(rs))
+                if zlib_measured:
+                    row += " %s |" % stats(ratios(sel, key, "tinydelta_zlib"))
+                lines.append(row)
             lines += ["", "Patch size as a share of the target (median, p10-p90):", "",
                       "| tool | median | p10 | p90 |", "|---|---:|---:|---:|"]
-            for key, label in [(TINY[0], TINY[1])] + [(k, l) for k, l, _, _ in OTHERS]:
+            for key, label in [(k, l) for k, l, _ in TINY_VARIANTS] + [(k, l) for k, l, _, _ in OTHERS]:
                 if key not in sel[0]:
                     continue
                 share = [100 * r[key] / max(r["target_bytes"], 1) for r in sel]
@@ -125,26 +152,31 @@ def summary(rows, tools_file, out):
 
 def ratio_ecdf(rows, out):
     kinds = sorted({r["kind"] for r in rows})
-    fig, axes = plt.subplots(1, len(kinds), figsize=(5.2 * len(kinds), 4.2), squeeze=False, facecolor=SURFACE)
-    for ax, kind in zip(axes[0], kinds):
-        sel = [r for r in rows if r["kind"] == kind]
-        style(ax)
-        ax.axvline(1, color=MUTED, linewidth=1)
-        for key, label, color, dash in OTHERS:
-            rs = sorted(ratios(sel, key))
-            if not rs:
-                continue
-            ys = [100 * (i + 1) / len(rs) for i in range(len(rs))]
-            ax.step(rs, ys, where="post", color=color, linestyle=dash, linewidth=2, label=label)
-            ax.annotate(label, (rs[len(rs) // 2], ys[len(rs) // 2]), xytext=(6, 0), textcoords="offset points",
-                        fontsize=8, color=INK, va="center")
-        ax.set_xscale("log")
-        log_axis(ax.xaxis)
-        ax.set_ylim(0, 100)
-        ax.set_title("%s (%d pairs)" % (kind, len(sel)), fontsize=11, color=INK, loc="left")
-        ax.set_xlabel("tinydelta patch size ÷ other tool's (log scale)", fontsize=9, color=MUTED)
-        ax.set_ylabel("share of pairs at or below (%)", fontsize=9, color=MUTED)
-        ax.text(0.98, 0.04, "← tinydelta smaller", transform=ax.transAxes, ha="right", fontsize=8, color=MUTED)
+    variants = [(tiny_key(rows), "tinydelta")]
+    if "tinydelta_zlib" in rows[0]:
+        variants.append(("tinydelta_zlib", "tinydelta + zlib"))
+    fig, axes = plt.subplots(len(variants), len(kinds), figsize=(5.2 * len(kinds), 4.2 * len(variants)),
+                             squeeze=False, facecolor=SURFACE)
+    for row_axes, (tiny, tiny_label) in zip(axes, variants):
+        for ax, kind in zip(row_axes, kinds):
+            sel = [r for r in rows if r["kind"] == kind]
+            style(ax)
+            ax.axvline(1, color=MUTED, linewidth=1)
+            for key, label, color, dash in OTHERS:
+                rs = sorted(ratios(sel, key, tiny))
+                if not rs:
+                    continue
+                ys = [100 * (i + 1) / len(rs) for i in range(len(rs))]
+                ax.step(rs, ys, where="post", color=color, linestyle=dash, linewidth=2, label=label)
+                ax.annotate(label, (rs[len(rs) // 2], ys[len(rs) // 2]), xytext=(6, 0),
+                            textcoords="offset points", fontsize=8, color=INK, va="center")
+            ax.set_xscale("log")
+            log_axis(ax.xaxis)
+            ax.set_ylim(0, 100)
+            ax.set_title("%s: %s (%d pairs)" % (tiny_label, kind, len(sel)), fontsize=11, color=INK, loc="left")
+            ax.set_xlabel("%s patch size ÷ other tool's (log scale)" % tiny_label, fontsize=9, color=MUTED)
+            ax.set_ylabel("share of pairs at or below (%)", fontsize=9, color=MUTED)
+            ax.text(0.98, 0.04, "← tinydelta smaller", transform=ax.transAxes, ha="right", fontsize=8, color=MUTED)
     axes[0][0].legend(frameon=False, fontsize=8, loc="upper left", labelcolor=INK)
     fig.tight_layout()
     fig.savefig(os.path.join(out, "ratio_ecdf.svg"), facecolor=SURFACE)
@@ -153,8 +185,9 @@ def ratio_ecdf(rows, out):
 
 def patch_share(rows, out):
     kinds = sorted({r["kind"] for r in rows})
-    tools = [TINY] + [(k, l, c) for k, l, c, _ in OTHERS if k in rows[0]]
-    fig, axes = plt.subplots(1, len(kinds), figsize=(5.2 * len(kinds), 3.6), squeeze=False, facecolor=SURFACE)
+    tools = [(k, l, c) for k, l, c in TINY_VARIANTS if k in rows[0]] + [(k, l, c) for k, l, c, _ in OTHERS if k in rows[0]]
+    fig, axes = plt.subplots(1, len(kinds), figsize=(5.6 * len(kinds), 1.2 + 0.5 * len(tools)),
+                             squeeze=False, facecolor=SURFACE)
     for ax, kind in zip(axes[0], kinds):
         sel = [r for r in rows if r["kind"] == kind]
         style(ax)

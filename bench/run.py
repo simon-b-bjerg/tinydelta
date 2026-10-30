@@ -4,20 +4,24 @@
     python3 bench/run.py <cache dir> <results.csv> [--tools a,b,...]
 
 Pairs are versions <step> apart within one item (steps from corpus.json),
-built by bench/collect.py. Every patch is decoded again and compared with
-the target, so a tool that produces a wrong patch stops the run instead
-of reporting a size.
+built by bench/collect.py, encoded in parallel ($BENCH_JOBS, default: one
+per CPU). Every patch is decoded again and compared with the target, so a
+tool that produces a wrong patch stops the run instead of reporting a size.
 
 Tools (set the binaries with environment variables; defaults are on PATH):
-    tinydelta         tinydelta encode (optimal; falls back to greedy for
-                      large targets, as the library does)   $TINYDELTA
-    tinydelta_greedy  tinydelta encode -greedy
-    openvcdiff        open-vcdiff encode -target_matches     $OPENVCDIFF
+    tinydelta          tinydelta encode, as the library does it: optimal,
+                       falling back to greedy above roughly 100 KB   $TINYDELTA
+    tinydelta_greedy   tinydelta encode -greedy
+    tinydelta_optimal  optimal at any size, through the test binary from
+                       `go test -c` (TestEncodeUnlimited)   $TINYDELTA_OPTIMAL
+    tinydelta_zlib     the tinydelta_optimal patch, zlib level 9
+    openvcdiff         open-vcdiff encode -target_matches     $OPENVCDIFF
     openvcdiff_zlib   the open-vcdiff patch, zlib level 9
     xdelta3           xdelta3 -9 -S none (VCDIFF, no secondary compression)
     bsdiff            bsdiff 4 (with bzip2 inside)
 """
 
+import concurrent.futures
 import csv
 import json
 import os
@@ -28,14 +32,20 @@ import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TINYDELTA = os.environ.get("TINYDELTA", "tinydelta")
+TINYDELTA_OPTIMAL = os.environ.get("TINYDELTA_OPTIMAL", "tinydelta-optimal.test")
 OPENVCDIFF = os.environ.get("OPENVCDIFF", "vcdiff")
-ALL_TOOLS = ["tinydelta", "tinydelta_greedy", "openvcdiff", "openvcdiff_zlib", "xdelta3", "bsdiff"]
+ALL_TOOLS = ["tinydelta", "tinydelta_greedy", "tinydelta_optimal", "tinydelta_zlib",
+             "openvcdiff", "openvcdiff_zlib", "xdelta3", "bsdiff"]
 
 
-def sh(*cmd, stdin=None):
-    result = subprocess.run(list(cmd), input=stdin, capture_output=True)
+class Failure(Exception):
+    pass
+
+
+def sh(*cmd, stdin=None, env=None):
+    result = subprocess.run(list(cmd), input=stdin, capture_output=True, env=env)
     if result.returncode != 0:
-        sys.exit("run: %s failed: %s" % (" ".join(cmd), result.stderr.decode(errors="replace")[-500:]))
+        raise Failure("%s failed: %s" % (" ".join(cmd), (result.stderr or result.stdout).decode(errors="replace")[-500:]))
     return result.stdout
 
 
@@ -53,7 +63,7 @@ def encode_all(tools, old, new, work):
 
     def check(tool, decoded):
         if decoded != target:
-            sys.exit("run: %s patch for %s does not decode to the target" % (tool, new))
+            raise Failure("%s patch for %s does not decode to the target" % (tool, new))
 
     for greedy in (False, True):
         tool = "tinydelta_greedy" if greedy else "tinydelta"
@@ -61,6 +71,12 @@ def encode_all(tools, old, new, work):
             sh(*([TINYDELTA, "encode"] + (["-greedy"] if greedy else []) + [old, new, patch]))
             check(tool, sh(TINYDELTA, "decode", old, patch))
             sizes[tool] = os.path.getsize(patch)
+    if "tinydelta_optimal" in tools or "tinydelta_zlib" in tools:
+        env = dict(os.environ, TINYDELTA_ENCODE_UNLIMITED="%s %s %s" % (old, new, patch))
+        sh(TINYDELTA_OPTIMAL, "-test.run", "^TestEncodeUnlimited$", env=env)
+        check("tinydelta_optimal", sh(TINYDELTA, "decode", old, patch))
+        sizes["tinydelta_optimal"] = os.path.getsize(patch)
+        sizes["tinydelta_zlib"] = len(zlib.compress(read(patch), 9))
     if "openvcdiff" in tools or "openvcdiff_zlib" in tools:
         sh(OPENVCDIFF, "encode", "-dictionary", old, "-target", new, "-delta", patch, "-target_matches")
         sh(OPENVCDIFF, "decode", "-dictionary", old, "-delta", patch, "-target", out)
@@ -78,6 +94,11 @@ def encode_all(tools, old, new, work):
         check("bsdiff", read(out))
         sizes["bsdiff"] = os.path.getsize(patch)
     return {t: sizes[t] for t in tools}
+
+
+def encode_pair(tools, old, new):
+    with tempfile.TemporaryDirectory(prefix="tinydelta-bench-") as work:
+        return encode_all(tools, old, new, work)
 
 
 def first_line(*cmd):
@@ -114,26 +135,37 @@ def main():
     corpus = json.load(open(os.environ.get("BENCH_CORPUS", os.path.join(HERE, "corpus.json"))))
     builds = os.path.join(cache, "builds")
 
-    rows = []
-    with tempfile.TemporaryDirectory(prefix="tinydelta-bench-") as work:
-        for name in sorted(os.listdir(builds)):
-            kind = corpus[name]["kind"]
-            for item in sorted(os.listdir(os.path.join(builds, name))):
-                folder = os.path.join(builds, name, item)
-                index = os.path.join(folder, "versions.json")
-                versions = json.load(open(index)) if os.path.exists(index) else []
-                if len(versions) < 2:
-                    continue  # nothing to pair (reported by collect.py)
-                for step in corpus["steps"]:
-                    for i in range(len(versions) - step):
-                        a, b = versions[i], versions[i + step]
-                        old, new = os.path.join(folder, a["file"]), os.path.join(folder, b["file"])
-                        row = {"corpus": name, "kind": kind, "item": item, "step": step,
-                               "from": a["commit"][:12], "to": b["commit"][:12],
-                               "dict_bytes": a["size"], "target_bytes": b["size"]}
-                        row.update(encode_all(tools, old, new, work))
-                        rows.append(row)
-                print("%s/%s: %d versions" % (name, item, len(versions)), flush=True)
+    pairs = []
+    for name in sorted(os.listdir(builds)):
+        kind = corpus[name]["kind"]
+        for item in sorted(os.listdir(os.path.join(builds, name))):
+            folder = os.path.join(builds, name, item)
+            index = os.path.join(folder, "versions.json")
+            versions = json.load(open(index)) if os.path.exists(index) else []
+            if len(versions) < 2:
+                continue  # nothing to pair (reported by collect.py)
+            for step in corpus["steps"]:
+                for i in range(len(versions) - step):
+                    a, b = versions[i], versions[i + step]
+                    pairs.append(({"corpus": name, "kind": kind, "item": item, "step": step,
+                                   "from": a["commit"][:12], "to": b["commit"][:12],
+                                   "dict_bytes": a["size"], "target_bytes": b["size"]},
+                                  os.path.join(folder, a["file"]), os.path.join(folder, b["file"])))
+
+    jobs = int(os.environ.get("BENCH_JOBS", os.cpu_count() or 1))
+    rows = [None] * len(pairs)
+    with concurrent.futures.ProcessPoolExecutor(max_workers=jobs) as pool:
+        futures = {pool.submit(encode_pair, tools, old, new): i for i, (_, old, new) in enumerate(pairs)}
+        for done, future in enumerate(concurrent.futures.as_completed(futures), 1):
+            i = futures[future]
+            try:
+                sizes = future.result()
+            except Failure as e:
+                pool.shutdown(cancel_futures=True)
+                sys.exit("run: %s" % e)
+            rows[i] = dict(pairs[i][0], **sizes)
+            if done % 20 == 0 or done == len(pairs):
+                print("%d/%d pairs" % (done, len(pairs)), flush=True)
 
     os.makedirs(os.path.dirname(os.path.abspath(results)), exist_ok=True)
     with open(results, "w", newline="") as f:

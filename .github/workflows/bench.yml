@@ -45,6 +45,8 @@ jobs:
       - name: Build tinydelta and open-vcdiff
         run: |
           go build -o "$RUNNER_TEMP/bin/tinydelta" ./cmd/tinydelta
+          # Optimal encoding at any size, through TestEncodeUnlimited.
+          go test -c -o "$RUNNER_TEMP/bin/tinydelta-optimal.test" .
           git clone -q https://github.com/google/open-vcdiff "$RUNNER_TEMP/open-vcdiff"
           git -C "$RUNNER_TEMP/open-vcdiff" checkout -q "$OPENVCDIFF_COMMIT"
           cmake -S "$RUNNER_TEMP/open-vcdiff" -B "$RUNNER_TEMP/open-vcdiff/build" -DCMAKE_BUILD_TYPE=Release \

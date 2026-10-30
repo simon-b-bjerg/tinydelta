@@ -23,7 +23,8 @@ results, so the inputs can be rebuilt and checked.
 
 | tool | settings |
 |---|---|
-| tinydelta | `encode` (optimal; above roughly 100 KB the library falls back to greedy, as it does for most firmware) and `encode -greedy` |
+| tinydelta | optimal at any size (the library's encoder with its memory limit lifted, through `TestEncodeUnlimited`; the comparisons use this); also the library's default, which falls back to greedy above roughly 100 KB as it does for most firmware, and `encode -greedy` |
+| tinydelta + zlib | the optimal patch at zlib level 9, compared with the same tools; zlib's framing makes very small patches larger |
 | open-vcdiff | `encode -target_matches`, its smallest setting; also its output zlib-compressed at level 9, the pipeline tinydelta replaces |
 | xdelta3 | `-9 -S none` (VCDIFF, no secondary compression) |
 | bsdiff | bsdiff 4 (bzip2 inside) |
@@ -50,9 +51,14 @@ Needs git, Go, Python 3 with matplotlib, `arm-none-eabi-gcc`, `cpp`,
 ```sh
 go build -o /tmp/tinydelta ./cmd/tinydelta
 python3 bench/collect.py bench/.cache          # clones and builds; slow the first time
-TINYDELTA=/tmp/tinydelta python3 bench/run.py bench/.cache results/results.csv
+go test -c -o /tmp/tinydelta-optimal.test .
+TINYDELTA=/tmp/tinydelta TINYDELTA_OPTIMAL=/tmp/tinydelta-optimal.test \
+  python3 bench/run.py bench/.cache results/results.csv
 python3 bench/plot.py results/results.csv results
 ```
 
-`run.py --tools tinydelta,xdelta3` runs a subset of the tools, and
+Pairs are encoded in parallel, one per CPU (`BENCH_JOBS` to change it);
+optimal encoding of firmware needs about 700 bytes of memory per target
+byte, so a few hundred MB per job. `run.py --tools tinydelta,xdelta3`
+runs a subset of the tools, and
 `BENCH_CORPUS=<file>` points the scripts at another corpus file.
