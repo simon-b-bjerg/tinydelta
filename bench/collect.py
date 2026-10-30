@@ -153,17 +153,37 @@ def collect_dtb(cache, name, spec):
     return items
 
 
+def annotate(level, title, text):
+    """Prints a GitHub Actions annotation (harmless elsewhere)."""
+    print("::%s title=%s::%s" % (level, title, text.replace("%", "%25").replace("\n", "%0A")), flush=True)
+
+
+def tail(path, lines=40):
+    if not os.path.exists(path):
+        return "(no log)"
+    with open(path, errors="replace") as f:
+        return "".join(f.readlines()[-lines:])
+
+
 def main():
     cache = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, ".cache"))
     corpus = json.load(open(os.environ.get("BENCH_CORPUS", os.path.join(HERE, "corpus.json"))))
     collectors = {"micropython": collect_micropython, "dtb": collect_dtb}
+    report, failed = [], []
     for name, collector in collectors.items():
+        if name not in corpus:
+            continue
         for item in collector(cache, name, corpus[name]):
+            report.append("%s/%s: %d versions, %d commits skipped (did not build)%s" % (
+                name, item.name, len(item.versions), len(item.skipped),
+                ": " + " ".join(c[:12] for c in item.skipped[:10]) if item.skipped else ""))
             if len(item.versions) < 2:
-                sys.exit("collect: %s/%s has %d versions, too few to compare" % (name, item.name, len(item.versions)))
-            if item.skipped:
-                print("%s/%s: skipped %d commits that did not build: %s" % (
-                    name, item.name, len(item.skipped), " ".join(c[:12] for c in item.skipped)))
+                failed.append(name)
+    annotate("notice", "Corpus", "\n".join(report))
+    if failed:
+        for name in sorted(set(failed)):
+            annotate("error", "Build log of %s (end)" % name, tail(os.path.join(cache, "build-%s.log" % name)))
+        sys.exit("collect: too few versions to compare; see the build logs in %s" % cache)
 
 
 if __name__ == "__main__":

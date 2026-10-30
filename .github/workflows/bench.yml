@@ -54,13 +54,22 @@ jobs:
           cp "$(find "$RUNNER_TEMP/open-vcdiff/build" -type f -name vcdiff -perm -u+x | head -1)" "$RUNNER_TEMP/bin/vcdiff"
           "$RUNNER_TEMP/bin/vcdiff" help > /dev/null 2>&1 || true
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # Builds are cached even when a later step fails, and collect.py
+      # continues from them, so a run never repeats finished builds.
       - name: Restore cached builds of the corpus
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: bench/.cache/builds
-          key: bench-builds-${{ hashFiles('bench/corpus.json', 'bench/collect.py') }}
+          key: bench-builds-${{ hashFiles('bench/corpus.json') }}-${{ github.run_id }}
+          restore-keys: bench-builds-${{ hashFiles('bench/corpus.json') }}-
       - name: Build the corpus (MicroPython firmware, device trees)
         run: python3 bench/collect.py bench/.cache
+      - name: Cache the builds
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: bench/.cache/builds
+          key: bench-builds-${{ hashFiles('bench/corpus.json') }}-${{ github.run_id }}
       - name: Encode every pair with every tool
         env:
           OPENVCDIFF_VERSION: open-vcdiff ${{ env.OPENVCDIFF_COMMIT }}
