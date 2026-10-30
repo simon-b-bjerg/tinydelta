@@ -190,40 +190,47 @@ def summary(rows, tools_file, out):
         f.write("\n".join(lines))
 
 
+# The comparisons the distribution and pair graphs show: what compression
+# would add, the format tinydelta replaces, the closest embedded
+# alternative, and the strongest on size. The rest is in the forest graph.
+KEY_TOOLS = ["tinydelta_zlib", "openvcdiff", "hpatchlite_4k", "bsdiff"]
+
+
 def ratio_ecdf(rows, out):
-    """tinydelta against every tool, one baseline; the uncompressed and the
-    compressed formats in separate rows, so no panel has too many lines."""
+    """Every pair, per kind: for each ratio along the x axis, the share of
+    pairs at or below it. Where a line crosses 1 is the share of pairs
+    where tinydelta is smaller; the legend states it."""
     kinds = kinds_of(rows)
-    groups = [(tiny_key(rows), "tinydelta", "uncompressed formats", False),
-              (tiny_key(rows), "tinydelta", "compressed formats", True)]
-    groups = [g for g in groups if any(k in rows[0] and c == g[3] for k, _, _, _, c in OTHERS)]
-    fig, axes = plt.subplots(len(groups), len(kinds), figsize=(5.4 * len(kinds), 4.4 * len(groups)),
-                             squeeze=False, facecolor=SURFACE)
-    for row_axes, (tiny, tiny_label, against, compressed) in zip(axes, groups):
-        for ax, kind in zip(row_axes, kinds):
-            sel = [r for r in rows if r["kind"] == kind]
-            style(ax)
-            ax.axvline(1, color=MUTED, linewidth=1)
-            for slot, (key, label, color, dash, comp) in enumerate(OTHERS):
-                rs = sorted(ratios(sel, key, tiny)) if comp == compressed else []
-                if not rs:
-                    continue
-                ys = [100 * (i + 1) / len(rs) for i in range(len(rs))]
-                ax.step(rs, ys, where="post", color=color, linestyle=dash, linewidth=2, label=label)
-                # Each tool's label at its own height, so labels don't collide.
-                at = min(len(rs) - 1, int(len(rs) * (0.12 + 0.11 * slot)))
-                ax.annotate(label, (rs[at], ys[at]), xytext=(6, 0),
-                            textcoords="offset points", fontsize=8, color=INK, va="center")
-            ax.set_xscale("log")
-            log_axis(ax.xaxis)
-            ax.set_ylim(0, 100)
-            ax.set_title("%s vs %s: %s (%d pairs)" % (tiny_label, against, kind, len(sel)),
-                         fontsize=10, color=INK, loc="left")
-            ax.set_xlabel("%s patch size ÷ other tool's (log scale)" % tiny_label, fontsize=9, color=MUTED)
-            ax.set_ylabel("share of pairs at or below (%)", fontsize=9, color=MUTED)
-            ax.text(0.98, 0.04, "← tinydelta smaller", transform=ax.transAxes, ha="right", fontsize=8, color=MUTED)
-        row_axes[0].legend(frameon=False, fontsize=8, loc="upper left", labelcolor=INK)
-    fig.tight_layout()
+    tiny = tiny_key(rows)
+    tools = [t for t in OTHERS if t[0] in KEY_TOOLS and t[0] in rows[0]]
+    fig, axes = plt.subplots(1, len(kinds), figsize=(5.6 * len(kinds), 4.8), squeeze=False, sharex=True,
+                             facecolor=SURFACE)
+    for ax, kind in zip(axes[0], kinds):
+        sel = [r for r in rows if r["kind"] == kind]
+        style(ax)
+        ax.axvline(1, color=MUTED, linewidth=1.2)
+        for key, label, color, dash, _ in tools:
+            rs = sorted(ratios(sel, key, tiny))
+            if not rs:
+                continue
+            ys = [100 * (i + 1) / len(rs) for i in range(len(rs))]
+            wins = round(100 * sum(1 for x in rs if x < 1) / len(rs))
+            ax.step(rs, ys, where="post", color=color, linestyle=dash, linewidth=2,
+                    label="%s: tinydelta smaller in %d%%" % (label, wins))
+        ax.set_xscale("log")
+        log_axis(ax.xaxis)
+        ax.set_ylim(0, 100)
+        ax.set_title("%s (%d pairs)" % (kind, len(sel)), fontsize=11, color=INK, loc="left")
+        ax.set_xlabel("tinydelta's patch size ÷ the tool's (log scale)", fontsize=9, color=MUTED)
+        ax.set_ylabel("% of pairs at or below this ratio", fontsize=9, color=MUTED)
+        ax.legend(frameon=False, fontsize=8, loc="upper left", labelcolor=INK)
+    height = fig.get_figheight()
+    fig.text(0.02, 1 - 0.15 / height, "How often, and by how much, tinydelta's patch is smaller",
+             ha="left", va="top", fontsize=13, color=INK)
+    fig.text(0.02, 1 - 0.45 / height, "Each line climbs through every pair, smallest ratio first. "
+             "Where it crosses 1: the share of pairs where tinydelta's patch is smaller.",
+             ha="left", va="top", fontsize=9, color=MUTED)
+    fig.tight_layout(rect=(0, 0, 1, 1 - 0.7 / height))
     save(fig, out, "ratio_ecdf")
 
 
@@ -305,9 +312,7 @@ def forest(rows, out):
     save(fig, out, "forest")
 
 
-# The competitors shown pair by pair: the format tinydelta replaces, the
-# closest embedded alternative, and the strongest on size.
-PAIR_TOOLS = ["openvcdiff", "hpatchlite_4k", "bsdiff"]
+PAIR_TOOLS = ["openvcdiff", "hpatchlite_4k", "bsdiff"]  # KEY_TOOLS, less tinydelta + zlib
 KIND_MARKERS = ["o", "^", "s", "D"]
 
 
