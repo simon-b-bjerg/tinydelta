@@ -59,7 +59,7 @@ SURFACE, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#6b6a64", "#e4e3de"
 # the comparisons when present; the others appear in the patch-size tables.
 TINY_VARIANTS = [
     ("tinydelta_optimal", "tinydelta (optimal)", INK),
-    ("tinydelta", "tinydelta (library default)", "#3d3c38"),
+    ("tinydelta", "tinydelta (library default)", INK),
     ("tinydelta_greedy", "tinydelta (greedy)", "#8a8983"),
 ]
 
@@ -360,7 +360,10 @@ def tradeoff(rows, out):
     decoders = {k: v for k, v in json.load(open(path)).items() if not k.startswith("_")}
     colors = {k: c for k, _, c, _, _ in OTHERS}
     colors.update({k: c for k, _, c in TINY_VARIANTS})
-    tools = [k for k in decoders if k in rows[0]]
+    # decoders.json's "tinydelta" stands for whichever tinydelta column the
+    # comparisons use (optimal, when measured).
+    column = {k: (tiny_key(rows) if k == "tinydelta" else k) for k in decoders}
+    tools = [k for k in decoders if column[k] in rows[0]]
     kinds = kinds_of(rows)
     fig, axes = plt.subplots(1, len(kinds), figsize=(5.6 * len(kinds), 4.9), squeeze=False, facecolor=SURFACE)
     for ax, kind in zip(axes[0], kinds):
@@ -372,9 +375,9 @@ def tradeoff(rows, out):
             d = decoders[key]
             footprint = (d["code"] or 0) + d["buffers"] + (old if d["plus_old_file"] else 0)
             lower_bound = d["code"] is None or d["plus_old_file"]
-            share = statistics.median(100 * r[key] / max(r["target_bytes"], 1) for r in sel)
+            share = statistics.median(100 * r[column[key]] / max(r["target_bytes"], 1) for r in sel)
             ax.plot([footprint], [share], marker=">" if lower_bound else "o", markersize=9,
-                    color=colors.get(key, MUTED), markeredgecolor=SURFACE, markeredgewidth=1.5, linestyle="")
+                    color=colors.get(column[key], INK), markeredgecolor=SURFACE, markeredgewidth=1.5, linestyle="")
             points.append((footprint, share, d["label"] + (" (at least)" if lower_bound else "")))
         # A label goes below its point when another point sits close above
         # it (within a factor of 4 in footprint and 1.4 in size).

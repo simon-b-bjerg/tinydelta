@@ -14,7 +14,9 @@ Tools (set the binaries with environment variables; defaults are on PATH):
     tinydelta_greedy   tinydelta encode -greedy
     tinydelta_optimal  optimal at any size, through the test binary from
                        `go test -c` (TestEncodeUnlimited)   $TINYDELTA_OPTIMAL
-    tinydelta_zlib     the tinydelta_optimal patch, zlib level 9
+                       Not run by default: a few hundred MB and a minute or
+                       more per firmware pair; add it with --tools.
+    tinydelta_zlib     the tinydelta patch (library default), zlib level 9
     openvcdiff         open-vcdiff encode -target_matches     $OPENVCDIFF
     openvcdiff_zlib   the open-vcdiff patch, zlib level 9
     xdelta3           xdelta3 -9 -S none (VCDIFF, no secondary compression)
@@ -47,6 +49,9 @@ HPATCHI = os.environ.get("HPATCHI", "hpatchi")
 ALL_TOOLS = ["tinydelta", "tinydelta_greedy", "tinydelta_optimal", "tinydelta_zlib",
              "openvcdiff", "openvcdiff_zlib", "xdelta3", "bsdiff",
              "detools", "hpatchlite_4k", "hpatchlite_32k", "zstd"]
+# Run by default: all but tinydelta_optimal, which takes a few hundred MB
+# and a minute or more per firmware pair (--tools adds it).
+DEFAULT_TOOLS = [t for t in ALL_TOOLS if t != "tinydelta_optimal"]
 
 
 class Failure(Exception):
@@ -78,16 +83,17 @@ def encode_all(tools, old, new, work):
 
     for greedy in (False, True):
         tool = "tinydelta_greedy" if greedy else "tinydelta"
-        if tool in tools:
+        if tool in tools or (tool == "tinydelta" and "tinydelta_zlib" in tools):
             sh(*([TINYDELTA, "encode"] + (["-greedy"] if greedy else []) + [old, new, patch]))
             check(tool, sh(TINYDELTA, "decode", old, patch))
             sizes[tool] = os.path.getsize(patch)
-    if "tinydelta_optimal" in tools or "tinydelta_zlib" in tools:
+            if tool == "tinydelta":
+                sizes["tinydelta_zlib"] = len(zlib.compress(read(patch), 9))
+    if "tinydelta_optimal" in tools:
         env = dict(os.environ, TINYDELTA_ENCODE_UNLIMITED="%s %s %s" % (old, new, patch))
         sh(TINYDELTA_OPTIMAL, "-test.run", "^TestEncodeUnlimited$", env=env)
         check("tinydelta_optimal", sh(TINYDELTA, "decode", old, patch))
         sizes["tinydelta_optimal"] = os.path.getsize(patch)
-        sizes["tinydelta_zlib"] = len(zlib.compress(read(patch), 9))
     if "openvcdiff" in tools or "openvcdiff_zlib" in tools:
         sh(OPENVCDIFF, "encode", "-dictionary", old, "-target", new, "-delta", patch, "-target_matches")
         sh(OPENVCDIFF, "decode", "-dictionary", old, "-delta", patch, "-target", out)
@@ -163,7 +169,7 @@ def tool_versions(tools):
 
 def main():
     args = sys.argv[1:]
-    tools = ALL_TOOLS
+    tools = DEFAULT_TOOLS
     if "--tools" in args:
         i = args.index("--tools")
         tools = [t for t in args[i + 1].split(",") if t]
