@@ -87,6 +87,21 @@ jobs:
           path: fuzz-artifacts/
           if-no-files-found: ignore
 
+  c-analyze:
+    name: C static analysis
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang and clang-tidy
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-18 clang-tidy-18
+      - name: GCC analyzer, Clang Static Analyzer and clang-tidy
+        env:
+          CLANG: clang-18
+          CLANG_TIDY: clang-tidy-18
+        run: scripts/c-analyze.sh
+
   windows:
     name: Go tests on Windows
     runs-on: windows-latest
