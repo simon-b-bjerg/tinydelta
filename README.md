@@ -40,7 +40,8 @@ no compression library.
   and `.bss`). All working state is on the stack, and the only other
   memory is buffers you pass in, so the decoders are reentrant.
 - **Verified.** The C decoders are tested against the Go decoder on
-  valid, truncated and corrupted patches, on x86-64 and 32-bit ARM, and
+  valid, truncated and corrupted patches, on x86-64, 32-bit ARM and
+  16-bit MSP430 (in GNU's instruction simulator), and
   fuzzed with address and undefined-behaviour sanitizers, in CI
   ([Tests](#tests)).
 - **Simple, documented format.** The full wire format fits on one page
@@ -286,6 +287,17 @@ even on Cortex-M0). Reproduce with [`scripts/c-size.sh`](scripts/c-size.sh).
 \* Deepest path, including the 64-byte internal buffer, excluding your
 callbacks' own stack use.
 
+On 16-bit MSP430 the code is roughly two and a half times larger, as
+every 32-bit operation takes several 16-bit instructions.
+`msp430-elf-gcc` 14.2, `-Os`; reproduce with
+[`scripts/c-size-msp430.sh`](scripts/c-size-msp430.sh).
+
+| part | MSP430 | MSP430X | MSP430X, `-mlarge` | stack (`-mlarge`) |
+|---|---:|---:|---:|---:|
+| memory decoder | 964 B | 932 B | 1,068 B | 112 B |
+| callback decoder | 1,740 B | 1,682 B | 1,736 B | ~245 B\* |
+| write cache | 628 B | 602 B | 678 B | +40 B |
+
 ### Results
 
 Every decoding function returns a `tinydelta_result`:
@@ -530,6 +542,7 @@ go test ./...          # Go tests, plus the C decoders if a C compiler is instal
 scripts/c-check.sh     # strict C build (-Wall -Wextra -Wconversion -Wswitch-enum ... -Werror)
 scripts/c-fuzz.sh 300  # fuzz the C decoders for 5 min (needs clang with libFuzzer)
 scripts/c-size.sh      # Cortex-M code size and stack (needs arm-none-eabi-gcc)
+scripts/c-size-msp430.sh  # MSP430 code size and stack (needs msp430-elf-gcc)
 go test -run '^$' -fuzz '^FuzzEncodeRoundTrip$' -fuzztime 5m .   # fuzz the encoders
 ```
 
@@ -589,16 +602,26 @@ What runs in CI, on every push to `main` and every pull request:
 | C decoders fuzzed | `scripts/c-fuzz.sh 60`; crashing inputs are uploaded as a build artifact |
 | Go tests on Windows | `go test ./...` for the library and the CLI |
 | C library on 32-bit ARM | `scripts/c-check.sh` for x86-64 and ARM, the C decoder tests on 32-bit ARM under QEMU, and the Cortex-M code size and stack report (informational) |
+| C library on MSP430 | `scripts/c-check.sh` for 16-bit MSP430 and MSP430X (small and large memory models), the C decoder tests on MSP430X under GNU's MSP430 instruction simulator, and the MSP430 code size and stack report (informational). The toolchain is built from GNU sources by [`scripts/msp430-toolchain.sh`](scripts/msp430-toolchain.sh) and cached |
 
-Not covered: the C code is not built or run on a 16-bit target, and
-nothing runs on a real microcontroller; the Cortex-M figures are
-measured from the compiled code, not on hardware.
+Not covered: nothing runs on a real microcontroller; the Cortex-M and
+MSP430 figures are measured from the compiled code, not on hardware.
 
 To run the C decoder tests on another architecture, set a cross
 compiler and an emulator, as CI does for 32-bit ARM:
 
 ```sh
 TINYDELTA_CC="arm-linux-gnueabihf-gcc -static" TINYDELTA_C_RUNNER=qemu-arm go test -run TestC .
+```
+
+or for MSP430, as a bare-metal program in the simulator.
+[`scripts/sim-run.sh`](scripts/sim-run.sh) hands the program its
+arguments in a file, as bare-metal startup code passes none:
+
+```sh
+scripts/msp430-toolchain.sh && export PATH="$HOME/.cache/msp430/bin:$PATH"   # once, ~15 min
+TINYDELTA_CC="msp430-elf-gcc -mcpu=msp430x -mlarge -msim" \
+TINYDELTA_C_RUNNER="scripts/sim-run.sh msp430-elf-run" go test -run TestC .
 ```
 
 A failing input from `FuzzEncodeRoundTrip` lands in `testdata/fuzz/`

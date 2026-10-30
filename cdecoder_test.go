@@ -11,25 +11,66 @@ import (
 	"testing"
 )
 
+// cDriverHelpers holds what the C test drivers share, written to also run
+// under a bare-metal instruction simulator (e.g. msp430-elf-run):
+//
+//   - args_from_file: the simulator's startup code calls main() with no
+//     arguments, so scripts/sim-run.sh leaves them in the file "args", one
+//     per line, in the working directory.
+//   - slurp reads a whole file to its end; seeking to the end to find the
+//     length doesn't work under the MSP430 simulator.
+//
+// Needs <stdio.h> and <stdlib.h>.
+const cDriverHelpers = `
+static uint8_t *slurp(const char *f, uint32_t *n) {
+	enum { CHUNK = 1024 };
+	FILE *fp = fopen(f, "rb");
+	uint8_t *b = NULL;
+	size_t len = 0, got;
+	if (!fp) exit(2);
+	do {
+		b = realloc(b, len + CHUNK);
+		if (!b) exit(2);
+		got = fread(b + len, 1, CHUNK, fp);
+		len += got;
+	} while (got == CHUNK);
+	fclose(fp);
+	*n = (uint32_t)len;
+	return b;
+}
+static void args_from_file(int *argc, char ***argv) {
+	static char text[1024], *args[8];
+	int count = 1;
+	size_t n;
+	FILE *fp;
+	if (*argc > 1 || !(fp = fopen("args", "rb"))) return;
+	n = fread(text, 1, sizeof text - 1, fp);
+	fclose(fp);
+	text[n] = 0;
+	args[0] = "driver";
+	for (char *s = text; *s && count < 7; count++) {
+		args[count] = s;
+		while (*s && *s != '\n') s++;
+		if (*s) *s++ = 0;
+	}
+	*argc = count;
+	*argv = args;
+}
+`
+
+// cCapacity is the target capacity the C tests use where any target
+// should fit: larger than every test target, and small enough for the RAM
+// of a 16-bit microcontroller (MSP430 under the simulator).
+const cCapacity = 8 << 10
+
 // cDriver feeds files to the C reference decoder (c/tinydelta_decode.c):
 // driver <dict> <patch> <out> <out_cap>. It exits 0 on success, 1 when the
 // decoder rejects the input.
 const cDriver = `#include <stdio.h>
 #include <stdlib.h>
 #include "tinydelta.h"
-static uint8_t *slurp(const char *f, uint32_t *n) {
-	FILE *fp = fopen(f, "rb");
-	if (!fp) exit(2);
-	fseek(fp, 0, SEEK_END);
-	long l = ftell(fp);
-	fseek(fp, 0, SEEK_SET);
-	uint8_t *b = malloc(l ? (size_t)l : 1);
-	if (fread(b, 1, (size_t)l, fp) != (size_t)l) exit(2);
-	fclose(fp);
-	*n = (uint32_t)l;
-	return b;
-}
-int main(int argc, char **argv) {
+` + cDriverHelpers + `int main(int argc, char **argv) {
+	args_from_file(&argc, &argv);
 	if (argc != 5) return 2;
 	uint32_t dn, pn, on;
 	uint8_t *d = slurp(argv[1], &dn), *p = slurp(argv[2], &pn);
@@ -81,11 +122,13 @@ func TestCDecoderMatchesGo(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "driver.c"), []byte(cDriver), 0o644)
 	cCompile(t, bin, "c/tinydelta_decode.c", filepath.Join(dir, "driver.c"))
 
+	var failure string // how the last failed run ended, for test messages
 	cDecode := func(dict, patch []byte, capacity int) ([]byte, bool) {
 		d, p, o := filepath.Join(dir, "d"), filepath.Join(dir, "p"), filepath.Join(dir, "o")
 		os.WriteFile(d, dict, 0o644)
 		os.WriteFile(p, patch, 0o644)
-		if cCommand(bin, d, p, o, fmt.Sprint(capacity)).Run() != nil {
+		if msg, err := cCommand(bin, d, p, o, fmt.Sprint(capacity)).CombinedOutput(); err != nil {
+			failure = fmt.Sprintf("%v: %s", err, bytes.TrimSpace(msg))
 			return nil, false
 		}
 		out, _ := os.ReadFile(o)
@@ -113,8 +156,11 @@ func TestCDecoderMatchesGo(t *testing.T) {
 		{"empty dict", nil, base},
 		{"empty target", base, nil},
 	}
-	const big = 1 << 24
+	const big = cCapacity
 	for _, p := range pairs {
+		if len(p.tgt) >= big {
+			t.Fatalf("%s: target does not fit cCapacity", p.name)
+		}
 		for _, enc := range []struct {
 			name string
 			fn   func(dict, target []byte, maxLen int) []byte
@@ -123,7 +169,7 @@ func TestCDecoderMatchesGo(t *testing.T) {
 			label := p.name + "/" + enc.name
 			got, ok := cDecode(p.dict, patch, big)
 			if !ok || !bytes.Equal(got, p.tgt) {
-				t.Fatalf("%s: C decoder did not reproduce the target", label)
+				t.Fatalf("%s: C decoder did not reproduce the target (%s)", label, failure)
 			}
 			compare(label+" cap=len", p.dict, patch, max(len(p.tgt), 1))
 			if len(p.tgt) > 1 {

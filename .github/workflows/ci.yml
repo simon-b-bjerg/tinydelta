@@ -95,3 +95,58 @@ jobs:
         run: go test -run 'TestC' -v .
       - name: Code size (Cortex-M)
         run: scripts/c-size.sh | tee -a "$GITHUB_STEP_SUMMARY"
+
+  c-msp430:
+    name: C library on MSP430 (GNU simulator)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - name: Restore cached MSP430 toolchain
+        id: toolchain
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/msp430
+          key: msp430-${{ runner.os }}-${{ hashFiles('scripts/msp430-toolchain.sh') }}
+      - name: Build MSP430-GCC and the GNU MSP430 simulator (when not cached)
+        if: steps.toolchain.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgmp-dev libmpfr-dev libmpc-dev
+          scripts/msp430-toolchain.sh ~/.cache/msp430
+      - name: Cache MSP430 toolchain
+        if: steps.toolchain.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/msp430
+          key: ${{ steps.toolchain.outputs.cache-primary-key }}
+      - run: echo "$HOME/.cache/msp430/bin" >> "$GITHUB_PATH"
+      - name: Strict build (16-bit int; small and large memory models)
+        run: |
+          set -o pipefail
+          {
+            scripts/c-check.sh msp430-elf-gcc -mcpu=msp430
+            scripts/c-check.sh msp430-elf-gcc -mcpu=msp430x
+            scripts/c-check.sh msp430-elf-gcc -mcpu=msp430x -mlarge
+          } 2>&1 | tee "$RUNNER_TEMP/step.log"
+      - name: C decoders against the Go decoder, on MSP430X (simulator)
+        env:
+          TINYDELTA_CC: msp430-elf-gcc -mcpu=msp430x -mlarge -msim
+          TINYDELTA_C_RUNNER: scripts/sim-run.sh msp430-elf-run
+        run: |
+          set -o pipefail
+          go test -run 'TestC' -v . 2>&1 | tee "$RUNNER_TEMP/step.log"
+      - name: Code size (MSP430)
+        run: |
+          set -o pipefail
+          scripts/c-size-msp430.sh 2>&1 | tee "$RUNNER_TEMP/step.log" | tee -a "$GITHUB_STEP_SUMMARY"
+          sed 's/%/%25/g' "$RUNNER_TEMP/step.log" | awk 'BEGIN { printf "::notice title=MSP430 code size::" } { printf "%s%%0A", $0 } END { print "" }'
+      - name: Show the failing step's output as an annotation
+        if: failure()
+        run: |
+          [ -f "$RUNNER_TEMP/step.log" ] || exit 0
+          grep -v '^=== RUN\|^--- PASS' "$RUNNER_TEMP/step.log" | tail -n 40 |
+            sed 's/%/%25/g' | awk 'BEGIN { printf "::error::" } { printf "%s%%0A", $0 } END { print "" }'

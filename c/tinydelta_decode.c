@@ -24,6 +24,9 @@ tinydelta_result tinydelta_decode(const uint8_t *dict, uint32_t dict_len,
 
         length = instruction_length(instruction);
         if (length > out_cap - out_pos) return TINYDELTA_ERR_TOO_LARGE;
+        /* Each case below checks length against its source's buffer too,
+         * so it fits in size_t (16 bits on some targets, e.g. MSP430)
+         * when it reaches memcpy. */
 
         switch (instruction_opcode(instruction)) {
         case TINYDELTA_OP_COPY:
@@ -34,14 +37,14 @@ tinydelta_result tinydelta_decode(const uint8_t *dict, uint32_t dict_len,
             address = cursor + zigzag_decode(delta);
             if (!range_within(address, length, dict_len)) return TINYDELTA_ERR_MALFORMED;
 
-            memcpy(out + out_pos, dict + address, length);
+            memcpy(out + out_pos, dict + address, (size_t)length);
             cursor = address + length;
             break;
 
         case TINYDELTA_OP_ADD:
             if (!range_within(patch_pos, length, patch_len)) return TINYDELTA_ERR_MALFORMED;
 
-            memcpy(out + out_pos, patch + patch_pos, length);
+            memcpy(out + out_pos, patch + patch_pos, (size_t)length);
             patch_pos += length;
             cursor += length;
             break;
@@ -49,7 +52,7 @@ tinydelta_result tinydelta_decode(const uint8_t *dict, uint32_t dict_len,
         case TINYDELTA_OP_SKIP:
             if (!range_within(cursor, length, dict_len)) return TINYDELTA_ERR_MALFORMED;
 
-            memcpy(out + out_pos, dict + cursor, length);
+            memcpy(out + out_pos, dict + cursor, (size_t)length);
             cursor += length;
             break;
 

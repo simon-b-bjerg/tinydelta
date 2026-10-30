@@ -32,7 +32,8 @@ int tinydelta_cache_write(void *ctx, uint32_t offset, const uint8_t *buf, uint32
         uint32_t space = cache->page_size - cache->fill;
         uint32_t chunk = len < space ? len : space;
 
-        memcpy(cache->page + cache->fill, buf, chunk);
+        /* At most page_size, a buffer's length, so it fits in size_t. */
+        memcpy(cache->page + cache->fill, buf, (size_t)chunk);
         cache->fill += chunk;
         buf += chunk;
         len -= chunk;
@@ -69,7 +70,7 @@ int tinydelta_cache_read(void *ctx, uint32_t offset, uint8_t *buf, uint32_t len)
     /* The rest, if any, is still in the page buffer. */
     if (len > from_flash) {
         uint32_t page_offset = offset + from_flash - cache->base;
-        memcpy(buf + from_flash, cache->page + page_offset, len - from_flash);
+        memcpy(buf + from_flash, cache->page + page_offset, (size_t)(len - from_flash));
     }
     return TINYDELTA_CALLBACK_OK;
 }
