@@ -41,8 +41,12 @@ def clone(repo, src):
     git(src, "fetch", "-q", "--tags", "origin")
 
 
-def commits_touching(src, first, last, paths):
-    out = git(src, "rev-list", "--reverse", "--first-parent", "%s..%s" % (first, last), "--", *paths)
+def commits_touching(src, first, last, paths, first_parent=True):
+    """Commits in first..last that change paths, oldest first. With
+    first_parent, only the main line; without, every non-merge commit, in
+    topological order (a branch's commits stay together)."""
+    walk = ["--first-parent"] if first_parent else ["--no-merges", "--topo-order"]
+    out = git(src, "rev-list", "--reverse", *walk, "%s..%s" % (first, last), "--", *paths)
     return out.split() if out else []
 
 
@@ -127,7 +131,10 @@ def collect_dtb(cache, name, spec):
         item = Item(cache, name, it["name"], spec["max_versions"])
         items.append(item)
         dts = it["dts"]
-        for commit in commits_touching(src, spec["from"], spec["to"], [os.path.dirname(dts), "include"]):
+        # Not first-parent: the kernel's main line brings a release's device
+        # tree changes in one or two large merges, so its steps are huge.
+        for commit in commits_touching(src, spec["from"], spec["to"], [os.path.dirname(dts), "include"],
+                                       first_parent=False):
             if item.full():
                 break
             if commit in item.done_commits:
