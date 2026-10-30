@@ -32,10 +32,8 @@ results, so the inputs can be rebuilt and checked.
 | HPatchLite | `hdiffi -c-tuz-4k` and `-c-tuz-32k`: HDiffPatch's MCU variant with tinyuz compression, at a 4 KB and its default 32 KB dictionary (the decoder's RAM) |
 | zstd | `-19 --patch-from`: a general-purpose reference; its decoder needs the whole old file as its window, so it does not fit a microcontroller |
 
-The graphs compare like with like: tinydelta with the uncompressed formats
-(open-vcdiff, xdelta3), and tinydelta + zlib with the compressed ones.
 Patch size is only half the comparison for a device: the decoders also
-differ in code size and RAM.
+differ in code size and RAM, which `tradeoff.svg` shows next to it.
 
 Every patch is decoded again and compared with the target before its size
 counts.
@@ -58,8 +56,10 @@ commits to `bench-results-preview`, replaced each time. The results:
 | `results.csv` | one row per pair, every tool's patch size |
 | `inputs/`, `corpus.json`, `results-tools.json` | the commit and SHA-256 of every build, the corpus and the tool versions |
 
-Every graph is also a PNG, for slides. Uncompressed formats are compared
-with tinydelta, compressed ones with tinydelta + zlib.
+Every graph is also a PNG, for slides. Every comparison has one baseline:
+tinydelta's patch as it is sent, uncompressed. tinydelta + zlib is a row
+like any other tool, showing what compression would add; what it costs
+the decoder shows in the trade-off graph.
 
 Decoder costs ([`decoders.json`](decoders.json)) are measured where the
 decoder builds for a microcontroller (`decoder-size.sh`, Cortex-M0,

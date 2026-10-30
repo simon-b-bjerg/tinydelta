@@ -7,9 +7,8 @@ Writes to <output dir>:
     summary.md        per kind of data and commit step: how tinydelta's patch
                       size compares with each other tool (geometric mean,
                       median, 10th/90th percentile of the size ratio, share
-                      of pairs where tinydelta is smaller), plain and
-                      zlib-compressed, and each tool's patch size as a share
-                      of the target
+                      of pairs where tinydelta is smaller), and each tool's
+                      patch size as a share of the target
     forest.svg        the headline: per kind of data and tool, the geometric
                       mean of tinydelta's patch size divided by the tool's,
                       with its 10th-90th percentile range, for each step
@@ -18,10 +17,11 @@ Writes to <output dir>:
     tradeoff.svg      each tool's typical patch size against the RAM its
                       decoder needs (from bench/decoders.json)
     ratio_ecdf.svg    distribution of tinydelta's patch size divided by each
-                      other tool's, per kind of data; plain and zlib-compressed
+                      other tool's, per kind of data
     patch_share.svg   each tool's patch size as a share of the target
-Each graph is also written as a PNG for slides. Uncompressed formats are
-compared with tinydelta, compressed ones with tinydelta + zlib.
+Each graph is also written as a PNG for slides. Every comparison uses one
+baseline: tinydelta's patch as it is sent, uncompressed (the optimal
+encoder's, when measured). tinydelta + zlib is a row like any other tool.
 Needs matplotlib.
 """
 
@@ -38,11 +38,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib import ticker  # noqa: E402
 
-# The other tools in a fixed order: categorical slots 1-8 (validated with
-# the dataviz palette checks), a line style each, and whether the patch is
-# compressed. Uncompressed formats are compared with tinydelta, compressed
-# ones with tinydelta + zlib.
+# The other tools in a fixed order: tinydelta + zlib (gray, as a tinydelta
+# variant) and categorical slots 1-8 (validated with the dataviz palette
+# checks), a line style each, and whether the patch is compressed (which
+# groups the distribution graph's rows).
 OTHERS = [
+    ("tinydelta_zlib", "tinydelta + zlib", "#6b6a64", "-", True),
     ("openvcdiff", "open-vcdiff", "#2a78d6", "-", False),
     ("openvcdiff_zlib", "open-vcdiff + zlib", "#eb6834", "--", True),
     ("xdelta3", "xdelta3", "#1baf7a", "-.", False),
@@ -59,7 +60,6 @@ TINY_VARIANTS = [
     ("tinydelta_optimal", "tinydelta (optimal)", INK),
     ("tinydelta", "tinydelta (library default)", "#3d3c38"),
     ("tinydelta_greedy", "tinydelta (greedy)", "#8a8983"),
-    ("tinydelta_zlib", "tinydelta + zlib", MUTED),
 ]
 
 
@@ -135,9 +135,8 @@ def save(fig, out, name):
 
 
 def against(rows, compressed):
-    """The tinydelta column a tool is compared with: like with like."""
-    if compressed and "tinydelta_zlib" in rows[0]:
-        return "tinydelta_zlib"
+    """The tinydelta column every tool is compared with: one baseline, the
+    patch as sent (compressed is kept for the callers' grouping only)."""
     return tiny_key(rows)
 
 
@@ -148,13 +147,12 @@ def summary(rows, tools_file, out):
         versions = json.load(open(tools_file))
         lines += ["Tools: " + "; ".join("%s (%s)" % (k, v) for k, v in versions.items()), ""]
     tiny = tiny_key(rows)
-    zlib_measured = "tinydelta_zlib" in rows[0]
     lines += [
         "Ratio = tinydelta's patch size / the other tool's; below 1, tinydelta is smaller. "
         "Geometric mean is the right average for ratios; \"smaller\" is the share of pairs where "
-        "tinydelta is smaller. tinydelta is %s%s." % (
-            "the optimal encoder at any size" if tiny == "tinydelta_optimal" else "the library default",
-            "; tinydelta + zlib is that patch at zlib level 9, against the same tools" if zlib_measured else ""),
+        "tinydelta is smaller. tinydelta is %s, uncompressed as it is sent; tinydelta + zlib is "
+        "that patch at zlib level 9, compared like any other tool." % (
+            "the optimal encoder at any size" if tiny == "tinydelta_optimal" else "the library default"),
         "",
     ]
     for kind in kinds:
@@ -165,17 +163,12 @@ def summary(rows, tools_file, out):
                       "%d pairs from %s; median target %s bytes." % (
                           len(sel), ", ".join(items), "{:,}".format(int(statistics.median(r["target_bytes"] for r in sel)))),
                       "",
-                      "| tinydelta vs | geo. mean | median | p10-p90 | smaller |"
-                      + (" + zlib: geo. mean | median | p10-p90 | smaller |" if zlib_measured else ""),
-                      "|---|---:|---:|---:|---:|" + ("---:|---:|---:|---:|" if zlib_measured else "")]
+                      "| tinydelta vs | geo. mean | median | p10-p90 | tinydelta smaller |",
+                      "|---|---:|---:|---:|---:|"]
             for key, label, _, _, _ in OTHERS:
                 rs = ratios(sel, key, tiny)
-                if not rs:
-                    continue
-                row = "| %s | %s |" % (label, stats(rs))
-                if zlib_measured:
-                    row += " %s |" % stats(ratios(sel, key, "tinydelta_zlib"))
-                lines.append(row)
+                if rs:
+                    lines.append("| %s | %s |" % (label, stats(rs)))
             lines += ["", "Patch size as a share of the target (median, p10-p90):", "",
                       "| tool | median | p10 | p90 |", "|---|---:|---:|---:|"]
             for key, label in [(k, l) for k, l, _ in TINY_VARIANTS] + [(k, l) for k, l, _, _, _ in OTHERS]:
@@ -198,12 +191,11 @@ def summary(rows, tools_file, out):
 
 
 def ratio_ecdf(rows, out):
-    """One row per comparison, like for like: tinydelta against uncompressed
-    formats, tinydelta + zlib against compressed ones."""
+    """tinydelta against every tool, one baseline; the uncompressed and the
+    compressed formats in separate rows, so no panel has too many lines."""
     kinds = kinds_of(rows)
-    groups = [(tiny_key(rows), "tinydelta", "uncompressed formats", False)]
-    if "tinydelta_zlib" in rows[0]:
-        groups.append(("tinydelta_zlib", "tinydelta + zlib", "compressed formats", True))
+    groups = [(tiny_key(rows), "tinydelta", "uncompressed formats", False),
+              (tiny_key(rows), "tinydelta", "compressed formats", True)]
     groups = [g for g in groups if any(k in rows[0] and c == g[3] for k, _, _, _, c in OTHERS)]
     fig, axes = plt.subplots(len(groups), len(kinds), figsize=(5.4 * len(kinds), 4.4 * len(groups)),
                              squeeze=False, facecolor=SURFACE)
@@ -277,7 +269,7 @@ def forest(rows, out):
         labels = []
         for row, (key, label, color, _, compressed) in enumerate(tools):
             tiny = against(rows, compressed)
-            labels.append("%s  (vs %s)" % (label, "tinydelta + zlib" if tiny == "tinydelta_zlib" else "tinydelta"))
+            labels.append(label)
             for step in steps:
                 rs = ratios([r for r in rows if r["kind"] == kind and r["step"] == step], key, tiny)
                 if not rs:
@@ -337,8 +329,7 @@ def pair_scatter(rows, out):
         ax.set_aspect("equal")
         ax.set_title("vs %s" % label, fontsize=11, color=INK, loc="left")
         ax.set_xlabel("%s patch (bytes)" % label, fontsize=9, color=MUTED)
-        ax.set_ylabel("%s patch (bytes)" % ("tinydelta + zlib" if tiny == "tinydelta_zlib" else "tinydelta"),
-                      fontsize=9, color=MUTED)
+        ax.set_ylabel("tinydelta patch (bytes)", fontsize=9, color=MUTED)
         ax.text(0.97, 0.05, "below the line:\ntinydelta smaller", transform=ax.transAxes, ha="right",
                 fontsize=8, color=MUTED)
     axes[0][0].legend(frameon=False, fontsize=8, loc="upper left", labelcolor=INK)
