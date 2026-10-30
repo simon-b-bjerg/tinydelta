@@ -50,7 +50,7 @@ commits to `bench-results-preview`, replaced each time. The results:
 | `forest.svg` | the headline: per kind of data and tool, tinydelta's patch size divided by the tool's (geometric mean, 10th-90th percentile), 1 and 5 commits apart |
 | `pairs.svg` | every pair: tinydelta against open-vcdiff, HPatchLite (4 KB) and bsdiff |
 | `ratio_ecdf.svg`, `patch_share.svg` | the full distributions: the size ratio, and patch size as a share of the target |
-| `tradeoff.svg` | each tool's median patch size against the RAM its decoder needs |
+| `tradeoff.svg` | each tool's median patch size against its decoder's footprint on the device: code plus RAM buffers, stack excluded |
 | `summary.md` | the numbers behind the graphs, plus patch sizes in bytes |
 | `decoders.json`, `decoder-size.md` | the decoder costs behind the trade-off graph, with where each comes from, and this run's measurement of the decoders that build for Cortex-M0 |
 | `results.csv` | one row per pair, every tool's patch size |
@@ -61,11 +61,14 @@ tinydelta's patch as it is sent, uncompressed. tinydelta + zlib is a row
 like any other tool, showing what compression would add; what it costs
 the decoder shows in the trade-off graph.
 
-Decoder costs ([`decoders.json`](decoders.json)) are measured where the
-decoder builds for a microcontroller (`decoder-size.sh`, Cortex-M0,
-`-Os`), and otherwise taken from the tool's documentation. A decoder that
-needs the whole old file in RAM is shown with the median old file of
-that kind of data added, as a lower bound.
+Decoder footprints ([`decoders.json`](decoders.json)) are code plus the
+RAM buffers a decoder needs (dictionaries, windows, caches); stack is
+recorded but not counted. Code is measured where the decoder builds for
+a microcontroller (`decoder-size.sh`, Cortex-M0, `-Os`); buffers come
+from the measurement or the tool's documentation. A decoder that needs
+the whole old file in RAM gets the median old file of that kind of data
+added. Where code size is unknown or the old file is added, the point is
+a lower bound.
 
 ## Running it locally
 

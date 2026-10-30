@@ -14,8 +14,9 @@ Writes to <output dir>:
                       with its 10th-90th percentile range, for each step
     pairs.svg         every pair: tinydelta's patch size against open-vcdiff's,
                       HPatchLite's (4 KB) and bsdiff's
-    tradeoff.svg      each tool's typical patch size against the RAM its
-                      decoder needs (from bench/decoders.json)
+    tradeoff.svg      each tool's typical patch size against its decoder's
+                      footprint, code + RAM buffers, stack excluded
+                      (from bench/decoders.json)
     ratio_ecdf.svg    distribution of tinydelta's patch size divided by each
                       other tool's, per kind of data
     patch_share.svg   each tool's patch size as a share of the target
@@ -350,17 +351,18 @@ def pair_scatter(rows, out):
 
 
 def tradeoff(rows, out):
-    """Typical patch size against decoder RAM: what a smaller patch costs on
-    the device. RAM comes from decoders.json; for decoders that hold the
-    whole old file, the median old file of that kind is added and the point
-    is marked as a lower bound."""
+    """Typical patch size against the decoder's footprint on the device:
+    code plus the RAM buffers it needs, stack excluded (decoders.json).
+    For a decoder that holds the whole old file, the median old file of that
+    kind is added. A point whose code size is unknown, or that holds the old
+    file, is a lower bound, drawn as an arrow."""
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "decoders.json")
     decoders = {k: v for k, v in json.load(open(path)).items() if not k.startswith("_")}
     colors = {k: c for k, _, c, _, _ in OTHERS}
     colors.update({k: c for k, _, c in TINY_VARIANTS})
     tools = [k for k in decoders if k in rows[0]]
     kinds = kinds_of(rows)
-    fig, axes = plt.subplots(1, len(kinds), figsize=(5.6 * len(kinds), 4.6), squeeze=False, facecolor=SURFACE)
+    fig, axes = plt.subplots(1, len(kinds), figsize=(5.6 * len(kinds), 4.9), squeeze=False, facecolor=SURFACE)
     for ax, kind in zip(axes[0], kinds):
         sel = [r for r in rows if r["kind"] == kind]
         old = statistics.median(r["dict_bytes"] for r in sel)
@@ -368,31 +370,39 @@ def tradeoff(rows, out):
         points = []
         for key in tools:
             d = decoders[key]
-            ram = d["ram"] + (old if d["plus_old_file"] else 0)
+            footprint = (d["code"] or 0) + d["buffers"] + (old if d["plus_old_file"] else 0)
+            lower_bound = d["code"] is None or d["plus_old_file"]
             share = statistics.median(100 * r[key] / max(r["target_bytes"], 1) for r in sel)
-            color = colors.get(key, MUTED)
-            ax.plot([ram], [share], marker=">" if d["plus_old_file"] else "o", markersize=9, color=color,
-                    markeredgecolor=SURFACE, markeredgewidth=1.5, linestyle="")
-            points.append((ram, share, d["label"] + (" (at least)" if d["plus_old_file"] else "")))
+            ax.plot([footprint], [share], marker=">" if lower_bound else "o", markersize=9,
+                    color=colors.get(key, MUTED), markeredgecolor=SURFACE, markeredgewidth=1.5, linestyle="")
+            points.append((footprint, share, d["label"] + (" (at least)" if lower_bound else "")))
         # A label goes below its point when another point sits close above
-        # it (within a factor of 4 in RAM and 1.4 in size), so labels don't
-        # collide.
-        for ram, share, label in points:
-            crowded = any(o is not (ram, share, label) and 0.25 < r / ram < 4 and 1 < s2 / share < 1.4
-                          for r, s2, _ in points for o in [(r, s2, _)] if (r, s2) != (ram, share))
-            ax.annotate(label, (ram, share), xytext=(8, -12 if crowded else 4), textcoords="offset points",
-                        fontsize=8, color=INK)
+        # it (within a factor of 4 in footprint and 1.4 in size).
+        # Labels of the right-most points go to their left, so they stay
+        # inside the panel.
+        right = max(x for x, _, _ in points)
+        for x, y, label in points:
+            crowded = any((x2, y2) != (x, y) and 0.25 < x2 / x < 4 and 1 < y2 / y < 1.4 for x2, y2, _ in points)
+            left = x > right / 20
+            ax.annotate(label, (x, y), xytext=(-8 if left else 8, -12 if crowded else 4),
+                        textcoords="offset points", ha="right" if left else "left", fontsize=8, color=INK)
         ax.set_xscale("log")
         ax.set_yscale("log")
+        ax.margins(x=0.12, y=0.12)
         ax.xaxis.set_major_locator(ticker.LogLocator(base=10))
         ax.xaxis.set_major_formatter(ticker.FuncFormatter(
             lambda x, _: "%g MB" % (x / 1e6) if x >= 1e6 else "%g KB" % (x / 1e3) if x >= 1e3 else "%g B" % x))
         ax.xaxis.set_minor_formatter(ticker.NullFormatter())
         log_axis(ax.yaxis, "%")
-        ax.set_title("%s: patch size vs decoder RAM" % kind, fontsize=11, color=INK, loc="left")
-        ax.set_xlabel("RAM the decoder needs (log scale); lower left is better", fontsize=9, color=MUTED)
+        ax.set_title("%s" % kind, fontsize=11, color=INK, loc="left")
+        ax.set_xlabel("decoder footprint: code + RAM buffers, stack excluded (log scale)", fontsize=9, color=MUTED)
         ax.set_ylabel("median patch size, % of target (log scale)", fontsize=9, color=MUTED)
-    fig.tight_layout()
+    height = fig.get_figheight()
+    fig.text(0.02, 1 - 0.15 / height, "Patch size against what the decoder costs on the device",
+             ha="left", va="top", fontsize=13, color=INK)
+    fig.text(0.02, 1 - 0.45 / height, "Lower left is better. Arrows are lower bounds: code size unknown, "
+             "or the decoder holds the whole old file in RAM.", ha="left", va="top", fontsize=9, color=MUTED)
+    fig.tight_layout(rect=(0, 0, 1, 1 - 0.7 / height))
     save(fig, out, "tradeoff")
 
 
