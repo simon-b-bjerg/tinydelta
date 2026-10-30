@@ -13,6 +13,8 @@
  * documented contract: sequential target writes, no reads outside the
  * patch or dictionary, no reads of target bytes not yet written, whole
  * page-aligned flash programs, exactly one flush. Any violation aborts.
+ * The input can also make one callback call fail, which the callback
+ * decoder must then report as TINYDELTA_ERR_IO.
  * Build with -fsanitize=fuzzer,address,undefined, so out-of-bounds access
  * and undefined behaviour abort too.
  *
@@ -20,6 +22,8 @@
  *   byte 0-1  output capacity, little-endian, taken modulo FUZZ_MAX_TARGET + 1
  *   byte 2    dictionary length (clipped to the bytes that follow)
  *   byte 3    flash page size for the cache, 1 + (byte % FUZZ_MAX_PAGE)
+ *   byte 4    callback call to fail, counting from 1 across all callbacks
+ *             of one decode; 0 for none
  *   then      the dictionary, then the patch
  */
 #include <stddef.h>
@@ -38,7 +42,7 @@ tinydelta_result fuzz_decode_io_scratch1(const tinydelta_io *io, uint32_t *targe
 tinydelta_result fuzz_decode_io_scratch7(const tinydelta_io *io, uint32_t *target_len);
 tinydelta_result fuzz_decode_io_scratch64(const tinydelta_io *io, uint32_t *target_len);
 
-#define FUZZ_HEADER_SIZE 4u
+#define FUZZ_HEADER_SIZE 5u
 #define FUZZ_MAX_TARGET  4096u
 #define FUZZ_MAX_PAGE    16u
 
@@ -114,6 +118,16 @@ static tinydelta_result ref_decode(const uint8_t *dict, uint64_t dict_len,
 
 /* ---- Callbacks that police the contract ---------------------------------- */
 
+/* Failure injection: the fail_at-th callback call of a decode fails. */
+static uint32_t calls, fail_at;
+static int failure_injected;
+
+static int fail_now(void) {
+    if (++calls != fail_at) return 0;
+    failure_injected = 1;
+    return 1;
+}
+
 typedef struct {
     const uint8_t *bytes;
     uint32_t len;
@@ -134,6 +148,7 @@ typedef struct {
 static int source_read(void *ctx, uint32_t offset, uint8_t *buf, uint32_t len) {
     const source *s = ctx;
     if (len == 0 || offset > s->len || len > s->len - offset) FAIL("read [%u,+%u) outside %u-byte source", offset, len, s->len);
+    if (fail_now()) return TINYDELTA_CALLBACK_FAILED;
     memcpy(buf, s->bytes + offset, len);
     return TINYDELTA_CALLBACK_OK;
 }
@@ -142,6 +157,7 @@ static int sink_write(void *ctx, uint32_t offset, const uint8_t *buf, uint32_t l
     sink *t = ctx;
     if (offset != t->written) FAIL("target write at %u, expected %u", offset, t->written);
     if (len == 0 || len > FUZZ_MAX_TARGET - offset) FAIL("target write of %u bytes at %u past capacity", len, offset);
+    if (fail_now()) return TINYDELTA_CALLBACK_FAILED;
     memcpy(t->bytes + offset, buf, len);
     t->written += len;
     return TINYDELTA_CALLBACK_OK;
@@ -150,11 +166,13 @@ static int sink_write(void *ctx, uint32_t offset, const uint8_t *buf, uint32_t l
 static int sink_read(void *ctx, uint32_t offset, uint8_t *buf, uint32_t len) {
     const sink *t = ctx;
     if (len == 0 || offset > t->written || len > t->written - offset) FAIL("target read [%u,+%u) of unwritten data", offset, len);
+    if (fail_now()) return TINYDELTA_CALLBACK_FAILED;
     memcpy(buf, t->bytes + offset, len);
     return TINYDELTA_CALLBACK_OK;
 }
 
 static int sink_flush(void *ctx) {
+    if (fail_now()) return TINYDELTA_CALLBACK_FAILED;
     ((sink *)ctx)->flushes++;
     return TINYDELTA_CALLBACK_OK;
 }
@@ -162,6 +180,7 @@ static int sink_flush(void *ctx) {
 static int flash_read(void *ctx, uint32_t offset, uint8_t *buf, uint32_t len) {
     const flash *f = ctx;
     if (offset > f->programmed || len > f->programmed - offset) FAIL("flash read [%u,+%u) of unprogrammed data", offset, len);
+    if (fail_now()) return TINYDELTA_CALLBACK_FAILED;
     memcpy(buf, f->bytes + offset, len);
     return TINYDELTA_CALLBACK_OK;
 }
@@ -170,6 +189,7 @@ static int flash_program(void *ctx, uint32_t offset, const uint8_t *buf, uint32_
     flash *f = ctx;
     if (offset != f->programmed || offset % f->page_size != 0) FAIL("flash program at %u, expected page-aligned %u", offset, f->programmed);
     if (len == 0 || len > f->page_size || len > FUZZ_MAX_TARGET - offset) FAIL("flash program of %u bytes", len);
+    if (fail_now()) return TINYDELTA_CALLBACK_FAILED;
     memcpy(f->bytes + offset, buf, len);
     f->programmed += len;
     return TINYDELTA_CALLBACK_OK;
@@ -189,6 +209,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     uint32_t out_cap = (uint32_t)(data[0] | (data[1] << 8)) % (FUZZ_MAX_TARGET + 1u);
     uint32_t dict_len = data[2];
     uint32_t page_size = 1u + data[3] % FUZZ_MAX_PAGE;
+    fail_at = data[4];
     data += FUZZ_HEADER_SIZE;
     size -= FUZZ_HEADER_SIZE;
     if (dict_len > size) dict_len = (uint32_t)size;
@@ -218,6 +239,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             };
             memset(&target, 0, sizeof target);
             memset(&target_flash, 0, sizeof target_flash);
+            calls = 0;
+            failure_injected = 0;
             if (use_cache) {
                 target_flash.page_size = page_size;
                 tinydelta_cache_init(&cache, flash_read, flash_program, &target_flash, page, page_size);
@@ -226,6 +249,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
             uint32_t io_len = 0;
             tinydelta_result result = decode_io[d](&io, &io_len);
+            if (failure_injected) {
+                if (result != TINYDELTA_ERR_IO) FAIL("callback decoder %zu (cache %d) returned %d after a failed callback", d, use_cache, result);
+                continue;
+            }
             if (result != mem) FAIL("callback decoder %zu (cache %d) returned %d, memory decoder %d", d, use_cache, result, mem);
             if (result != TINYDELTA_OK) continue;
 
