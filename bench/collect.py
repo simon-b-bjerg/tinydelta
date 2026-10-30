@@ -63,6 +63,23 @@ class Item:
         self.done_commits = {v["commit"] for v in self.versions}
         self.skipped = []
 
+    def keep_only(self, commits):
+        """Drops cached builds unless every one comes from this commit list,
+        in its order: builds from an older corpus or walk would otherwise
+        mix into the new series."""
+        position = {c: i for i, c in enumerate(commits)}
+        order = [position.get(v["commit"], -1) for v in self.versions]
+        if -1 in order or order != sorted(order):
+            print("%s: cached builds come from another commit list; rebuilding" % self.name, flush=True)
+            for v in self.versions:
+                try:
+                    os.remove(os.path.join(self.dir, v["file"]))
+                except FileNotFoundError:
+                    pass
+            self.versions, self.done_commits = [], set()
+            if os.path.exists(self.index):
+                os.remove(self.index)
+
     def full(self):
         return len(self.versions) >= self.max_versions
 
@@ -92,7 +109,10 @@ def collect_micropython(cache, name, spec):
     clone(spec["repo"], src)
     items = [(Item(cache, name, it["name"], spec["max_versions"]), it) for it in spec["items"]]
     log = os.path.join(cache, "build-%s.log" % name)
-    for commit in commits_touching(src, spec["from"], spec["to"], MICROPYTHON_PATHS):
+    commits = commits_touching(src, spec["from"], spec["to"], MICROPYTHON_PATHS)
+    for item, _ in items:
+        item.keep_only(commits)
+    for commit in commits:
         todo = [(item, it) for item, it in items if not item.full() and commit not in item.done_commits]
         if not todo:
             if all(item.full() for item, _ in items):
@@ -133,8 +153,10 @@ def collect_dtb(cache, name, spec):
         dts = it["dts"]
         # Not first-parent: the kernel's main line brings a release's device
         # tree changes in one or two large merges, so its steps are huge.
-        for commit in commits_touching(src, spec["from"], spec["to"], [os.path.dirname(dts), "include"],
-                                       first_parent=False):
+        commits = commits_touching(src, spec["from"], spec["to"], [os.path.dirname(dts), "include"],
+                                   first_parent=False)
+        item.keep_only(commits)
+        for commit in commits:
             if item.full():
                 break
             if commit in item.done_commits:
