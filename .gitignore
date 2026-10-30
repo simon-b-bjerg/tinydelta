@@ -8,3 +8,5 @@ fuzz-artifacts/
 fuzz-corpus/
 __pycache__/
 /wheels/
+bench/.cache/
+/results/

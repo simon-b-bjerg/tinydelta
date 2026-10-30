@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""Turns the benchmark CSV into a summary and two graphs.
+
+    python3 bench/plot.py <results.csv> <output dir>
+
+Writes to <output dir>:
+    summary.md        per kind of data and commit step: how tinydelta's patch
+                      size compares with each other tool (geometric mean,
+                      median, 10th/90th percentile of the size ratio, share
+                      of pairs where tinydelta is smaller), and each tool's
+                      patch size as a share of the target
+    ratio_ecdf.svg    distribution of tinydelta's patch size divided by each
+                      other tool's, per kind of data
+    patch_share.svg   each tool's patch size as a share of the target
+Needs matplotlib.
+"""
+
+import csv
+import json
+import math
+import os
+import statistics
+import sys
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib import ticker  # noqa: E402
+
+OTHERS = [  # fixed order: categorical slots 1-4, plus a line style each
+    ("openvcdiff", "open-vcdiff", "#2a78d6", "-"),
+    ("openvcdiff_zlib", "open-vcdiff + zlib", "#eb6834", "--"),
+    ("xdelta3", "xdelta3", "#1baf7a", "-."),
+    ("bsdiff", "bsdiff", "#eda100", ":"),
+]
+TINY = ("tinydelta", "tinydelta", "#0b0b0b")
+SURFACE, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#6b6a64", "#e4e3de"
+
+
+def load(path):
+    with open(path, newline="") as f:
+        rows = list(csv.DictReader(f))
+    for r in rows:
+        for k, v in r.items():
+            if k not in ("corpus", "kind", "item", "from", "to"):
+                r[k] = int(v)
+    return rows
+
+
+def percentile(values, p):
+    s = sorted(values)
+    k = (len(s) - 1) * p / 100
+    lo, hi = math.floor(k), math.ceil(k)
+    return s[lo] + (s[hi] - s[lo]) * (k - lo)
+
+
+def geomean(values):
+    return math.exp(sum(math.log(v) for v in values) / len(values))
+
+
+def ratios(rows, other):
+    # Both sizes are at least a few bytes for real pairs; guard anyway.
+    return [max(r["tinydelta"], 1) / max(r[other], 1) for r in rows if other in r]
+
+
+def log_axis(axis, unit=""):
+    """Log scale with plain labels at 1-2-5 steps (0.2, 0.5, 1, 2...)."""
+    axis.set_major_locator(ticker.LogLocator(base=10, subs=(1.0, 2.0, 5.0)))
+    axis.set_major_formatter(ticker.FuncFormatter(lambda x, _: "%g%s" % (x, unit)))
+    axis.set_minor_formatter(ticker.NullFormatter())
+
+
+def style(ax):
+    ax.set_facecolor(SURFACE)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color(GRID)
+    ax.tick_params(colors=MUTED, labelsize=9)
+    ax.grid(True, color=GRID, linewidth=0.8)
+    ax.set_axisbelow(True)
+
+
+def summary(rows, tools_file, out):
+    kinds = sorted({r["kind"] for r in rows})
+    lines = ["# tinydelta patch sizes", ""]
+    if os.path.exists(tools_file):
+        versions = json.load(open(tools_file))
+        lines += ["Tools: " + "; ".join("%s (%s)" % (k, v) for k, v in versions.items()), ""]
+    lines += [
+        "Ratio = tinydelta's patch size / the other tool's. Below 1: tinydelta is smaller.",
+        "Geometric mean is the right average for ratios; wins counts pairs where tinydelta is smaller.",
+        "",
+    ]
+    for kind in kinds:
+        for step in sorted({r["step"] for r in rows if r["kind"] == kind}):
+            sel = [r for r in rows if r["kind"] == kind and r["step"] == step]
+            items = sorted({r["corpus"] + "/" + r["item"] for r in sel})
+            lines += ["## %s, %d commit%s apart" % (kind, step, "" if step == 1 else "s"), "",
+                      "%d pairs from %s; median target %s bytes." % (
+                          len(sel), ", ".join(items), "{:,}".format(int(statistics.median(r["target_bytes"] for r in sel)))),
+                      "",
+                      "| vs | geo. mean | median | p10 | p90 | tinydelta smaller |",
+                      "|---|---:|---:|---:|---:|---:|"]
+            for key, label, _, _ in OTHERS:
+                rs = ratios(sel, key)
+                if not rs:
+                    continue
+                lines.append("| %s | %.2f | %.2f | %.2f | %.2f | %d%% |" % (
+                    label, geomean(rs), statistics.median(rs), percentile(rs, 10), percentile(rs, 90),
+                    round(100 * sum(1 for x in rs if x < 1) / len(rs))))
+            lines += ["", "Patch size as a share of the target (median, p10-p90):", "",
+                      "| tool | median | p10 | p90 |", "|---|---:|---:|---:|"]
+            for key, label in [(TINY[0], TINY[1])] + [(k, l) for k, l, _, _ in OTHERS]:
+                if key not in sel[0]:
+                    continue
+                share = [100 * r[key] / max(r["target_bytes"], 1) for r in sel]
+                lines.append("| %s | %.2f%% | %.2f%% | %.2f%% |" % (
+                    label, statistics.median(share), percentile(share, 10), percentile(share, 90)))
+            lines.append("")
+    with open(os.path.join(out, "summary.md"), "w") as f:
+        f.write("\n".join(lines))
+
+
+def ratio_ecdf(rows, out):
+    kinds = sorted({r["kind"] for r in rows})
+    fig, axes = plt.subplots(1, len(kinds), figsize=(5.2 * len(kinds), 4.2), squeeze=False, facecolor=SURFACE)
+    for ax, kind in zip(axes[0], kinds):
+        sel = [r for r in rows if r["kind"] == kind]
+        style(ax)
+        ax.axvline(1, color=MUTED, linewidth=1)
+        for key, label, color, dash in OTHERS:
+            rs = sorted(ratios(sel, key))
+            if not rs:
+                continue
+            ys = [100 * (i + 1) / len(rs) for i in range(len(rs))]
+            ax.step(rs, ys, where="post", color=color, linestyle=dash, linewidth=2, label=label)
+            ax.annotate(label, (rs[len(rs) // 2], ys[len(rs) // 2]), xytext=(6, 0), textcoords="offset points",
+                        fontsize=8, color=INK, va="center")
+        ax.set_xscale("log")
+        log_axis(ax.xaxis)
+        ax.set_ylim(0, 100)
+        ax.set_title("%s (%d pairs)" % (kind, len(sel)), fontsize=11, color=INK, loc="left")
+        ax.set_xlabel("tinydelta patch size ÷ other tool's (log scale)", fontsize=9, color=MUTED)
+        ax.set_ylabel("share of pairs at or below (%)", fontsize=9, color=MUTED)
+        ax.text(0.98, 0.04, "← tinydelta smaller", transform=ax.transAxes, ha="right", fontsize=8, color=MUTED)
+    axes[0][0].legend(frameon=False, fontsize=8, loc="upper left", labelcolor=INK)
+    fig.tight_layout()
+    fig.savefig(os.path.join(out, "ratio_ecdf.svg"), facecolor=SURFACE)
+    plt.close(fig)
+
+
+def patch_share(rows, out):
+    kinds = sorted({r["kind"] for r in rows})
+    tools = [TINY] + [(k, l, c) for k, l, c, _ in OTHERS if k in rows[0]]
+    fig, axes = plt.subplots(1, len(kinds), figsize=(5.2 * len(kinds), 3.6), squeeze=False, facecolor=SURFACE)
+    for ax, kind in zip(axes[0], kinds):
+        sel = [r for r in rows if r["kind"] == kind]
+        style(ax)
+        data = [[100 * r[k] / max(r["target_bytes"], 1) for r in sel] for k, _, _ in tools]
+        box = ax.boxplot(data, orientation="horizontal", widths=0.5, patch_artist=True, showfliers=True,
+                         flierprops={"markersize": 3, "markeredgecolor": MUTED})
+        for patch, (_, _, color) in zip(box["boxes"], tools):
+            patch.set(facecolor=color, alpha=0.35, edgecolor=color)
+        for median, (_, _, color) in zip(box["medians"], tools):
+            median.set(color=color, linewidth=2)
+        for line in box["whiskers"] + box["caps"]:
+            line.set(color=MUTED)
+        ax.set_yticks(range(1, len(tools) + 1), [label for _, label, _ in tools], fontsize=9, color=INK)
+        ax.invert_yaxis()
+        ax.set_xscale("log")
+        log_axis(ax.xaxis, "%")
+        ax.set_title("%s: patch size as %% of target" % kind, fontsize=11, color=INK, loc="left")
+        ax.set_xlabel("patch size as % of target (log scale)", fontsize=9, color=MUTED)
+    fig.tight_layout()
+    fig.savefig(os.path.join(out, "patch_share.svg"), facecolor=SURFACE)
+    plt.close(fig)
+
+
+def main():
+    if len(sys.argv) != 3:
+        sys.exit(__doc__)
+    results, out = sys.argv[1:]
+    os.makedirs(out, exist_ok=True)
+    rows = load(results)
+    if not rows:
+        sys.exit("plot: no rows in %s" % results)
+    summary(rows, os.path.splitext(results)[0] + "-tools.json", out)
+    ratio_ecdf(rows, out)
+    patch_share(rows, out)
+
+
+if __name__ == "__main__":
+    main()
