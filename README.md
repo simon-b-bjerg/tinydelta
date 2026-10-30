@@ -69,6 +69,17 @@ Compressing a tinydelta patch afterwards barely helps at this size: the
 instructions already remove most of the redundancy zlib would find, and
 zlib's own overhead costs about as much as it saves.
 
+Firmware is different. A small code change moves addresses and offsets
+throughout the image, so the patch becomes thousands of short
+instructions carrying similar address changes, which zlib compresses
+well. On a 230 KB MicroPython image for Cortex-M0, zlib `-9` made the
+patch **about 15–30% smaller**, from a one-line change to a release
+upgrade. A 512-byte window gave almost the same gain as the default
+32 KB one, which matters if the device has to decompress. heatshrink
+gained less, about 0–15%. Whether that is worth a decompressor on
+the device depends on your link and flash budget; measure on your own
+images.
+
 ## Why another delta format?
 
 Established formats were not designed for a decoder that has to fit in a
