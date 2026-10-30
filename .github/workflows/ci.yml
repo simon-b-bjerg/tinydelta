@@ -200,6 +200,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       coverage: ${{ steps.go.outputs.statements }}
+      vectors: ${{ steps.go.outputs.vectors }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -213,6 +214,8 @@ jobs:
           go tool cover -func="$RUNNER_TEMP/cover.out" | tee "$RUNNER_TEMP/cover.txt"
           total="$(awk '/^total:/ { sub(/%/, "", $3); print $3 }' "$RUNNER_TEMP/cover.txt")"
           echo "statements=$total" >> "$GITHUB_OUTPUT"
+          # go test above ran every conformance vector on the Go and C decoders.
+          echo "vectors=$(grep -cv '^#\|^$' testdata/vectors.txt)" >> "$GITHUB_OUTPUT"
           { echo "Go statement coverage: $total%"; echo; echo '```'; cat "$RUNNER_TEMP/cover.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           echo "::notice title=Go coverage::$total% of statements"
 
@@ -228,6 +231,7 @@ jobs:
         env:
           GO_COVERAGE: ${{ needs.coverage.outputs.coverage }}
           C_COVERAGE: ${{ needs.c-fuzz.outputs.coverage }}
+          VECTORS: ${{ needs.coverage.outputs.vectors }}
           GH_TOKEN: ${{ github.token }}
         run: |
           # shields.io endpoint format; see the badges in README.md.
@@ -239,6 +243,9 @@ jobs:
           git init -q -b badges
           badge "Go coverage" "$GO_COVERAGE" coverage-go.json
           badge "C coverage" "$C_COVERAGE" coverage-c.json
+          # This job only runs when the tests passed, so every vector passed.
+          printf '{"schemaVersion":1,"label":"conformance","message":"%s/%s vectors","color":"brightgreen"}\n' \
+            "$VECTORS" "$VECTORS" > conformance.json
           cat coverage-*.json
           git add .
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \

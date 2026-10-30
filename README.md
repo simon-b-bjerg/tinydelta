@@ -9,6 +9,8 @@
   <a href="https://github.com/simon-b-bjerg/tinydelta/actions/workflows/ci.yml"><img src="https://github.com/simon-b-bjerg/tinydelta/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/simon-b-bjerg/tinydelta/actions/workflows/ci.yml"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsimon-b-bjerg%2Ftinydelta%2Fbadges%2Fcoverage-go.json" alt="Go coverage"></a>
   <a href="https://github.com/simon-b-bjerg/tinydelta/actions/workflows/ci.yml"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsimon-b-bjerg%2Ftinydelta%2Fbadges%2Fcoverage-c.json" alt="C coverage"></a>
+  <a href="#conformance-vectors"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsimon-b-bjerg%2Ftinydelta%2Fbadges%2Fconformance.json" alt="Conformance vectors"></a>
+  <a href="https://github.com/simon-b-bjerg/tinydelta/actions/workflows/codeql.yml"><img src="https://github.com/simon-b-bjerg/tinydelta/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
   <a href="https://github.com/simon-b-bjerg/tinydelta/releases"><img src="https://img.shields.io/github/v/release/simon-b-bjerg/tinydelta?sort=semver" alt="Release"></a>
   <a href="https://pkg.go.dev/github.com/simon-b-bjerg/tinydelta"><img src="https://pkg.go.dev/badge/github.com/simon-b-bjerg/tinydelta.svg" alt="Go Reference"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
@@ -687,7 +689,7 @@ What runs in CI, on every push to `main` and every pull request:
 | Go tests (Go 1.21 and current) | `gofmt`, `go vet`, `go test ./...` (including the C decoder tests, built with gcc on x86-64); on current Go also 60 s of `FuzzEncodeRoundTrip` |
 | C decoders fuzzed | `scripts/c-fuzz.sh 60`; crashing inputs are hex dumped in the log and uploaded as a build artifact. Then `scripts/c-coverage.sh` reports how much of the C library the corpus reaches, with the lines it never reaches, in the job summary |
 | Go coverage | `go test -cover` over the library and the CLI, per function in the job summary |
-| Update coverage badges | on pushes to `main` only: writes the Go and C coverage figures for the badges above to the `badges` branch |
+| Update coverage badges | on pushes to `main` only: writes the Go and C coverage figures and the number of conformance vectors for the badges above to the `badges` branch |
 | Go tests on Windows | `go test ./...` for the library and the CLI |
 | C static analysis | `scripts/c-analyze.sh` |
 | CodeQL (separate workflow, also weekly) | CodeQL over the Go code and the C library |
