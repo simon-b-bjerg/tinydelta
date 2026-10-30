@@ -46,7 +46,8 @@ no compression library.
   ([Tests](#tests)).
 - **Simple, documented format.** The full wire format fits on one page
   ([below](#wire-format)), so a decoder in another language is an
-  afternoon's work.
+  afternoon's work, and the C decoder is easy to adapt to the I/O your
+  device already has ([Your own decoder](#your-own-decoder)).
 
 ## Benchmark
 
@@ -402,6 +403,46 @@ tinydelta_result apply_patch(uint32_t dict_len, uint32_t patch_len,
     return tinydelta_decode_io(&io, target_len);   /* TINYDELTA_OK on success */
 }
 ```
+
+### Your own decoder
+
+The decoders here are a starting point, not the only way to use the
+format. A decoder is one loop over four instructions with three
+numbers of state (patch position, target position and dictionary
+cursor), and [`tinydelta_decode.c`](c/tinydelta_decode.c) is 80 lines.
+So rather than fitting your device around the callback interface, you
+can rewrite the loop around what the device already has: a data cursor
+or stream object, a flash driver with its own buffering, a file system.
+
+A common case is external flash where small writes are expensive.
+Instead of putting the write cache on top of the callback decoder,
+make the decoder's scratch buffer the flash page buffer: produce target
+bytes straight into it and program the page when it is full. One
+buffer on the stack, no extra copy, and flash is only ever written a
+page at a time.
+
+What a custom decoder has to get right, since that's where the bugs
+are:
+
+- **`COPY_TARGET` overlap.** The source may overlap the bytes being
+  written (a delta of -1 repeats the previous byte), so copy forwards,
+  in pieces no longer than the distance back. With a page buffer, the
+  source may also lie partly in flash and partly still in the buffer.
+- **Bounds before every copy.** Check each length against the target
+  capacity and against the dictionary or patch it comes from. Keep the
+  arithmetic in `uint32_t` as in
+  [`tinydelta_internal.h`](c/tinydelta_internal.h): a negative delta
+  then wraps far above any valid position, and one unsigned check
+  rejects it.
+- **Varints.** At most 5 bytes, and the 5th may only carry 4 bits.
+- **The end.** Write the last, partial page once, and only after the
+  whole patch decoded successfully.
+
+To test it, add it to the C fuzzer
+([`c/fuzz/fuzz_decode.c`](c/fuzz/fuzz_decode.c)) next to the bundled
+decoders. Every input there already goes through an independent
+reference decoder, and yours must give the same result and the same
+target bytes.
 
 ### On the device
 
