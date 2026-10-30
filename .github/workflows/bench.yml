@@ -55,13 +55,18 @@ jobs:
           "$RUNNER_TEMP/bin/vcdiff" help > /dev/null 2>&1 || true
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       # Builds are cached even when a later step fails, and collect.py
-      # continues from them, so a run never repeats finished builds.
+      # continues from them, so a run doesn't repeat finished builds.
       - name: Restore cached builds of the corpus
         uses: actions/cache/restore@v4
         with:
           path: bench/.cache/builds
           key: bench-builds-${{ hashFiles('bench/corpus.json') }}-${{ github.run_id }}
-          restore-keys: bench-builds-${{ hashFiles('bench/corpus.json') }}-
+          # Any earlier builds will do: collect.py keeps only the series that
+          # still match the corpus and its commit walk, so a changed
+          # corpus.json does not rebuild unchanged items.
+          restore-keys: |
+            bench-builds-${{ hashFiles('bench/corpus.json') }}-
+            bench-builds-
       - name: Build the corpus (MicroPython firmware, device trees)
         run: python3 bench/collect.py bench/.cache
       - name: Cache the builds
