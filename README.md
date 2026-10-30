@@ -164,14 +164,37 @@ with a stable layout should help any delta format, this one included.
 
 ## Contents
 
+- [Highlights](#highlights)
+- [Benchmark](#benchmark)
 - [Why another delta format?](#why-another-delta-format)
 - [Installation](#installation)
+  - [Command-line tool](#command-line-tool)
+  - [Go](#go)
+  - [Python](#python)
+  - [C](#c)
 - [Command-line usage](#command-line-usage)
 - [Go library](#go-library)
 - [C library](#c-library)
+  - [Code size and stack](#code-size-and-stack)
+  - [Results](#results)
+  - [Memory decoder](#memory-decoder)
+  - [Callback decoder](#callback-decoder)
+  - [Write cache](#write-cache)
+  - [Your own decoder](#your-own-decoder)
+  - [On the device](#on-the-device)
 - [Wire format](#wire-format)
+  - [Integers](#integers)
+  - [Instructions](#instructions)
+  - [State](#state)
+  - [Rules](#rules)
+  - [Example](#example)
+  - [Stability](#stability)
+  - [Conformance vectors](#conformance-vectors)
 - [How the encoder works](#how-the-encoder-works)
 - [Development](#development)
+  - [Tests](#tests)
+  - [Releases](#releases)
+  - [Contributing](#contributing)
 - [License](#license)
 
 ## Installation
@@ -200,7 +223,7 @@ Or build it with Go:
 go install github.com/simon-b-bjerg/tinydelta/cmd/tinydelta@latest
 ```
 
-### Go library
+### Go
 
 ```sh
 go get github.com/simon-b-bjerg/tinydelta
@@ -223,7 +246,7 @@ The wheels (Linux and Windows, x86-64 and ARM64, Python 3.9 and later)
 bundle the command-line tool, which the package runs; they also install
 the `tinydelta` command. See [`python/README.md`](python/README.md).
 
-### C library
+### C
 
 Copy the files you need from [`c/`](c/) into your project (see
 [C library](#c-library)), or download `tinydelta-c_<version>.tar.gz`
