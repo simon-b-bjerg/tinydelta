@@ -6,3 +6,5 @@ testdata/private/
 /build/
 fuzz-artifacts/
 fuzz-corpus/
+__pycache__/
+/wheels/

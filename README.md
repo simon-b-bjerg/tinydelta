@@ -206,6 +206,23 @@ go install github.com/simon-b-bjerg/tinydelta/cmd/tinydelta@latest
 go get github.com/simon-b-bjerg/tinydelta
 ```
 
+### Python
+
+```sh
+pip install tinydelta
+```
+
+```python
+import tinydelta
+
+patch = tinydelta.encode(old, new)
+assert tinydelta.decode(old, patch, max_size=len(new)) == new
+```
+
+The wheels (Linux and Windows, x86-64 and ARM64, Python 3.9 and later)
+bundle the command-line tool, which the package runs; they also install
+the `tinydelta` command. See [`python/README.md`](python/README.md).
+
 ### C library
 
 Copy the files you need from [`c/`](c/) into your project (see
@@ -691,6 +708,7 @@ What runs in CI, on every push to `main` and every pull request:
 | Go coverage | `go test -cover` over the library and the CLI, per function in the job summary |
 | Update coverage badges | on pushes to `main` only: writes the Go and C coverage figures and the number of conformance vectors for the badges above to the `badges` branch |
 | Go tests on Windows | `go test ./...` for the library and the CLI |
+| Python package | on Linux and Windows, with Python 3.9 and current: the Python tests, including every conformance vector, against a fresh build of the tool; on Linux also builds the wheels, checks them with `twine` and tests the installed wheel |
 | C static analysis | `scripts/c-analyze.sh` |
 | CodeQL (separate workflow, also weekly) | CodeQL over the Go code and the C library |
 | C library on 32-bit ARM | `scripts/c-check.sh` for x86-64 and ARM, the C decoder tests on 32-bit ARM under QEMU, and the Cortex-M code size and stack report (informational) |
@@ -736,7 +754,10 @@ The [release workflow](.github/workflows/release.yml) tests the tagged
 code, builds static Linux and Windows binaries for amd64 and arm64 plus
 a C source archive with
 [`scripts/build-release.sh`](scripts/build-release.sh), and attaches
-them to the GitHub release with SHA-256 checksums. It runs when:
+them to the GitHub release with SHA-256 checksums. It also packs the
+binaries into Python wheels with
+[`python/build_wheels.py`](python/build_wheels.py) and publishes them to
+PyPI, through trusted publishing (no stored token). It runs when:
 
 - a tag of the form `vX.Y.Z` is pushed (it creates the release);
 - a release is published in the GitHub UI (it adds the files to it);
@@ -750,9 +771,17 @@ git tag v1.0.0 && git push origin v1.0.0
 To try the release build without publishing anything, start it by hand
 and leave the tag empty: it builds the selected branch, versioned
 `dev-<commit>`, and attaches the archives to the workflow run as
-`release-archives`, where you can download them. A pull request that
-changes the release workflow or `scripts/build-release.sh` does the
-same automatically.
+`release-archives` and `python-wheels`, where you can download them. A
+pull request that changes the release workflow, `scripts/build-release.sh`
+or the Python package does the same automatically.
+
+Publishing to PyPI needs a one-time setup on pypi.org: add a trusted
+publisher for the project `tinydelta` with this repository, the
+workflow `release.yml` and the environment `pypi`. Release tags must be
+`vX.Y.Z` or `vX.Y.Z-alpha.N`/`-beta.N`/`-rc.N`, which become Python
+versions `X.Y.Z` and `X.Y.ZaN`/`bN`/`rcN`. A tag with a suffix is
+published as a pre-release, on GitHub and on PyPI, so it never becomes
+the latest release and pip only installs it when asked for.
 
 ### Contributing
 

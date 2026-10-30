@@ -68,8 +68,10 @@ func TestDecodeMaxSize(t *testing.T) {
 	_, dict, target := writeFiles(t)
 	patch := runCLI(nil, "encode", dict, target).stdout
 	want, _ := os.ReadFile(target)
+	// The Python package (python/src/tinydelta) tells TooLargeError apart
+	// from other failures by this text, so it must not change.
 	r := runCLI([]byte(patch), "decode", "-max-size", "10", dict, "-")
-	if r.code != exitFailure || !strings.Contains(r.stderr, "size limit") {
+	if r.code != exitFailure || !strings.Contains(r.stderr, "size limit exceeded") {
 		t.Errorf("decode with -max-size 10: %+v", r)
 	}
 	if r := runCLI([]byte(patch), "decode", "-max-size", itoa(len(want)), dict, "-"); r.code != exitOK {
