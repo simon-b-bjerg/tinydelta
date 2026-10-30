@@ -28,6 +28,14 @@ results, so the inputs can be rebuilt and checked.
 | open-vcdiff | `encode -target_matches`, its smallest setting; also its output zlib-compressed at level 9, the pipeline tinydelta replaces |
 | xdelta3 | `-9 -S none` (VCDIFF, no secondary compression) |
 | bsdiff | bsdiff 4 (bzip2 inside) |
+| detools | `create_patch -c heatshrink`: sequential patch, the embedded bsdiff variant |
+| HPatchLite | `hdiffi -c-tuz-4k` and `-c-tuz-32k`: HDiffPatch's MCU variant with tinyuz compression, at a 4 KB and its default 32 KB dictionary (the decoder's RAM) |
+| zstd | `-19 --patch-from`: a general-purpose reference; its decoder needs the whole old file as its window, so it does not fit a microcontroller |
+
+The graphs compare like with like: tinydelta with the uncompressed formats
+(open-vcdiff, xdelta3), and tinydelta + zlib with the compressed ones.
+Patch size is only half the comparison for a device: the decoders also
+differ in code size and RAM.
 
 Every patch is decoded again and compared with the target before its size
 counts.
@@ -45,8 +53,10 @@ only attached to the run.
 
 ## Running it locally
 
-Needs git, Go, Python 3 with matplotlib, `arm-none-eabi-gcc`, `cpp`,
-`dtc`, `xdelta3`, `bsdiff` and an open-vcdiff `vcdiff` binary on PATH.
+Needs git, Go, Python 3 with matplotlib and detools, `arm-none-eabi-gcc`,
+`cpp`, `dtc`, `xdelta3`, `bsdiff`, `zstd`, and open-vcdiff's `vcdiff` and
+HPatchLite's `hdiffi`/`hpatchi` on PATH (`run.py --tools` leaves out what
+you don't have).
 
 ```sh
 go build -o /tmp/tinydelta ./cmd/tinydelta

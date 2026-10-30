@@ -19,6 +19,8 @@ permissions:
 
 env:
   OPENVCDIFF_COMMIT: 868f459a8d815125c2457f8c74b12493853100f9 # master, 2019-03-11 (the latest)
+  HPATCHLITE_TAG: v1.0.2
+  DETOOLS_VERSION: 0.53.0
 
 jobs:
   bench:
@@ -40,9 +42,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi \
-            device-tree-compiler xdelta3 bsdiff libgflags-dev cmake
-          pip install matplotlib
-      - name: Build tinydelta and open-vcdiff
+            device-tree-compiler xdelta3 bsdiff zstd libgflags-dev cmake
+          pip install matplotlib "detools==$DETOOLS_VERSION"
+      - name: Build tinydelta, open-vcdiff and HPatchLite
         run: |
           go build -o "$RUNNER_TEMP/bin/tinydelta" ./cmd/tinydelta
           # Optimal encoding at any size, through TestEncodeUnlimited.
@@ -55,6 +57,11 @@ jobs:
           cmake --build "$RUNNER_TEMP/open-vcdiff/build" -j "$(nproc)" > /dev/null
           cp "$(find "$RUNNER_TEMP/open-vcdiff/build" -type f -name vcdiff -perm -u+x | head -1)" "$RUNNER_TEMP/bin/vcdiff"
           "$RUNNER_TEMP/bin/vcdiff" help > /dev/null 2>&1 || true
+          # HPatchLite brings its HDiffPatch and tinyuz as pinned submodules.
+          git clone -q --recursive --depth 1 --branch "$HPATCHLITE_TAG" \
+            https://github.com/sisong/HPatchLite "$RUNNER_TEMP/HPatchLite"
+          make -C "$RUNNER_TEMP/HPatchLite" -j "$(nproc)" > /dev/null
+          cp "$RUNNER_TEMP/HPatchLite/hdiffi" "$RUNNER_TEMP/HPatchLite/hpatchi" "$RUNNER_TEMP/bin/"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       # Builds are cached even when a later step fails, and collect.py
       # continues from them, so a run doesn't repeat finished builds.
@@ -80,6 +87,7 @@ jobs:
       - name: Encode every pair with every tool
         env:
           OPENVCDIFF_VERSION: open-vcdiff ${{ env.OPENVCDIFF_COMMIT }}
+          HPATCHLITE_VERSION: HPatchLite ${{ env.HPATCHLITE_TAG }}
         run: |
           export BSDIFF_VERSION="bsdiff $(dpkg-query -W -f='${Version}' bsdiff)"
           python3 bench/run.py bench/.cache results/results.csv

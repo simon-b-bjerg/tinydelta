@@ -29,11 +29,19 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib import ticker  # noqa: E402
 
-OTHERS = [  # fixed order: categorical slots 1-4, plus a line style each
-    ("openvcdiff", "open-vcdiff", "#2a78d6", "-"),
-    ("openvcdiff_zlib", "open-vcdiff + zlib", "#eb6834", "--"),
-    ("xdelta3", "xdelta3", "#1baf7a", "-."),
-    ("bsdiff", "bsdiff", "#eda100", ":"),
+# The other tools in a fixed order: categorical slots 1-8 (validated with
+# the dataviz palette checks), a line style each, and whether the patch is
+# compressed. Uncompressed formats are compared with tinydelta, compressed
+# ones with tinydelta + zlib.
+OTHERS = [
+    ("openvcdiff", "open-vcdiff", "#2a78d6", "-", False),
+    ("openvcdiff_zlib", "open-vcdiff + zlib", "#eb6834", "--", True),
+    ("xdelta3", "xdelta3", "#1baf7a", "-.", False),
+    ("bsdiff", "bsdiff", "#eda100", ":", True),
+    ("detools", "detools (heatshrink)", "#e87ba4", "-", True),
+    ("hpatchlite_4k", "HPatchLite, 4 KB dict.", "#008300", "--", True),
+    ("hpatchlite_32k", "HPatchLite, 32 KB dict.", "#6250d6", "-.", True),
+    ("zstd", "zstd --patch-from", "#e34948", ":", True),
 ]
 SURFACE, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#6b6a64", "#e4e3de"
 # tinydelta's variants, best first: optimal at any size is "tinydelta" in
@@ -129,7 +137,7 @@ def summary(rows, tools_file, out):
                       "| tinydelta vs | geo. mean | median | p10-p90 | smaller |"
                       + (" + zlib: geo. mean | median | p10-p90 | smaller |" if zlib_measured else ""),
                       "|---|---:|---:|---:|---:|" + ("---:|---:|---:|---:|" if zlib_measured else "")]
-            for key, label, _, _ in OTHERS:
+            for key, label, _, _, _ in OTHERS:
                 rs = ratios(sel, key, tiny)
                 if not rs:
                     continue
@@ -139,7 +147,7 @@ def summary(rows, tools_file, out):
                 lines.append(row)
             lines += ["", "Patch size as a share of the target (median, p10-p90):", "",
                       "| tool | median | p10 | p90 |", "|---|---:|---:|---:|"]
-            for key, label in [(k, l) for k, l, _ in TINY_VARIANTS] + [(k, l) for k, l, _, _ in OTHERS]:
+            for key, label in [(k, l) for k, l, _ in TINY_VARIANTS] + [(k, l) for k, l, _, _, _ in OTHERS]:
                 if key not in sel[0]:
                     continue
                 share = [100 * r[key] / max(r["target_bytes"], 1) for r in sel]
@@ -151,33 +159,39 @@ def summary(rows, tools_file, out):
 
 
 def ratio_ecdf(rows, out):
+    """One row per comparison, like for like: tinydelta against uncompressed
+    formats, tinydelta + zlib against compressed ones."""
     kinds = sorted({r["kind"] for r in rows})
-    variants = [(tiny_key(rows), "tinydelta")]
+    groups = [(tiny_key(rows), "tinydelta", "uncompressed formats", False)]
     if "tinydelta_zlib" in rows[0]:
-        variants.append(("tinydelta_zlib", "tinydelta + zlib"))
-    fig, axes = plt.subplots(len(variants), len(kinds), figsize=(5.2 * len(kinds), 4.2 * len(variants)),
+        groups.append(("tinydelta_zlib", "tinydelta + zlib", "compressed formats", True))
+    groups = [g for g in groups if any(k in rows[0] and c == g[3] for k, _, _, _, c in OTHERS)]
+    fig, axes = plt.subplots(len(groups), len(kinds), figsize=(5.4 * len(kinds), 4.4 * len(groups)),
                              squeeze=False, facecolor=SURFACE)
-    for row_axes, (tiny, tiny_label) in zip(axes, variants):
+    for row_axes, (tiny, tiny_label, against, compressed) in zip(axes, groups):
         for ax, kind in zip(row_axes, kinds):
             sel = [r for r in rows if r["kind"] == kind]
             style(ax)
             ax.axvline(1, color=MUTED, linewidth=1)
-            for key, label, color, dash in OTHERS:
-                rs = sorted(ratios(sel, key, tiny))
+            for slot, (key, label, color, dash, comp) in enumerate(OTHERS):
+                rs = sorted(ratios(sel, key, tiny)) if comp == compressed else []
                 if not rs:
                     continue
                 ys = [100 * (i + 1) / len(rs) for i in range(len(rs))]
                 ax.step(rs, ys, where="post", color=color, linestyle=dash, linewidth=2, label=label)
-                ax.annotate(label, (rs[len(rs) // 2], ys[len(rs) // 2]), xytext=(6, 0),
+                # Each tool's label at its own height, so labels don't collide.
+                at = min(len(rs) - 1, int(len(rs) * (0.12 + 0.11 * slot)))
+                ax.annotate(label, (rs[at], ys[at]), xytext=(6, 0),
                             textcoords="offset points", fontsize=8, color=INK, va="center")
             ax.set_xscale("log")
             log_axis(ax.xaxis)
             ax.set_ylim(0, 100)
-            ax.set_title("%s: %s (%d pairs)" % (tiny_label, kind, len(sel)), fontsize=11, color=INK, loc="left")
+            ax.set_title("%s vs %s: %s (%d pairs)" % (tiny_label, against, kind, len(sel)),
+                         fontsize=10, color=INK, loc="left")
             ax.set_xlabel("%s patch size ÷ other tool's (log scale)" % tiny_label, fontsize=9, color=MUTED)
             ax.set_ylabel("share of pairs at or below (%)", fontsize=9, color=MUTED)
             ax.text(0.98, 0.04, "← tinydelta smaller", transform=ax.transAxes, ha="right", fontsize=8, color=MUTED)
-    axes[0][0].legend(frameon=False, fontsize=8, loc="upper left", labelcolor=INK)
+        row_axes[0].legend(frameon=False, fontsize=8, loc="upper left", labelcolor=INK)
     fig.tight_layout()
     fig.savefig(os.path.join(out, "ratio_ecdf.svg"), facecolor=SURFACE)
     plt.close(fig)
@@ -185,7 +199,7 @@ def ratio_ecdf(rows, out):
 
 def patch_share(rows, out):
     kinds = sorted({r["kind"] for r in rows})
-    tools = [(k, l, c) for k, l, c in TINY_VARIANTS if k in rows[0]] + [(k, l, c) for k, l, c, _ in OTHERS if k in rows[0]]
+    tools = [(k, l, c) for k, l, c in TINY_VARIANTS if k in rows[0]] + [(k, l, c) for k, l, c, _, _ in OTHERS if k in rows[0]]
     fig, axes = plt.subplots(1, len(kinds), figsize=(5.6 * len(kinds), 1.2 + 0.5 * len(tools)),
                              squeeze=False, facecolor=SURFACE)
     for ax, kind in zip(axes[0], kinds):

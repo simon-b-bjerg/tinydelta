@@ -19,6 +19,13 @@ Tools (set the binaries with environment variables; defaults are on PATH):
     openvcdiff_zlib   the open-vcdiff patch, zlib level 9
     xdelta3           xdelta3 -9 -S none (VCDIFF, no secondary compression)
     bsdiff            bsdiff 4 (with bzip2 inside)
+    detools           detools create_patch -c heatshrink (sequential, the
+                      embedded bsdiff variant)                $DETOOLS
+    hpatchlite_4k     HPatchLite hdiffi -c-tuz-4k (tinyuz, 4 KB dictionary:
+                      the decoder's RAM)                       $HDIFFI, $HPATCHI
+    hpatchlite_32k    HPatchLite hdiffi -c-tuz-32k (its default dictionary)
+    zstd              zstd -19 --patch-from (a general reference: its decoder
+                      needs the whole old file as its window)
 """
 
 import concurrent.futures
@@ -34,8 +41,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 TINYDELTA = os.environ.get("TINYDELTA", "tinydelta")
 TINYDELTA_OPTIMAL = os.environ.get("TINYDELTA_OPTIMAL", "tinydelta-optimal.test")
 OPENVCDIFF = os.environ.get("OPENVCDIFF", "vcdiff")
+DETOOLS = os.environ.get("DETOOLS", "detools")
+HDIFFI = os.environ.get("HDIFFI", "hdiffi")
+HPATCHI = os.environ.get("HPATCHI", "hpatchi")
 ALL_TOOLS = ["tinydelta", "tinydelta_greedy", "tinydelta_optimal", "tinydelta_zlib",
-             "openvcdiff", "openvcdiff_zlib", "xdelta3", "bsdiff"]
+             "openvcdiff", "openvcdiff_zlib", "xdelta3", "bsdiff",
+             "detools", "hpatchlite_4k", "hpatchlite_32k", "zstd"]
 
 
 class Failure(Exception):
@@ -93,7 +104,32 @@ def encode_all(tools, old, new, work):
         sh("bspatch", old, out, patch)
         check("bsdiff", read(out))
         sizes["bsdiff"] = os.path.getsize(patch)
+    if "detools" in tools:
+        fresh(patch, out)
+        sh(DETOOLS, "create_patch", "-c", "heatshrink", old, new, patch)
+        sh(DETOOLS, "apply_patch", old, patch, out)
+        check("detools", read(out))
+        sizes["detools"] = os.path.getsize(patch)
+    for tool, dictionary in (("hpatchlite_4k", "4k"), ("hpatchlite_32k", "32k")):
+        if tool in tools:
+            fresh(patch, out)
+            sh(HDIFFI, "-c-tuz-" + dictionary, old, new, patch)
+            sh(HPATCHI, old, patch, out)
+            check(tool, read(out))
+            sizes[tool] = os.path.getsize(patch)
+    if "zstd" in tools:
+        sh("zstd", "-q", "-f", "-19", "--patch-from=" + old, new, "-o", patch)
+        sh("zstd", "-q", "-f", "-d", "--patch-from=" + old, patch, "-o", out)
+        check("zstd", read(out))
+        sizes["zstd"] = os.path.getsize(patch)
     return {t: sizes[t] for t in tools}
+
+
+def fresh(*paths):
+    """Removes output files, for tools that refuse to overwrite them."""
+    for path in paths:
+        if os.path.exists(path):
+            os.remove(path)
 
 
 def encode_pair(tools, old, new):
@@ -116,6 +152,12 @@ def tool_versions(tools):
         versions["xdelta3"] = first_line("xdelta3", "-V").split(",")[0]  # drop the copyright
     if "bsdiff" in tools:
         versions["bsdiff"] = os.environ.get("BSDIFF_VERSION", "system package")
+    if "detools" in tools:
+        versions["detools"] = "detools " + first_line(DETOOLS, "--version")
+    if "hpatchlite_4k" in tools or "hpatchlite_32k" in tools:
+        versions["hpatchlite"] = os.environ.get("HPATCHLITE_VERSION", "unknown")
+    if "zstd" in tools:
+        versions["zstd"] = first_line("zstd", "--version").strip("* ").split(",")[0]
     return versions
 
 
