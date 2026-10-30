@@ -294,7 +294,14 @@ def forest(rows, out):
                       bbox_to_anchor=(1.0, 1.0), ncol=len(steps))
     axes[-1][0].set_xlabel("tinydelta's patch size ÷ the tool's (log scale)   ← tinydelta smaller · larger →\n"
                            "dot: geometric mean · line: 10th-90th percentile", fontsize=9, color=MUTED, labelpad=8)
-    fig.tight_layout()
+    # Title and reading line, placed in inches from the top so they hold
+    # for any figure height.
+    height = fig.get_figheight()
+    fig.text(0.02, 1 - 0.15 / height, "tinydelta's patch size compared with other tools",
+             ha="left", va="top", fontsize=13, color=INK)
+    fig.text(0.02, 1 - 0.45 / height, "Each row: tinydelta's patch divided by that tool's, over every pair. "
+             "Below 1, tinydelta's patch is smaller.", ha="left", va="top", fontsize=9, color=MUTED)
+    fig.tight_layout(rect=(0, 0, 1, 1 - 0.7 / height))
     save(fig, out, "forest")
 
 
