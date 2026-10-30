@@ -1,0 +1,66 @@
+{
+  "_comment": "What each tool's decoder needs on the device, for the trade-off graph (plot.py). ram is bytes of RAM while patching; with plus_old_file, the decoder also holds the whole old file (the dictionary) in RAM, so the graph adds the median old-file size of each kind of data and marks the point as a lower bound. code is .text in bytes, null where no microcontroller build exists. basis says where each number comes from: measured (bench/decoder-size.sh, Cortex-M0, -Os) or the tool's documentation.",
+  "tinydelta_optimal": {
+    "label": "tinydelta",
+    "ram": 200,
+    "plus_old_file": false,
+    "code": 670,
+    "basis": "measured: callback decoder, Cortex-M0, -Os: 670 B code with arm-none-eabi-gcc 13.2 (712 B with 10.3, as in the README), ~200 B of stack, no static RAM"
+  },
+  "tinydelta_zlib": {
+    "label": "tinydelta + zlib",
+    "ram": 33000,
+    "plus_old_file": false,
+    "code": null,
+    "basis": "tinydelta's ~200 B plus an inflate window of 32 KB: the patches are compressed with zlib's default 15-bit window"
+  },
+  "hpatchlite_4k": {
+    "label": "HPatchLite, 4 KB dict.",
+    "ram": 4096,
+    "plus_old_file": false,
+    "code": null,
+    "basis": "HPatchLite README: one decompression dictionary plus an input cache of at least 3 B; stack and code from bench/decoder-size.sh"
+  },
+  "hpatchlite_32k": {
+    "label": "HPatchLite, 32 KB dict.",
+    "ram": 32768,
+    "plus_old_file": false,
+    "code": null,
+    "basis": "as HPatchLite, 4 KB dict., with the default 32 KB dictionary"
+  },
+  "detools": {
+    "label": "detools (heatshrink)",
+    "ram": 1600,
+    "plus_old_file": false,
+    "code": 1948,
+    "basis": "measured with detools' default heatshrink settings, Cortex-M0: ~1.6 KB stack, 1,948 B code (README benchmark)"
+  },
+  "bsdiff": {
+    "label": "bsdiff",
+    "ram": 2350000,
+    "plus_old_file": false,
+    "code": null,
+    "basis": "bzip2 manual: decompressing 900 KB blocks needs about 3.7 MB, or 2.3 MB in small mode; bspatch also holds old and new file in memory"
+  },
+  "zstd": {
+    "label": "zstd --patch-from",
+    "ram": 0,
+    "plus_old_file": true,
+    "code": null,
+    "basis": "zstd --patch-from uses the whole old file as its window, so the decoder needs at least the old file in memory"
+  },
+  "openvcdiff": {
+    "label": "open-vcdiff",
+    "ram": 0,
+    "plus_old_file": true,
+    "code": null,
+    "basis": "open-vcdiff's decoder (C++) works on the whole dictionary in memory"
+  },
+  "xdelta3": {
+    "label": "xdelta3",
+    "ram": 0,
+    "plus_old_file": true,
+    "code": null,
+    "basis": "xdelta3 keeps the source in memory in blocks (default 8 MB window), which covers the whole old file at these sizes"
+  }
+}

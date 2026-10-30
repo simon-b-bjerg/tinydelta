@@ -44,12 +44,28 @@ counts.
 
 Each manual run of the Benchmark workflow (Actions > Benchmark > Run
 workflow) commits its results to the [`bench-results`](../../tree/bench-results)
-branch: `results.csv` (one row per pair), `summary.md` (per kind and step:
-geometric mean, median and 10th/90th percentile of tinydelta's size ratio
-to each tool, and how often tinydelta is smaller), `ratio_ecdf.svg`,
-`patch_share.svg`, the tool versions, and the input commits and hashes.
-A pull request that changes the benchmark runs it too, with the results
-only attached to the run.
+branch; a pull request that changes the benchmark runs it too and
+commits to `bench-results-preview`, replaced each time. The results:
+
+| file | what |
+|---|---|
+| `forest.svg` | the headline: per kind of data and tool, tinydelta's patch size divided by the tool's (geometric mean, 10th-90th percentile), 1 and 5 commits apart |
+| `pairs.svg` | every pair: tinydelta against open-vcdiff, HPatchLite (4 KB) and bsdiff |
+| `ratio_ecdf.svg`, `patch_share.svg` | the full distributions: the size ratio, and patch size as a share of the target |
+| `tradeoff.svg` | each tool's median patch size against the RAM its decoder needs |
+| `summary.md` | the numbers behind the graphs, plus patch sizes in bytes |
+| `decoders.json`, `decoder-size.md` | the decoder costs behind the trade-off graph, with where each comes from, and this run's measurement of the decoders that build for Cortex-M0 |
+| `results.csv` | one row per pair, every tool's patch size |
+| `inputs/`, `corpus.json`, `results-tools.json` | the commit and SHA-256 of every build, the corpus and the tool versions |
+
+Every graph is also a PNG, for slides. Uncompressed formats are compared
+with tinydelta, compressed ones with tinydelta + zlib.
+
+Decoder costs ([`decoders.json`](decoders.json)) are measured where the
+decoder builds for a microcontroller (`decoder-size.sh`, Cortex-M0,
+`-Os`), and otherwise taken from the tool's documentation. A decoder that
+needs the whole old file in RAM is shown with the median old file of
+that kind of data added, as a lower bound.
 
 ## Running it locally
 

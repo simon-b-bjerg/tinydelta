@@ -5,8 +5,9 @@ name: Benchmark
 # Linux device trees (bench/corpus.json). Run it by hand under Actions >
 # Benchmark > Run workflow. Results (CSV, summary, graphs, and the exact
 # commits and hashes of every input) are attached to the run and shown in
-# the job summary; a manual run also commits them to the bench-results
-# branch. A pull request that changes the benchmark runs it too.
+# the job summary, and committed: by a manual run to the bench-results
+# branch, by a pull request that changes the benchmark to
+# bench-results-preview (overwritten each time).
 on:
   workflow_dispatch:
   pull_request:
@@ -91,9 +92,16 @@ jobs:
         run: |
           export BSDIFF_VERSION="bsdiff $(dpkg-query -W -f='${Version}' bsdiff)"
           python3 bench/run.py bench/.cache results/results.csv
+      - name: Measure the decoders that fit a microcontroller
+        run: |
+          mkdir -p results
+          bench/decoder-size.sh "$RUNNER_TEMP/HPatchLite" | tee results/decoder-size.md
+          cat results/decoder-size.md >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Decoder sizes::$(sed 's/%/%25/g' results/decoder-size.md | awk '{ printf "%s%%0A", $0 }')"
       - name: Summary and graphs
         run: |
           python3 bench/plot.py results/results.csv results
+          cp bench/decoders.json results/
           mkdir -p results/inputs
           for f in bench/.cache/builds/*/*/versions.json; do
             item="$(basename "$(dirname "$f")")"; corpus="$(basename "$(dirname "$(dirname "$f")")")"
@@ -106,20 +114,26 @@ jobs:
         with:
           name: bench-results
           path: results/
-      - name: Commit the results to the bench-results branch
-        if: github.event_name == 'workflow_dispatch'
+      - name: Commit the results to a results branch
         env:
           GH_TOKEN: ${{ github.token }}
+          # A manual run publishes to bench-results; a pull request run to
+          # bench-results-preview, replaced each time, for review.
+          BRANCH: ${{ github.event_name == 'workflow_dispatch' && 'bench-results' || 'bench-results-preview' }}
         run: |
           repo="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          if git clone -q --depth 1 --branch bench-results "$repo" "$RUNNER_TEMP/out" 2>/dev/null; then
+          if [ "$BRANCH" = bench-results ] && git clone -q --depth 1 --branch "$BRANCH" "$repo" "$RUNNER_TEMP/out" 2>/dev/null; then
             git -C "$RUNNER_TEMP/out" rm -q -r --ignore-unmatch .
           else
-            git init -q -b bench-results "$RUNNER_TEMP/out"
+            git init -q -b "$BRANCH" "$RUNNER_TEMP/out"
           fi
           cp -r results/. "$RUNNER_TEMP/out/"
           cd "$RUNNER_TEMP/out"
           git add -A
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             commit -qm "Benchmark results for ${GITHUB_SHA::7}" || exit 0
-          git push -q "$repo" HEAD:bench-results
+          if [ "$BRANCH" = bench-results ]; then
+            git push -q "$repo" "HEAD:$BRANCH"
+          else
+            git push -q -f "$repo" "HEAD:$BRANCH"
+          fi
