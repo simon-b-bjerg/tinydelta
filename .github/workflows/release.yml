@@ -1,7 +1,7 @@
 name: Release
 
 # Builds the release archives and attaches them to the GitHub release for a
-# version tag. It publishes when a v* tag is pushed, when a release is
+# version tag, and publishes the Python wheels to PyPI. It publishes when a v* tag is pushed, when a release is
 # published (for example one made by hand in the GitHub UI), or when run
 # manually with an existing tag. If the release already exists the files are
 # uploaded to it, otherwise the release is created.
@@ -18,6 +18,7 @@ on:
     paths:
       - .github/workflows/release.yml
       - scripts/build-release.sh
+      - python/**
   workflow_dispatch:
     inputs:
       tag:
@@ -54,6 +55,12 @@ jobs:
         run: |
           version="${TAG:-dev-${GITHUB_SHA::7}}"
           scripts/build-release.sh "$version"
+          python3 python/build_wheels.py "$version" dist wheels
+      - name: Upload Python wheels to the workflow run
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheels
+          path: wheels/
       - name: Upload archives to the workflow run (build only)
         if: env.TAG == ''
         uses: actions/upload-artifact@v4
@@ -71,3 +78,24 @@ jobs:
             gh release create "$TAG" dist/* \
               --verify-tag --title "tinydelta $TAG" --generate-notes
           fi
+
+  pypi:
+    name: Publish to PyPI
+    needs: release
+    if: inputs.tag || github.event.release.tag_name || github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/tinydelta
+    permissions:
+      contents: read
+      id-token: write # PyPI trusted publishing: no API token is stored
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-wheels
+          path: wheels/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: wheels/
+          skip-existing: true # a second run for the same tag (tag push, then release) is fine

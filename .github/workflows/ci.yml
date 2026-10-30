@@ -102,6 +102,43 @@ jobs:
           CLANG_TIDY: clang-tidy-18
         run: scripts/c-analyze.sh
 
+  python:
+    name: Python package (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.9', '3.x'] # oldest supported and current
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Tests against a fresh build of the tool
+        run: |
+          go build -o "$RUNNER_TEMP/bin/" ./cmd/tinydelta
+          export TINYDELTA_BIN="$RUNNER_TEMP/bin/tinydelta${{ runner.os == 'Windows' && '.exe' || '' }}"
+          PYTHONPATH=python/src python -m unittest discover -s python/tests -v
+      - name: Build the wheels, check them, and test the installed Linux wheel
+        if: runner.os == 'Linux' && matrix.python == '3.x'
+        run: |
+          scripts/build-release.sh v0.0.0
+          python python/build_wheels.py v0.0.0 dist "$RUNNER_TEMP/wheels"
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q twine "$RUNNER_TEMP"/wheels/*x86_64*.whl
+          "$RUNNER_TEMP/venv/bin/twine" check "$RUNNER_TEMP"/wheels/*.whl
+          "$RUNNER_TEMP/venv/bin/tinydelta" version
+          cd "$RUNNER_TEMP" && "$RUNNER_TEMP/venv/bin/python" -m unittest discover \
+            -s "$GITHUB_WORKSPACE/python/tests" -t "$GITHUB_WORKSPACE/python/tests" -v
+
   windows:
     name: Go tests on Windows
     runs-on: windows-latest
