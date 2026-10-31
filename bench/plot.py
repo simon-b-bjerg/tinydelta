@@ -267,7 +267,7 @@ def ratio_ecdf(rows, out):
         ax.set_ylim(0, 100)
         ax.set_xlabel("tinydelta's patch size ÷ the tool's (log scale)", fontsize=9, color=MUTED)
         ax.set_ylabel("% of pairs at or below this ratio", fontsize=9, color=MUTED)
-        ax.legend(frameon=False, fontsize=8, loc="upper left", labelcolor=INK)
+        ax.legend(frameon=False, fontsize=9, loc="upper left", labelcolor=INK)
         titled(fig, "%s: how often, and by how much, tinydelta is smaller (%d pairs)" % (kind, len(sel)),
                "Each line climbs through every pair, smallest ratio first; its height at 1 is the share where tinydelta is smaller.")
         save(fig, out, "ratio_ecdf_" + slug(kind))
@@ -365,7 +365,7 @@ def forest(rows, out):
                 mean = geomean(rs)
                 if mean < FOREST_MIN:  # off the axis: marked at its edge, with the value
                     ax.annotate("mean %.2g" % mean, (FOREST_MIN, y), xytext=(8, 0), textcoords="offset points",
-                                ha="left", va="center", fontsize=8, color=color,
+                                ha="left", va="center", fontsize=9, color=color,
                                 bbox=dict(boxstyle="round,pad=0.2", facecolor=SURFACE, edgecolor=color, linewidth=0.8))
                     continue
                 ax.plot([mean], [y], marker="o", markersize=7, color=color,
@@ -381,7 +381,7 @@ def forest(rows, out):
     handles = [plt.Line2D([], [], marker="o", linestyle="", markersize=7, color=MUTED,
                           markerfacecolor=MUTED if step == steps[0] else SURFACE, markeredgewidth=2,
                           label="%d commit%s apart" % (step, "" if step == 1 else "s")) for step in steps]
-    axes[0][0].legend(handles=handles, frameon=False, fontsize=8, loc="lower right", labelcolor=INK,
+    axes[0][0].legend(handles=handles, frameon=False, fontsize=9, loc="lower right", labelcolor=INK,
                       bbox_to_anchor=(1.0, 1.0), ncol=len(steps))
     axes[-1][0].set_xlabel("tinydelta's patch size ÷ the tool's (log scale)   ← tinydelta smaller · larger →\n"
                            "dot: geometric mean · line: 10th-90th percentile, arrowhead where it runs past the axis",
@@ -433,17 +433,17 @@ def pair_scatter(rows, out, name):
     ax.set_xlabel("the other tool's patch (bytes, log scale)", fontsize=9, color=MUTED)
     ax.set_ylabel("tinydelta's patch (bytes, log scale)", fontsize=9, color=MUTED)
     ax.text(0.97, 0.05, "below the line:\ntinydelta smaller", transform=ax.transAxes, ha="right",
-            fontsize=8, color=MUTED)
+            fontsize=9, color=MUTED)
     # Two legends: colour for the tool, marker for the kind of data.
     tool_handles = [plt.Line2D([], [], marker="o", linestyle="", markersize=6, color=color, label=label)
                     for _, label, color, _, _ in tools]
     kind_handles = [plt.Line2D([], [], marker=marker, linestyle="", markersize=6, color=MUTED, label=kind)
                     for kind, marker in zip(kinds, KIND_MARKERS)]
-    first = ax.legend(handles=tool_handles, frameon=False, fontsize=8, loc="upper left", labelcolor=INK,
-                      title="tool", title_fontsize=8, alignment="left")
+    first = ax.legend(handles=tool_handles, frameon=False, fontsize=9, loc="upper left", labelcolor=INK,
+                      title="tool", title_fontsize=9, alignment="left")
     ax.add_artist(first)
-    ax.legend(handles=kind_handles, frameon=False, fontsize=8, loc="lower right", labelcolor=INK,
-              bbox_to_anchor=(1.0, 0.12), title="data", title_fontsize=8, alignment="left")
+    ax.legend(handles=kind_handles, frameon=False, fontsize=9, loc="lower right", labelcolor=INK,
+              bbox_to_anchor=(1.0, 0.12), title="data", title_fontsize=9, alignment="left")
     height = fig.get_figheight()
     fig.text(0.02, 1 - 0.15 / height, "tinydelta against other tools, every pair",
              ha="left", va="top", fontsize=13, color=INK)
@@ -480,13 +480,14 @@ def place_labels(fig, ax, points):
         crowded = any(d is not dot and gap(Bbox([d, d]), dot) < 20 for d in dots)
         for dx, dy, ha, va in (offsets[6:] if crowded else offsets):
             text = ax.annotate(label, (x, y), xytext=(dx, dy), textcoords="offset points",
-                               ha=ha, va=va, fontsize=8, color=INK)
+                               ha=ha, va=va, fontsize=9, color=INK)
             extent = text.get_window_extent(renderer).expanded(1.05, 1.15)
-            cost = 3 * sum(extent.overlaps(other) for other in placed)
-            cost += sum(1 for d in dots if d is not dot and extent.contains(*d))
-            # A label nearer another point than its own reads as that point's.
+            cost = 10 * sum(extent.overlaps(other) for other in placed)
+            cost += 4 * sum(1 for d in dots if d is not dot and extent.contains(*d))
+            # A label nearer another point than its own reads as that point's,
+            # leader line or not: the worst place of all.
             own = gap(extent, dot)
-            cost += 2 * any(gap(extent, d) < own for d in dots if d is not dot)
+            cost += 8 * any(gap(extent, d) < own for d in dots if d is not dot)
             cost += 0 if (extent.x0 >= box.x0 and extent.x1 <= box.x1 and extent.y0 >= box.y0
                           and extent.y1 <= box.y1) else 5
             if best is None or cost < best[0]:
@@ -501,7 +502,7 @@ def place_labels(fig, ax, points):
         if crowded or abs(text.xyann[0]) > 8 or abs(text.xyann[1]) > 4:  # not right beside its point: a leader line
             text.remove()
             ax.annotate(label, (x, y), xytext=text.xyann, textcoords="offset points", ha=text.get_ha(),
-                        va=text.get_va(), fontsize=8, color=INK,
+                        va=text.get_va(), fontsize=9, color=INK,
                         arrowprops=dict(arrowstyle="-", color=MUTED, linewidth=0.6, shrinkA=0, shrinkB=4))
         placed.append(extent)
 
@@ -524,8 +525,10 @@ def tradeoff(rows, out):
     # (it is close to the 4 KB one); it is in the summary.
     tools = [k for k in decoders if column[k] in rows[0] and k != "hpatchlite_32k"]
     kinds = kinds_of(rows)
-    fig, axes = plt.subplots(1, len(kinds), figsize=(5.6 * len(kinds), 4.9), squeeze=False, facecolor=SURFACE)
-    for ax, kind in zip(axes[0], kinds):
+    # One panel per row: at most ~830 px wide, the width of GitHub's README
+    # column, so it is never shrunk there.
+    fig, axes = plt.subplots(len(kinds), 1, figsize=(7.2, 0.8 + 4.2 * len(kinds)), squeeze=False, facecolor=SURFACE)
+    for ax, kind in zip(axes[:, 0], kinds):
         sel = [r for r in rows if r["kind"] == kind]
         old = statistics.median(r["dict_bytes"] for r in sel)
         style(ax)
@@ -554,7 +557,7 @@ def tradeoff(rows, out):
     fig.text(0.02, 1 - 0.15 / height, "Patch size against what the decoder costs on the device",
              ha="left", va="top", fontsize=13, color=INK)
     fig.text(0.02, 1 - 0.45 / height, "Lower left is better. Arrows are lower bounds: code size unknown, "
-             "or the decoder holds the whole old file in RAM.", ha="left", va="top", fontsize=9, color=MUTED)
+             "or the whole old file in RAM.", ha="left", va="top", fontsize=9, color=MUTED)
     fig.tight_layout(rect=(0, 0, 1, 1 - 0.7 / height))
     save(fig, out, "tradeoff")
 
