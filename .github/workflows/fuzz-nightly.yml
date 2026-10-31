@@ -1,0 +1,120 @@
+name: Nightly fuzzing
+
+# Fuzzes the C decoders (libFuzzer, ASan + UBSan) and the Go encoders for
+# an hour each, every night, on main. Each fuzzer's corpus (the inputs that
+# reached new code) is kept in the Actions cache, so every night continues
+# where the last one stopped, and the 60 s fuzz jobs in CI start from it
+# too. A failing input fails the run and is uploaded as an artifact.
+on:
+  schedule:
+    - cron: '41 2 * * *'
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: Minutes per fuzzer
+        required: false
+        default: '60'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-nightly
+  cancel-in-progress: false
+
+env:
+  MINUTES: ${{ inputs.minutes || '60' }}
+
+jobs:
+  c-fuzz:
+    name: C decoders fuzzed (ASan + UBSan)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - name: Install clang with libFuzzer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-18 libclang-rt-18-dev llvm-18
+      # Each run saves under its own key; the newest is restored.
+      - name: Restore the corpus
+        uses: actions/cache/restore@v4
+        with:
+          path: fuzz-corpus
+          key: c-fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: c-fuzz-corpus-
+      - name: Corpus size before
+        run: echo "::notice title=C corpus before::$(ls fuzz-corpus 2>/dev/null | wc -l) inputs"
+      - name: Fuzz
+        env:
+          CLANG: clang-18
+        run: scripts/c-fuzz.sh "$(( MINUTES * 60 ))" fuzz-corpus
+      - name: Save the corpus
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: fuzz-corpus
+          key: c-fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Coverage of the C library by the corpus
+        if: always()
+        env:
+          CLANG: clang-18
+          LLVM_PROFDATA: llvm-profdata-18
+          LLVM_COV: llvm-cov-18
+        run: |
+          echo "Corpus: $(ls fuzz-corpus | wc -l) inputs" >> "$GITHUB_STEP_SUMMARY"
+          scripts/c-coverage.sh fuzz-corpus >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: c-fuzz-artifacts
+          path: fuzz-artifacts/
+          if-no-files-found: ignore
+
+  go-fuzz:
+    name: Go encoders fuzzed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - name: Locate the fuzz cache
+        run: echo "FUZZ_CACHE=$(go env GOCACHE)/fuzz" >> "$GITHUB_ENV"
+      - name: Restore the corpus
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.FUZZ_CACHE }}
+          key: go-fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: go-fuzz-corpus-
+      - name: Fuzz
+        run: go test -run '^$' -fuzz '^FuzzEncodeRoundTrip$' -fuzztime "${MINUTES}m" .
+      - name: Save the corpus
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.FUZZ_CACHE }}
+          key: go-fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Hex dump failing fuzz inputs
+        if: failure()
+        run: |
+          for f in $(git ls-files --others --exclude-standard testdata/fuzz); do
+            echo "== $f"
+            TINYDELTA_FUZZ_DUMP="$f" go test -count=1 -run '^TestDumpFuzzInput$' -v . |
+              grep -v '^=== RUN\|^--- PASS\|^PASS$\|^ok '
+            echo "::error title=Go fuzzer failing input ($f)::$(sed 's/%/%25/g' "$f" | awk '{ printf "%s%%0A", $0 }')"
+          done
+      - name: Upload failing fuzz inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-fuzz-failures
+          path: testdata/fuzz/
+          if-no-files-found: ignore
