@@ -350,8 +350,8 @@ every 32-bit operation takes several 16-bit instructions.
 
 | part | MSP430 | MSP430X | MSP430X, `-mlarge` | stack (`-mlarge`) |
 |---|---:|---:|---:|---:|
-| memory decoder | 964 B | 932 B | 1,068 B | 112 B |
-| callback decoder | 1,740 B | 1,682 B | 1,736 B | ~245 B\* |
+| memory decoder | 988 B | 956 B | 1,096 B | 112 B |
+| callback decoder | 1,856 B | 1,798 B | 1,814 B | ~245 B\* |
 | write cache | 628 B | 602 B | 678 B | +40 B |
 
 ### Results
