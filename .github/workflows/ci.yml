@@ -29,6 +29,17 @@ jobs:
         run: go vet ./...
       - name: Test (includes the C decoders, built with the runner's gcc)
         run: go test ./...
+      - name: Locate the fuzz cache
+        if: matrix.go == 'stable'
+        run: echo "FUZZ_CACHE=$(go env GOCACHE)/fuzz" >> "$GITHUB_ENV"
+      # Start from the nightly fuzzing's corpus (fuzz-nightly.yml); read only.
+      - name: Restore the nightly fuzz corpus
+        if: matrix.go == 'stable'
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.FUZZ_CACHE }}
+          key: go-fuzz-corpus-none
+          restore-keys: go-fuzz-corpus-
       - name: Fuzz encode/decode round trips (60 s)
         if: matrix.go == 'stable'
         run: go test -run '^$' -fuzz '^FuzzEncodeRoundTrip$' -fuzztime 60s .
@@ -64,6 +75,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends clang-18 libclang-rt-18-dev llvm-18
+      # Start from the nightly fuzzing's corpus (fuzz-nightly.yml); read only.
+      - name: Restore the nightly fuzz corpus
+        uses: actions/cache/restore@v4
+        with:
+          path: fuzz-corpus
+          key: c-fuzz-corpus-none
+          restore-keys: c-fuzz-corpus-
       - name: Fuzz for 60 s
         env:
           CLANG: clang-18
