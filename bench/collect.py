@@ -120,6 +120,12 @@ def collect_micropython(cache, name, spec):
     items = [(Item(cache, name, it["name"], spec["max_versions"]), it) for it in spec["items"]]
     log = os.path.join(cache, "build-%s.log" % name)
     commits = commits_touching(src, spec["from"], spec["to"], MICROPYTHON_PATHS)
+    # The firmware embeds its version (git describe) and build date in its
+    # banner. Both are fixed to the range's start, so a commit that leaves
+    # the compiled code unchanged gives an identical image and is skipped,
+    # instead of counting as an update of a few changed banner bytes.
+    stamp = {"MICROPY_GIT_TAG": spec["from"], "MICROPY_GIT_HASH": "bench",
+             "SOURCE_DATE_EPOCH": git(src, "log", "-1", "--format=%ct", spec["from"]).strip()}
     for item, _ in items:
         item.keep_only(commits)
     for index, commit in enumerate(commits):
@@ -129,11 +135,10 @@ def collect_micropython(cache, name, spec):
                 break
             continue
         git(src, "checkout", "-q", "-f", commit)
-        # Reproducible builds: the firmware embeds its build date (the
-        # commit's date instead), and the build scripts order some tables
-        # by Python's randomized string hashes (fixed seed instead).
-        env = dict(os.environ, PYTHONHASHSEED="0",
-                   SOURCE_DATE_EPOCH=git(src, "log", "-1", "--format=%ct", commit).strip())
+        # Reproducible builds: the version stamp above, and a fixed seed for
+        # Python's string hashes, by which the build scripts order some
+        # tables.
+        env = dict(os.environ, PYTHONHASHSEED="0", **stamp)
         if not run(["make", "-C", "mpy-cross", "-j", JOBS], src, log, env):
             for item, _ in todo:
                 item.skipped.append(commit)
