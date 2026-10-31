@@ -1,126 +1,126 @@
 # tinydelta patch sizes
 
-Tools: tinydelta (tinydelta v0.0.0-20261031185817-4c80cd7ff7fe); openvcdiff (open-vcdiff 868f459a8d815125c2457f8c74b12493853100f9); xdelta3 (Xdelta version 3.0.11); bsdiff (bsdiff 4.3-23); detools (detools 0.53.0); hpatchlite (HPatchLite v1.0.2); zstd (Zstandard CLI (64-bit) v1.5.7)
+Tools: tinydelta (tinydelta v0.0.0-20261031215036-460954a633e0); openvcdiff (open-vcdiff 868f459a8d815125c2457f8c74b12493853100f9); xdelta3 (Xdelta version 3.0.11); bsdiff (bsdiff 4.3-23); detools (detools 0.53.0); hpatchlite (HPatchLite v1.0.2); zstd (Zstandard CLI (64-bit) v1.5.7)
 
 Ratio = tinydelta's patch size / the other tool's; below 1, tinydelta is smaller. Geometric mean is the right average for ratios; "smaller" is the share of pairs where tinydelta is smaller. tinydelta is, per pair, the smaller of its plain patch (the library default) and its compression-mode patch, the one an update server would send. Both are listed on their own in the patch-size tables.
 
 ## firmware, 1 commit apart
 
-48 pairs from micropython/stm32-NUCLEO_F091RC, micropython/stm32-PYBV11; median target 296,652 bytes.
+48 pairs from micropython/stm32-NUCLEO_F091RC, micropython/stm32-PYBV11; median target 296,668 bytes.
 
-Compression mode is the smaller in 27% of these pairs.
+Compression mode is the smaller in 92% of these pairs.
 
 | tinydelta vs | geo. mean | median | p10-p90 | tinydelta smaller |
 |---|---:|---:|---:|---:|
-| open-vcdiff | 0.36 | 0.46 | 0.14-0.48 | 100% |
-| open-vcdiff, zlib-compressed | 0.36 | 0.40 | 0.22-0.42 | 100% |
-| xdelta3 | 0.25 | 0.23 | 0.22-0.28 | 100% |
-| bsdiff | 0.22 | 0.12 | 0.11-1.58 | 77% |
-| detools (heatshrink) | 0.01 | 0.01 | 0.00-0.78 | 100% |
-| HPatchLite, 4 KB dict. | 0.44 | 0.35 | 0.29-1.01 | 88% |
-| HPatchLite, 32 KB dict. | 0.45 | 0.35 | 0.29-1.06 | 77% |
-| zstd --patch-from | 0.42 | 0.36 | 0.30-0.73 | 98% |
+| open-vcdiff | 0.18 | 0.15 | 0.13-0.35 | 100% |
+| open-vcdiff, zlib-compressed | 0.26 | 0.24 | 0.22-0.35 | 100% |
+| xdelta3 | 0.29 | 0.26 | 0.23-0.42 | 100% |
+| bsdiff | 1.12 | 1.56 | 0.34-1.62 | 17% |
+| detools (heatshrink) | 0.38 | 0.80 | 0.02-0.92 | 96% |
+| HPatchLite, 4 KB dict. | 0.95 | 1.04 | 0.64-1.20 | 33% |
+| HPatchLite, 32 KB dict. | 0.98 | 1.07 | 0.66-1.24 | 19% |
+| zstd --patch-from | 0.68 | 0.68 | 0.55-0.95 | 94% |
 
 Patch size as a share of the target (median, p10-p90):
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta | 0.01% | 0.01% | 2.78% |
-| tinydelta, plain | 0.01% | 0.01% | 8.56% |
-| tinydelta, plain (greedy) | 0.01% | 0.01% | 8.56% |
-| tinydelta, compression mode, decoded twice | 0.01% | 0.01% | 2.78% |
-| tinydelta, compression mode, decoded twice, 1 KB window | 0.01% | 0.01% | 3.09% |
-| tinydelta, plain, copies at most 256 B back | 0.01% | 0.01% | 8.71% |
-| tinydelta, plain, copies at most 1 KB back | 0.01% | 0.01% | 8.63% |
-| tinydelta, plain, copies at most 4 KB back | 0.01% | 0.01% | 8.57% |
-| open-vcdiff | 0.02% | 0.01% | 19.43% |
-| open-vcdiff, zlib-compressed | 0.02% | 0.01% | 12.11% |
-| xdelta3 | 0.04% | 0.02% | 11.40% |
-| bsdiff | 0.08% | 0.05% | 1.73% |
-| detools (heatshrink) | 1.57% | 1.57% | 3.50% |
-| HPatchLite, 4 KB dict. | 0.02% | 0.02% | 2.81% |
-| HPatchLite, 32 KB dict. | 0.02% | 0.02% | 2.69% |
-| zstd --patch-from | 0.02% | 0.02% | 4.22% |
+| tinydelta | 2.76% | 0.04% | 4.25% |
+| tinydelta, plain | 8.40% | 0.04% | 10.43% |
+| tinydelta, plain (greedy) | 8.40% | 0.04% | 10.43% |
+| tinydelta, compression mode, decoded twice | 2.76% | 0.04% | 4.25% |
+| tinydelta, compression mode, decoded twice, 1 KB window | 3.05% | 0.04% | 4.70% |
+| tinydelta, plain, copies at most 256 B back | 8.48% | 0.04% | 10.69% |
+| tinydelta, plain, copies at most 1 KB back | 8.44% | 0.04% | 10.60% |
+| tinydelta, plain, copies at most 4 KB back | 8.42% | 0.04% | 10.50% |
+| open-vcdiff | 18.93% | 0.14% | 26.54% |
+| open-vcdiff, zlib-compressed | 11.70% | 0.11% | 17.40% |
+| xdelta3 | 11.34% | 0.09% | 13.93% |
+| bsdiff | 1.76% | 0.12% | 2.78% |
+| detools (heatshrink) | 3.40% | 1.60% | 4.84% |
+| HPatchLite, 4 KB dict. | 2.69% | 0.06% | 3.81% |
+| HPatchLite, 32 KB dict. | 2.56% | 0.06% | 3.65% |
+| zstd --patch-from | 4.27% | 0.05% | 6.23% |
 
 Patch size in bytes (median, p10-p90), what goes over the air:
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta | 21 | 20 | 9,433 |
-| tinydelta, plain | 21 | 20 | 27,546 |
-| tinydelta, plain (greedy) | 21 | 20 | 27,546 |
-| tinydelta, compression mode, decoded twice | 23 | 22 | 9,433 |
-| tinydelta, compression mode, decoded twice, 1 KB window | 23 | 22 | 10,508 |
-| tinydelta, plain, copies at most 256 B back | 21 | 20 | 27,827 |
-| tinydelta, plain, copies at most 1 KB back | 21 | 20 | 27,658 |
-| tinydelta, plain, copies at most 4 KB back | 21 | 20 | 27,564 |
-| open-vcdiff | 44 | 42 | 65,838 |
-| open-vcdiff, zlib-compressed | 51 | 48 | 41,931 |
-| xdelta3 | 90 | 88 | 37,353 |
-| bsdiff | 177 | 172 | 5,981 |
-| detools (heatshrink) | 5,715 | 3,610 | 12,116 |
-| HPatchLite, 4 KB dict. | 69 | 57 | 8,900 |
-| HPatchLite, 32 KB dict. | 69 | 57 | 8,474 |
-| zstd --patch-from | 66 | 55 | 15,050 |
+| tinydelta | 8,234 | 92 | 13,810 |
+| tinydelta, plain | 22,030 | 98 | 32,296 |
+| tinydelta, plain (greedy) | 22,030 | 98 | 32,296 |
+| tinydelta, compression mode, decoded twice | 8,234 | 92 | 13,810 |
+| tinydelta, compression mode, decoded twice, 1 KB window | 8,994 | 92 | 15,030 |
+| tinydelta, plain, copies at most 256 B back | 22,378 | 98 | 33,031 |
+| tinydelta, plain, copies at most 1 KB back | 22,235 | 98 | 32,696 |
+| tinydelta, plain, copies at most 4 KB back | 22,096 | 98 | 32,425 |
+| open-vcdiff | 56,961 | 318 | 81,512 |
+| open-vcdiff, zlib-compressed | 35,378 | 252 | 53,024 |
+| xdelta3 | 31,078 | 210 | 42,864 |
+| bsdiff | 5,150 | 269 | 8,773 |
+| detools (heatshrink) | 9,208 | 4,841 | 15,094 |
+| HPatchLite, 4 KB dict. | 7,451 | 146 | 11,913 |
+| HPatchLite, 32 KB dict. | 7,172 | 143 | 11,479 |
+| zstd --patch-from | 11,764 | 119 | 19,725 |
 
 ## firmware, 5 commits apart
 
-40 pairs from micropython/stm32-NUCLEO_F091RC, micropython/stm32-PYBV11; median target 296,652 bytes.
+40 pairs from micropython/stm32-NUCLEO_F091RC, micropython/stm32-PYBV11; median target 296,668 bytes.
 
-Compression mode is the smaller in 60% of these pairs.
+Compression mode is the smaller in 100% of these pairs.
 
 | tinydelta vs | geo. mean | median | p10-p90 | tinydelta smaller |
 |---|---:|---:|---:|---:|
-| open-vcdiff | 0.27 | 0.33 | 0.14-0.47 | 100% |
-| open-vcdiff, zlib-compressed | 0.33 | 0.36 | 0.22-0.43 | 100% |
-| xdelta3 | 0.29 | 0.26 | 0.24-0.42 | 100% |
-| bsdiff | 0.53 | 1.15 | 0.13-1.58 | 45% |
-| detools (heatshrink) | 0.09 | 0.26 | 0.01-0.83 | 100% |
-| HPatchLite, 4 KB dict. | 0.69 | 0.96 | 0.36-1.10 | 70% |
-| HPatchLite, 32 KB dict. | 0.70 | 1.01 | 0.36-1.13 | 45% |
-| zstd --patch-from | 0.59 | 0.64 | 0.37-0.97 | 90% |
+| open-vcdiff | 0.18 | 0.18 | 0.16-0.21 | 100% |
+| open-vcdiff, zlib-compressed | 0.28 | 0.27 | 0.24-0.32 | 100% |
+| xdelta3 | 0.35 | 0.35 | 0.31-0.45 | 100% |
+| bsdiff | 1.51 | 1.52 | 1.43-1.58 | 0% |
+| detools (heatshrink) | 0.96 | 0.94 | 0.87-1.05 | 65% |
+| HPatchLite, 4 KB dict. | 1.17 | 1.16 | 1.08-1.28 | 0% |
+| HPatchLite, 32 KB dict. | 1.21 | 1.20 | 1.11-1.32 | 0% |
+| zstd --patch-from | 0.81 | 0.79 | 0.69-0.98 | 95% |
 
 Patch size as a share of the target (median, p10-p90):
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta | 0.47% | 0.01% | 3.98% |
-| tinydelta, plain | 0.70% | 0.01% | 8.69% |
-| tinydelta, plain (greedy) | 0.70% | 0.01% | 8.69% |
-| tinydelta, compression mode, decoded twice | 0.47% | 0.01% | 3.98% |
-| tinydelta, compression mode, decoded twice, 1 KB window | 0.47% | 0.01% | 4.23% |
-| tinydelta, plain, copies at most 256 B back | 0.71% | 0.01% | 8.86% |
-| tinydelta, plain, copies at most 1 KB back | 0.71% | 0.01% | 8.78% |
-| tinydelta, plain, copies at most 4 KB back | 0.70% | 0.01% | 8.72% |
-| open-vcdiff | 1.43% | 0.02% | 20.73% |
-| open-vcdiff, zlib-compressed | 1.09% | 0.02% | 13.06% |
-| xdelta3 | 1.12% | 0.04% | 11.81% |
-| bsdiff | 0.41% | 0.07% | 2.89% |
-| detools (heatshrink) | 1.83% | 1.57% | 4.83% |
-| HPatchLite, 4 KB dict. | 0.49% | 0.03% | 3.64% |
-| HPatchLite, 32 KB dict. | 0.45% | 0.03% | 3.52% |
-| zstd --patch-from | 0.43% | 0.02% | 5.37% |
+| tinydelta | 5.21% | 4.12% | 8.19% |
+| tinydelta, plain | 11.41% | 9.78% | 15.25% |
+| tinydelta, plain (greedy) | 11.41% | 9.78% | 15.25% |
+| tinydelta, compression mode, decoded twice | 5.21% | 4.12% | 8.19% |
+| tinydelta, compression mode, decoded twice, 1 KB window | 5.65% | 4.45% | 8.77% |
+| tinydelta, plain, copies at most 256 B back | 11.68% | 9.98% | 15.57% |
+| tinydelta, plain, copies at most 1 KB back | 11.57% | 9.88% | 15.46% |
+| tinydelta, plain, copies at most 4 KB back | 11.48% | 9.81% | 15.36% |
+| open-vcdiff | 28.32% | 23.42% | 40.73% |
+| open-vcdiff, zlib-compressed | 18.91% | 15.25% | 27.85% |
+| xdelta3 | 14.74% | 12.96% | 20.39% |
+| bsdiff | 3.58% | 2.72% | 5.41% |
+| detools (heatshrink) | 5.76% | 4.53% | 7.83% |
+| HPatchLite, 4 KB dict. | 4.73% | 3.51% | 6.69% |
+| HPatchLite, 32 KB dict. | 4.58% | 3.38% | 6.50% |
+| zstd --patch-from | 7.21% | 5.19% | 9.12% |
 
 Patch size in bytes (median, p10-p90), what goes over the air:
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta | 1,076 | 24 | 14,482 |
-| tinydelta, plain | 1,606 | 24 | 31,566 |
-| tinydelta, plain (greedy) | 1,606 | 24 | 31,566 |
-| tinydelta, compression mode, decoded twice | 1,076 | 26 | 14,482 |
-| tinydelta, compression mode, decoded twice, 1 KB window | 1,082 | 26 | 15,412 |
-| tinydelta, plain, copies at most 256 B back | 1,626 | 24 | 32,181 |
-| tinydelta, plain, copies at most 1 KB back | 1,626 | 24 | 31,880 |
-| tinydelta, plain, copies at most 4 KB back | 1,612 | 24 | 31,656 |
-| open-vcdiff | 3,276 | 58 | 74,752 |
-| open-vcdiff, zlib-compressed | 2,490 | 62 | 46,939 |
-| xdelta3 | 2,563 | 93 | 42,815 |
-| bsdiff | 938 | 178 | 10,507 |
-| detools (heatshrink) | 5,720 | 3,613 | 17,589 |
-| HPatchLite, 4 KB dict. | 1,119 | 59 | 13,240 |
-| HPatchLite, 32 KB dict. | 1,033 | 59 | 12,804 |
-| zstd --patch-from | 996 | 59 | 19,543 |
+| tinydelta | 16,248 | 12,179 | 21,211 |
+| tinydelta, plain | 35,804 | 26,298 | 41,167 |
+| tinydelta, plain (greedy) | 35,804 | 26,298 | 41,167 |
+| tinydelta, compression mode, decoded twice | 16,248 | 12,179 | 21,211 |
+| tinydelta, compression mode, decoded twice, 1 KB window | 17,406 | 12,947 | 22,617 |
+| tinydelta, plain, copies at most 256 B back | 36,504 | 26,616 | 42,594 |
+| tinydelta, plain, copies at most 1 KB back | 36,188 | 26,492 | 42,007 |
+| tinydelta, plain, copies at most 4 KB back | 35,924 | 26,363 | 41,561 |
+| open-vcdiff | 91,106 | 69,502 | 101,763 |
+| open-vcdiff, zlib-compressed | 60,702 | 46,682 | 69,092 |
+| xdelta3 | 47,902 | 36,220 | 53,064 |
+| bsdiff | 10,584 | 7,779 | 14,592 |
+| detools (heatshrink) | 17,341 | 12,150 | 21,402 |
+| HPatchLite, 4 KB dict. | 13,852 | 10,027 | 17,622 |
+| HPatchLite, 32 KB dict. | 13,438 | 9,690 | 17,068 |
+| zstd --patch-from | 20,789 | 15,064 | 27,071 |
 
 ## device tree, 1 commit apart
 

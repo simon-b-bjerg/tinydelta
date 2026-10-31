@@ -5,8 +5,8 @@ kept here so the README's numbers and graphs stay fixed until they are
 deliberately updated. The method, corpus and tools are described in
 [`bench/README.md`](../../bench/README.md).
 
-- **Run:** [Benchmark workflow run 41231950570](https://github.com/simon-b-bjerg/tinydelta/actions/runs/41231950570), 31 October 2026, every build byte-reproducible (MicroPython built with the commit's date and a fixed Python hash seed).
-- **Corpus:** 166 pairs. Firmware: 88 pairs from 50 builds of MicroPython (stm32 port, NUCLEO_F091RC and PYBV11), consecutive commits between `v1.25.0` and `v1.26.0`. Device trees: 78 pairs from 48 `.dtb` builds of three boards, consecutive commits between `v7.0-dts` and `v7.3-dts`. Pairs are 1 and 5 builds apart.
+- **Run:** [Benchmark workflow run 41245460450](https://github.com/simon-b-bjerg/tinydelta/actions/runs/41245460450), 31 October 2026, every build byte-reproducible. MicroPython is built with a fixed version string and build date (those of `v1.25.0`) and a fixed Python hash seed, so a commit that doesn't change the compiled code gives an identical image and is skipped. Earlier snapshots built each commit with its own version and date, so more than half of their firmware pairs differed only in the startup banner, which flattered tinydelta's firmware figures.
+- **Corpus:** 166 pairs. Firmware: 88 pairs from 50 builds of MicroPython (stm32 port, NUCLEO_F091RC and PYBV11), the first 25 commits per board between `v1.25.0` and `v1.26.0` that change its compiled code. Device trees: 78 pairs from 48 `.dtb` builds of three boards, consecutive commits between `v7.0-dts` and `v7.3-dts`. Pairs are 1 and 5 builds apart.
 - **Compression mode:** `tinydelta_cz_twice*` columns: `encode -for-compression`, then a second tinydelta pass against an empty dictionary (also with `-max-distance 1024`).
 - **Copy distance limits:** `tinydelta_window_256`, `_1k`, `_4k` columns: the plain patch with `-max-distance 256`, `1024` and `4096`.
 - **open-vcdiff, zlib-compressed:** `openvcdiff_zlib`, open-vcdiff's patch compressed afterwards with zlib at level 9.
