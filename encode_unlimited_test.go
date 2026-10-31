@@ -37,7 +37,7 @@ func TestEncodeUnlimited(t *testing.T) {
 	saved := optMaxStates
 	optMaxStates = math.MaxInt
 	defer func() { optMaxStates = saved }()
-	if err := os.WriteFile(paths[2], encode(dict, target, MaxSize), 0o644); err != nil {
+	if err := os.WriteFile(paths[2], withHeader(encode(dict, target, MaxSize)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
