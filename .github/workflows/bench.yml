@@ -1,0 +1,137 @@
+name: Benchmark
+
+# Compares tinydelta's patch sizes with open-vcdiff, xdelta3 and bsdiff on
+# real version pairs: consecutive commits of MicroPython firmware and of
+# Linux device trees (bench/corpus.json). Run it by hand under Actions >
+# Benchmark > Run workflow. Results (CSV, summary, graphs, and the exact
+# commits and hashes of every input) are attached to the run and shown in
+# the job summary, and committed: by a manual run to the bench-results
+# branch, by a pull request that changes the benchmark to
+# bench-results-preview (overwritten each time).
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - bench/**
+      - .github/workflows/bench.yml
+
+permissions:
+  contents: read
+
+env:
+  OPENVCDIFF_COMMIT: 868f459a8d815125c2457f8c74b12493853100f9 # master, 2019-03-11 (the latest)
+  HPATCHLITE_TAG: v1.0.2
+  DETOOLS_VERSION: 0.53.0
+
+jobs:
+  bench:
+    name: Benchmark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    permissions:
+      contents: write # pushes the bench-results branch, which holds only results
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Install toolchains and the other delta tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            device-tree-compiler xdelta3 bsdiff zstd libgflags-dev cmake
+          pip install matplotlib "detools==$DETOOLS_VERSION"
+      - name: Build tinydelta, open-vcdiff and HPatchLite
+        run: |
+          go build -o "$RUNNER_TEMP/bin/tinydelta" ./cmd/tinydelta
+          git clone -q https://github.com/google/open-vcdiff "$RUNNER_TEMP/open-vcdiff"
+          git -C "$RUNNER_TEMP/open-vcdiff" checkout -q "$OPENVCDIFF_COMMIT"
+          cmake -S "$RUNNER_TEMP/open-vcdiff" -B "$RUNNER_TEMP/open-vcdiff/build" -DCMAKE_BUILD_TYPE=Release \
+            -Dvcdiff_use_system_gflags=ON -Dvcdiff_build_tests=OFF -Dvcdiff_build_test=OFF \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 > /dev/null
+          cmake --build "$RUNNER_TEMP/open-vcdiff/build" -j "$(nproc)" > /dev/null
+          cp "$(find "$RUNNER_TEMP/open-vcdiff/build" -type f -name vcdiff -perm -u+x | head -1)" "$RUNNER_TEMP/bin/vcdiff"
+          "$RUNNER_TEMP/bin/vcdiff" help > /dev/null 2>&1 || true
+          # HPatchLite brings its HDiffPatch and tinyuz as pinned submodules.
+          git clone -q --recursive --depth 1 --branch "$HPATCHLITE_TAG" \
+            https://github.com/sisong/HPatchLite "$RUNNER_TEMP/HPatchLite"
+          make -C "$RUNNER_TEMP/HPatchLite" -j "$(nproc)" > /dev/null
+          cp "$RUNNER_TEMP/HPatchLite/hdiffi" "$RUNNER_TEMP/HPatchLite/hpatchi" "$RUNNER_TEMP/bin/"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # Builds are cached even when a later step fails, and collect.py
+      # continues from them, so a run doesn't repeat finished builds.
+      - name: Restore cached builds of the corpus
+        uses: actions/cache/restore@v4
+        with:
+          path: bench/.cache/builds
+          key: bench-builds-${{ hashFiles('bench/corpus.json') }}-${{ github.run_id }}
+          # Any earlier builds will do: collect.py keeps only the series that
+          # still match the corpus and its commit walk, so a changed
+          # corpus.json does not rebuild unchanged items.
+          restore-keys: |
+            bench-builds-${{ hashFiles('bench/corpus.json') }}-
+            bench-builds-
+      - name: Build the corpus (MicroPython firmware, device trees)
+        run: python3 bench/collect.py bench/.cache
+      - name: Cache the builds
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: bench/.cache/builds
+          key: bench-builds-${{ hashFiles('bench/corpus.json') }}-${{ github.run_id }}
+      - name: Encode every pair with every tool
+        env:
+          OPENVCDIFF_VERSION: open-vcdiff ${{ env.OPENVCDIFF_COMMIT }}
+          HPATCHLITE_VERSION: HPatchLite ${{ env.HPATCHLITE_TAG }}
+        run: |
+          export BSDIFF_VERSION="bsdiff $(dpkg-query -W -f='${Version}' bsdiff)"
+          python3 bench/run.py bench/.cache results/results.csv
+      - name: Measure the decoders that fit a microcontroller
+        run: |
+          mkdir -p results
+          bench/decoder-size.sh "$RUNNER_TEMP/HPatchLite" | tee results/decoder-size.md
+          cat results/decoder-size.md >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Decoder sizes::$(sed 's/%/%25/g' results/decoder-size.md | awk '{ printf "%s%%0A", $0 }')"
+      - name: Summary and graphs
+        run: |
+          python3 bench/plot.py results/results.csv results
+          cp bench/decoders.json results/
+          mkdir -p results/inputs
+          for f in bench/.cache/builds/*/*/versions.json; do
+            item="$(basename "$(dirname "$f")")"; corpus="$(basename "$(dirname "$(dirname "$f")")")"
+            cp "$f" "results/inputs/$corpus-$item.json"
+          done
+          cp bench/corpus.json results/
+          cat results/summary.md >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Benchmark summary::$(sed 's/%/%25/g' results/summary.md | awk '{ printf "%s%%0A", $0 }')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: results/
+      - name: Commit the results to a results branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # A manual run publishes to bench-results; a pull request run to
+          # bench-results-preview, replaced each time, for review.
+          BRANCH: ${{ github.event_name == 'workflow_dispatch' && 'bench-results' || 'bench-results-preview' }}
+        run: |
+          repo="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if [ "$BRANCH" = bench-results ] && git clone -q --depth 1 --branch "$BRANCH" "$repo" "$RUNNER_TEMP/out" 2>/dev/null; then
+            git -C "$RUNNER_TEMP/out" rm -q -r --ignore-unmatch .
+          else
+            git init -q -b "$BRANCH" "$RUNNER_TEMP/out"
+          fi
+          cp -r results/. "$RUNNER_TEMP/out/"
+          cd "$RUNNER_TEMP/out"
+          git add -A
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -qm "Benchmark results for ${GITHUB_SHA::7}" || exit 0
+          if [ "$BRANCH" = bench-results ]; then
+            git push -q "$repo" "HEAD:$BRANCH"
+          else
+            git push -q -f "$repo" "HEAD:$BRANCH"
+          fi

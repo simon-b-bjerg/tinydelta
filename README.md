@@ -31,8 +31,10 @@ no compression library.
 ## Highlights
 
 - **Small patches.** One version byte, then a stream of short
-  instructions: no framing, lengths or checksum. An unchanged region typically costs one
-  or two bytes.
+  instructions: no framing, lengths or checksum. An unchanged region
+  typically costs one or two bytes. On 166 real firmware and device-tree
+  updates, smaller than open-vcdiff's in every one, typically a third of
+  the size ([Benchmark](#benchmark)).
 - **Optimizing encoder.** Dynamic programming over exact instruction
   costs, never worse than the built-in greedy encoder, which is
   available when speed matters more.
@@ -55,36 +57,112 @@ no compression library.
 
 ## Benchmark
 
-Patch size for a pair of real ~3.5 KB binary device-configuration
-files, in both directions:
+166 real version pairs: builds of consecutive commits of MicroPython
+firmware (two Cortex-M boards, ~300 KB) and of Linux device trees (three
+boards, ~63 KB), one and five commits apart, against seven other delta
+tools. Every patch was decoded again and checked against the target.
 
-| encoder | A → B | B → A |
-|---|---:|---:|
-| **tinydelta** | **278 B** | **233 B** |
-| tinydelta, greedy | 298 B | 238 B |
-| xdelta3 3.0, `-9 -S none` | 407 B | 336 B |
-| bsdiff 4.3 | 436 B | 455 B |
-| open-vcdiff, interleaved, `-target_matches` | 677 B | 520 B |
-| zlib `-9` of the new file (no delta) | 916 B | 862 B |
+![tinydelta's patch size compared with other tools](docs/benchmark/forest.svg)
 
-bsdiff is built for executables, where code shifts cause many small
-changes to addresses. Each patch carries a 32-byte header plus three
-bzip2 streams, which is a lot of fixed overhead for small files.
+Typical ratio of tinydelta's patch to the other tool's (geometric mean;
+below 1, tinydelta's is smaller) and how often tinydelta's is smaller:
 
-Compressing a tinydelta patch afterwards barely helps at this size: the
-instructions already remove most of the redundancy zlib would find, and
-zlib's own overhead costs about as much as it saves.
+| compared with | firmware (88 pairs) | device trees (78 pairs) |
+|---|---|---|
+| open-vcdiff | **0.37**, smaller in 100% | **0.33**, smaller in 100% |
+| xdelta3 | 0.53, smaller in 100% | 0.55, smaller in 100% |
+| HPatchLite, 4 KB dictionary | 0.97, smaller in 62% | 1.41, smaller in 29% |
+| bsdiff | 0.74, smaller in 62% | 0.96, smaller in 35% |
+| zstd `--patch-from` | 0.95, smaller in 58% | 1.21, smaller in 29% |
 
-Firmware is different. A small code change moves addresses and offsets
-throughout the image, so the patch becomes thousands of short
-instructions carrying similar address changes, which zlib compresses
-well. On a 230 KB MicroPython image for Cortex-M0, zlib `-9` made the
-patch **about 15–30% smaller**, from a one-line change to a release
-upgrade. A 512-byte window gave almost the same gain as the default
-32 KB one, which matters if the device has to decompress. heatshrink
-gained less, about 0–15%. Whether that is worth a decompressor on
-the device depends on your link and flash budget; measure on your own
-images.
+tinydelta's patch is smaller than open-vcdiff's in every pair, typically a
+third of its size. Against the tools that compress their patches it
+depends on the size of the change: when tinydelta's patch is under 1 KB
+(82 pairs), it is the smaller one in 95% of them, typically half the size
+of HPatchLite's; at 1 KB and above (84 pairs), HPatchLite's is always
+smaller, typically by 2.4 times. Compression pays off once a change
+touches enough of the file.
+
+What that compression costs on the device:
+
+![Patch size against decoder footprint](docs/benchmark/tradeoff.svg)
+
+| decoder | code (Cortex-M0, `-Os`) | RAM besides stack | stack |
+|---|---:|---:|---:|
+| **tinydelta**, memory decoder | **392 B** | **0** | 64 B |
+| **tinydelta**, callback decoder | **720 B** | **0** | ~200 B |
+| HPatchLite + tinyuz | ~2.2 KB | 4–32 KB dictionary | – |
+| detools + heatshrink | 1,948 B | 0 | ~1.6 KB |
+| tiny-vcdiff (open-vcdiff's format) | 3,881 B | 3,221 B | ~150 B |
+| bsdiff (bzip2) | – | 2.3–3.7 MB | – |
+
+What you give up:
+
+- **Larger patches for large changes.** Above about 1 KB of patch, tools
+  that compress (HPatchLite, bsdiff, zstd) produce smaller ones, for a
+  decoder several to thousands of times larger. Compressing tinydelta's
+  patch narrows the gap (see below).
+- **Speed was not compared.** The goal is a small decoder, not a fast one.
+- **Small patch reads.** The callback decoder reads the patch a few bytes
+  at a time; on slow flash, wrap `patch_read` in a small buffer.
+- **No checksum, no VCDIFF compatibility.** Send a CRC or hash with the
+  patch (see [On the device](#on-the-device)).
+- **Your data may differ.** Two kinds of data from public projects;
+  compare on your own files before choosing (`tinydelta encode -v`
+  prints the patch size).
+
+<details>
+<summary>How it was measured</summary>
+
+Pairs are builds of consecutive commits, so every one is a real change:
+MicroPython's stm32 port (NUCLEO_F091RC and PYBV11) between `v1.25.0` and
+`v1.26.0`, and three boards' device trees (rk3588-rock-5b, imx8mp-evk,
+k3-am625-sk) between `v7.0-dts` and `v7.3-dts`. tinydelta uses the
+library's default encoding, as users get it: optimal, but greedy above
+roughly 100 KB, so greedy for the firmware. The other tools run at their
+smallest settings: open-vcdiff with `-target_matches`, xdelta3 `-9 -S
+none`, HPatchLite `hdiffi -c-tuz-4k` (and `-32k`), detools with
+heatshrink, zstd `-19 --patch-from`. Decoder code sizes are measured with
+`arm-none-eabi-gcc` where the decoder builds for a microcontroller, and
+otherwise taken from each tool's documentation.
+
+The method, the scripts and how to run them are in
+[`bench/README.md`](bench/README.md); the exact inputs (every commit and
+SHA-256), all numbers and every graph of this run are in
+[`docs/benchmark/`](docs/benchmark/), including the pair-by-pair view:
+
+![Every pair: tinydelta against open-vcdiff, bsdiff and HPatchLite](docs/benchmark/pairs.svg)
+
+</details>
+
+<details>
+<summary>About compression</summary>
+
+zlib at level 9 on tinydelta's patch makes it about 22% smaller (median)
+on these data, but larger on very small patches, where zlib's own framing
+costs more than it saves: it helps in 78% of the firmware pairs and 71%
+of the device-tree pairs. Measured earlier on a 230 KB MicroPython image,
+a 512-byte zlib window gave almost the same gain as the default 32 KB
+one, which matters if the device has to decompress; heatshrink gained
+less, about 0–15%. Whether that is worth a decompressor on the device
+depends on your link and flash budget.
+
+</details>
+
+<details>
+<summary>Decoder footprint notes</summary>
+
+tinydelta's figures are from [`scripts/c-size.sh`](scripts/c-size.sh)
+(`arm-none-eabi-gcc` 13.2). HPatchLite: 662 B of patch code by its own documentation plus
+1,567 B for the tinyuz decompressor, measured; its dictionary is set when
+the patch is created. detools and tiny-vcdiff: measured on a 230 KB
+MicroPython image with each decoder linked into a small test program, with
+`--gc-sections`; detools at its default heatshrink settings (larger windows
+need more RAM). bsdiff: bzip2's own figures for 900 KB blocks; bspatch also
+holds the old and new file in memory. Every figure and its source is in
+[`bench/decoders.json`](bench/decoders.json).
+
+</details>
 
 ## Why another delta format?
 
@@ -108,59 +186,7 @@ four instructions, one integer encoding and 32-bit arithmetic, with all
 the effort in the encoder. The decoder is simple because the format has
 almost nothing to decode.
 
-Measured on a 230 KB MicroPython firmware for a Cortex-M0 (STM32
-NUCLEO-F091RC), after changing one string and rebuilding. The decoders
-were built with `arm-none-eabi-gcc -Os -mthumb` and linked with
-`--gc-sections`, so only code that is used counts:
-
-| decoder | patch | code (Cortex-M0) | static RAM | stack |
-|---|---:|---:|---:|---:|
-| **tinydelta**, memory decoder, greedy patch | **4,531 B** | **392 B** | 0 | 64 B |
-| **tinydelta**, memory decoder, optimal patch¹ | **4,432 B** | **392 B** | 0 | 64 B |
-| **tinydelta**, callback decoder, greedy patch | **4,531 B** | 720 B | 0 | ~190 B |
-| detools + heatshrink (default settings²) | 4,772 B | 1,948 B | 0 | ~1.6 KB |
-| tiny-vcdiff (open-vcdiff, interleaved) | 10,848 B | 3,881 B | 3,221 B | ~150 B |
-
-¹ `Encode` falls back to the greedy parse above roughly 100 KB (see
-[Go library](#go-library)), so it produces the greedy patch for this
-230 KB image. The optimal figure comes from lifting that limit,
-which took about 30 s on one core; the patch is about 2% smaller and
-decodes with the same decoder.
-
-² detools also offers firmware-specific data formats and other
-heatshrink window sizes, which were not tried and may give smaller
-patches (a larger window needs more RAM in the decoder).
-
-In short: the smallest of the decoders compared, with no static RAM and
-patches as small as or smaller than the alternatives. Code size is each
-decoder's own `.text` after linking, with the small test program that
-calls it subtracted. tinydelta's figures are the ones from
-[`scripts/c-size.sh`](scripts/c-size.sh); measured the same way as the
-others they come out within 4 B of these (378 B and 716 B). Stack
-figures are sums of `-fstack-usage` frames.
-
-What you give up:
-
-- **Speed was not compared.** The goal is a small decoder, not a fast
-  one. Decode speed has not been measured on a device, where flash
-  access will probably dominate, and no claim is made that it beats the
-  other decoders.
-- **Small patch reads.** The callback decoder reads the patch a few bytes
-  at a time. On slow flash, wrap `patch_read` in a small buffer.
-- **No checksum, no VCDIFF compatibility.** Send a CRC or hash with the
-  patch (see [On the device](#on-the-device)). Existing VCDIFF tools
-  cannot read or write tinydelta patches.
-- **One firmware project.** These numbers come from one project and one
-  kind of change. Data and use cases differ a lot, so compare the
-  formats on your own files before choosing; `tinydelta encode -v`
-  prints the patch size.
-
-The size of a firmware patch depends heavily on the build, not only on
-the encoder. In the test above, changing one string made the patch about
-4.5 KB (2% of the image): the rebuilt image differed in several hundred
-places spread across it, which looks like moved addresses and offsets,
-and the data at the end was shifted by a few bytes. A reproducible build
-with a stable layout should help any delta format, this one included.
+The [benchmark](#benchmark) shows what that costs and buys.
 
 ## Contents
 
@@ -300,6 +326,10 @@ newFile, err := tinydelta.DecodeReaderLimit(oldFile, r, maxSize) // from an io.R
 | `Decode`, `DecodeReader` | Apply a patch from a byte slice or an `io.Reader`. |
 | `DecodeReaderLimit` | As `DecodeReader`, but fails with `ErrTooLarge` before the target would exceed a size you choose. |
 
+Above the optimal encoder's limit, lifting it is possible but slow: on a
+230 KB MicroPython image it took about 30 s on one core and gave a patch
+about 2% smaller, which decodes with the same decoders.
+
 ### Limiting instruction length
 
 `EncodeOptions.MaxInstructionLen` (CLI: `encode -max-len N`) caps how
@@ -308,8 +338,9 @@ produce; longer runs are split into several instructions. This helps a
 decoder that handles one instruction at a time, e.g. one that needs a
 bound on how long a single step takes or how much it writes. The format
 and decoders are unchanged, so limited patches decode anywhere. The cost
-is small: on the benchmark pair (A → B), the patch grows from 277 B to
-281 B with a limit of 1024, and to 348 B with a limit of 64.
+is small: on a pair of ~3.5 KB binary device-configuration files, the
+patch grows from 277 B to 281 B with a limit of 1024, and to 348 B with a
+limit of 64.
 
 Dictionary and target are limited to `MaxSize` (2³⁰ − 1 bytes); larger
 inputs return `ErrTooLarge`. Malformed patches return an error, never a
@@ -415,7 +446,8 @@ page at a time at increasing, page-aligned offsets, plus a final partial
 page. Reads come from flash for data already programmed and from the
 page buffer for the rest, including reads that span both.
 
-Example: patch, dictionary and target in three regions of one SPI flash.
+<details>
+<summary>Example: patch, dictionary and target in three regions of one SPI flash</summary>
 
 ```c
 #include "tinydelta_cache.h"
@@ -448,6 +480,8 @@ tinydelta_result apply_patch(uint32_t dict_len, uint32_t patch_len,
     return tinydelta_decode_io(&io, target_len);   /* TINYDELTA_OK on success */
 }
 ```
+
+</details>
 
 ### Your own decoder
 
@@ -500,6 +534,13 @@ no checksum, no length and no end marker. It doesn't say which
 dictionary it was made for, and a patch cut off between two
 instructions still decodes, into a shorter target. Those checks belong in your update protocol, which already has
 to carry the patch and usually has its own metadata.
+
+The size of a firmware patch depends heavily on the build, not only on
+the encoder. In one test, changing one string in a 230 KB MicroPython image made
+the patch about 4.5 KB (2% of the image): the rebuilt image differed in several hundred
+places spread across it, which looks like moved addresses and offsets,
+and the data at the end was shifted by a few bytes. A reproducible build
+with a stable layout should help any delta format, this one included.
 
 #### Suggested integration
 
@@ -702,12 +743,16 @@ What is tested, and how:
 | `TestCDecoderMatchesGo`, `TestCIODecoderMatchesGo` | both C decoders against the Go decoder on valid, truncated and corrupted patches and too-small output buffers, at several scratch-buffer and flash-page sizes; the test driver polices the callback contract (sequential whole-page programming, no reads of unwritten data) |
 | `TestCIODecoderCallbackFailures` | a failing read, write or flush callback stops decoding with `TINYDELTA_ERR_IO` |
 | `TestVectors`, `TestCVectors` | the Go decoder, the C memory decoder and the C callback decoder (every scratch size, with and without the page cache) against every [conformance vector](#conformance-vectors) |
-| C fuzzing ([`c/fuzz/fuzz_decode.c`](c/fuzz/fuzz_decode.c)) | libFuzzer with AddressSanitizer and UndefinedBehaviorSanitizer, seeded with patches from the Go encoders. Every input goes through an independent reference decoder written from the wire format, the memory decoder, and the callback decoder at scratch sizes 1, 7 and 64, each with and without the page cache. All must agree on the result and the target bytes, and the callbacks abort on any breach of the contract, as the sanitizers do on any memory error or undefined behaviour. The input can also make any one callback call fail, and the callback decoder must then report `TINYDELTA_ERR_IO` |
+| C fuzzing ([`c/fuzz/fuzz_decode.c`](c/fuzz/fuzz_decode.c)) | libFuzzer with AddressSanitizer and UndefinedBehaviorSanitizer: every input through an independent reference decoder and all C decoder configurations, which must agree exactly; any memory error, undefined behaviour or breach of the callback contract fails; injected callback failures must give `TINYDELTA_ERR_IO` |
 | `scripts/c-check.sh` | the C library builds with strict warnings as errors, at scratch sizes 1, 7, 64 and 256 |
 | `scripts/c-analyze.sh` | static analysis of the C library with GCC's analyzer, the Clang Static Analyzer and clang-tidy (bug-finding checks, see [`c/.clang-tidy`](c/.clang-tidy)); any finding fails |
 | CodeQL | GitHub's code scanning, security and quality queries, over the Go code and the C library; results in the repository's Security tab |
 
-#### How the fuzzing works
+Not covered: nothing runs on a real microcontroller; the Cortex-M and
+MSP430 figures are measured from the compiled code, not on hardware.
+
+<details>
+<summary>How the fuzzing works</summary>
 
 A fuzzer runs a test over and over with generated inputs. It starts
 from a few seed inputs, mutates them (flips bits, inserts, deletes and
@@ -741,7 +786,10 @@ There are two, one for each side of the format:
   or undefined behaviour into an immediate failure, even when the
   output happens to be correct.
 
-What runs in CI, on every push to `main` and every pull request:
+</details>
+
+<details>
+<summary>What runs in CI, on every push to <code>main</code> and every pull request</summary>
 
 | job | runs |
 |---|---|
@@ -756,8 +804,10 @@ What runs in CI, on every push to `main` and every pull request:
 | C library on 32-bit ARM | `scripts/c-check.sh` for x86-64 and ARM, the C decoder tests on 32-bit ARM under QEMU, and the Cortex-M code size and stack report (informational) |
 | C library on MSP430 | `scripts/c-check.sh` for 16-bit MSP430 and MSP430X (small and large memory models), the C decoder tests on MSP430X under GNU's MSP430 instruction simulator, and the MSP430 code size and stack report (informational). The toolchain is built from GNU sources by [`scripts/msp430-toolchain.sh`](scripts/msp430-toolchain.sh) and cached |
 
-Not covered: nothing runs on a real microcontroller; the Cortex-M and
-MSP430 figures are measured from the compiled code, not on hardware.
+</details>
+
+<details>
+<summary>Running the C tests on another architecture (ARM, MSP430)</summary>
 
 To run the C decoder tests on another architecture, set a cross
 compiler and an emulator, as CI does for 32-bit ARM:
@@ -776,6 +826,11 @@ TINYDELTA_CC="msp430-elf-gcc -mcpu=msp430x -mlarge -msim" \
 TINYDELTA_C_RUNNER="scripts/sim-run.sh msp430-elf-run" go test -run TestC .
 ```
 
+</details>
+
+<details>
+<summary>When a fuzzer finds a failing input</summary>
+
 A failing input from `FuzzEncodeRoundTrip` lands in `testdata/fuzz/`
 and becomes a regression test once committed; hex dump it with
 `TINYDELTA_FUZZ_DUMP=<file> go test -run TestDumpFuzzInput -v .`. One
@@ -784,11 +839,18 @@ split into header, dictionary and patch; replay it by passing the file
 to the built `fuzz_decode` binary. In CI, both are also hex dumped in
 the log and shown as an annotation on the failed job.
 
+</details>
+
+<details>
+<summary>Optional tests with local data</summary>
+
 Optional tests use local data when present: `TestRealConfigs`
 round-trips every pair of `*.cfg` files in each subdirectory of
 `testdata/private/` (git-ignored, or set `TINYDELTA_CONFIG_DIR`), and
 `TestSizeVsOpenVCDiff` compares patch sizes with open-vcdiff when
 `OPENVCDIFF_BIN` points at its `vcdiff` binary.
+
+</details>
 
 ### Releases
 
