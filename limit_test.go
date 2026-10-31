@@ -17,11 +17,11 @@ func instructionLens(t *testing.T, patch []byte) []int { // patch with header
 		}
 		i += n
 		op, length := v&3, int(v>>2)
-		switch op {
-		case opCopy, opTargetCopy:
+		switch {
+		case op == opCopy, op == opTargetCopy && patch[0] == FormatVersion:
 			_, n := readVarint(patch[i:])
 			i += n
-		case opAdd:
+		case op == opAdd, op == opAddDiff && patch[0] == FormatVersion2:
 			i += length
 		}
 		lens = append(lens, length)

@@ -1,6 +1,6 @@
 // Command tinydelta creates and applies tinydelta patches.
 //
-//	tinydelta encode [-greedy] [-max-len N] [-v] <dictionary> <target> [<patch>]
+//	tinydelta encode [-greedy] [-for-compression] [-max-len N] [-v] <dictionary> <target> [<patch>]
 //	tinydelta decode [-max-size N] [-v] <dictionary> <patch> [<target>]
 //	tinydelta version
 //
@@ -25,7 +25,7 @@ var version = ""
 const usageText = `tinydelta creates and applies compact binary patches.
 
 Usage:
-  tinydelta encode [-greedy] [-max-len N] [-v] <dictionary> <target> [<patch>]
+  tinydelta encode [-greedy] [-for-compression] [-max-len N] [-v] <dictionary> <target> [<patch>]
   tinydelta decode [-max-size N] [-v] <dictionary> <patch> [<target>]
   tinydelta version
 
@@ -73,10 +73,11 @@ func encodeCommand(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("encode", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	greedy := fs.Bool("greedy", false, "use the fast greedy encoder instead of the optimal one\n(patches are typically a few percent larger)")
+	forCompression := fs.Bool("for-compression", false, "make a patch that will be compressed afterwards (e.g. with zlib,\nheatshrink or tinyuz): may be format version 2, which only\ndecoders that read version 2 accept")
 	maxLen := fs.Int("max-len", 0, "limit the target bytes any one instruction produces\n(0 means no limit)")
 	verbose := fs.Bool("v", false, "print sizes to standard error")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "Usage: tinydelta encode [-greedy] [-max-len N] [-v] <dictionary> <target> [<patch>]")
+		fmt.Fprintln(stderr, "Usage: tinydelta encode [-greedy] [-for-compression] [-max-len N] [-v] <dictionary> <target> [<patch>]")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -95,7 +96,7 @@ func encodeCommand(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, err)
 	}
-	patch, err := tinydelta.EncodeWith(dict, target, tinydelta.EncodeOptions{Greedy: *greedy, MaxInstructionLen: *maxLen})
+	patch, err := tinydelta.EncodeWith(dict, target, tinydelta.EncodeOptions{Greedy: *greedy, ForCompression: *forCompression, MaxInstructionLen: *maxLen})
 	if err != nil {
 		return fail(stderr, err)
 	}

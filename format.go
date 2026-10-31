@@ -62,20 +62,45 @@
 //     run whose period is shorter than len is valid and reproduces
 //     correctly (e.g. a delta of -1 encodes an arbitrarily long run of
 //     one byte).
+//
+// Format version 2 (FormatVersion2) is made for patches that are
+// compressed afterwards. It has the same header, varints, cursor and
+// opcodes 0-2; only opcode 3 differs:
+//
+//   - ADD_DIFF (opcode 3, version 2 only, in place of COPY_TARGET): len
+//     bytes from the patch, each added (mod 256) to the dictionary byte at
+//     the cursor: target = dict[cursor+i] + patch byte. The range
+//     [cursor, cursor+len) must lie within the dictionary; the cursor
+//     advances by len like every instruction. A region that lines up with
+//     the dictionary but has a few changed bytes (moved addresses, branch
+//     offsets) becomes mostly zeros and the same few difference values,
+//     which a compressor reduces to very little. Repeats within the
+//     target, COPY_TARGET's job in version 1, are left to that compressor.
 package tinydelta
 
-// FormatVersion is the patch format version this package writes and
-// reads: the first byte of every patch.
+// FormatVersion is the format version Encode, EncodeGreedy and
+// EncodeWith write by default: the first byte of the patch.
 const FormatVersion = 1
+
+// FormatVersion2 is the format version EncodeWith writes with
+// ForCompression: COPY_TARGET is replaced by ADD_DIFF (see the package
+// doc). Decode reads both versions.
+const FormatVersion2 = 2
 
 // headerLen is the size of the patch header: the version byte.
 const headerLen = 1
 
-// withHeader returns the patch made of the header and the instruction
-// stream instructions.
+// withHeader returns the version-1 patch made of the header and the
+// instruction stream instructions.
 func withHeader(instructions []byte) []byte {
+	return withVersion(FormatVersion, instructions)
+}
+
+// withVersion returns the patch made of the version byte and the
+// instruction stream instructions.
+func withVersion(version byte, instructions []byte) []byte {
 	patch := make([]byte, 0, headerLen+len(instructions))
-	patch = append(patch, FormatVersion)
+	patch = append(patch, version)
 	return append(patch, instructions...)
 }
 
@@ -83,7 +108,8 @@ const (
 	opCopy       = 0
 	opAdd        = 1
 	opSkip       = 2
-	opTargetCopy = 3
+	opTargetCopy = 3 // version 1
+	opAddDiff    = 3 // version 2
 )
 
 // MaxSize is the largest dictionary or target the format supports, just

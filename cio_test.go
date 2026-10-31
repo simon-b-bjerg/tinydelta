@@ -255,7 +255,7 @@ func TestCIODecoderMatchesGo(t *testing.T) {
 			m[r.Intn(len(m))] = byte(r.Intn(256))
 			variants = append(variants, m)
 			for _, v := range variants {
-				want, gErr := DecodeReaderLimit(p.dict, bytes.NewReader(v), capacity)
+				want, gErr := decodeAsC(p.dict, v, capacity)
 				for _, b := range bins {
 					for _, page := range pages {
 						got, _, ok := runCIO(t, b.path, page, p.dict, v, capacity)

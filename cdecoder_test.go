@@ -149,7 +149,7 @@ func TestCDecoderMatchesGo(t *testing.T) {
 	}
 	compare := func(label string, dict, patch []byte, capacity int) {
 		t.Helper()
-		want, gErr := DecodeReaderLimit(dict, bytes.NewReader(patch), capacity)
+		want, gErr := decodeAsC(dict, patch, capacity)
 		got, cOK := cDecode(dict, patch, capacity)
 		if (gErr == nil) != cOK || (cOK && !bytes.Equal(got, want)) {
 			t.Errorf("%s: Go err=%v, C accepted=%v (outputs equal: %v)", label, gErr, cOK, bytes.Equal(got, want))
@@ -196,4 +196,13 @@ func TestCDecoderMatchesGo(t *testing.T) {
 			}
 		}
 	}
+}
+
+// decodeAsC is DecodeReaderLimit restricted to the format versions the C
+// decoders implement (version 1 only, so far), for comparing the two.
+func decodeAsC(dict, patch []byte, capacity int) ([]byte, error) {
+	if len(patch) > 0 && patch[0] != FormatVersion {
+		return nil, ErrUnsupportedVersion
+	}
+	return DecodeReaderLimit(dict, bytes.NewReader(patch), capacity)
 }

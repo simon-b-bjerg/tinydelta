@@ -39,12 +39,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib import ticker  # noqa: E402
 
-# The other tools in a fixed order: tinydelta + zlib (gray, as a tinydelta
-# variant) and categorical slots 1-8 (validated with the dataviz palette
+# The other tools in a fixed order: tinydelta's compressed variants (grays) and categorical slots 1-8 (validated with the dataviz palette
 # checks), a line style each, and whether the patch is compressed (which
 # groups the distribution graph's rows).
 OTHERS = [
     ("tinydelta_zlib", "tinydelta + zlib", "#6b6a64", "-", True),
+    ("tinydelta_cz_zlib", "tinydelta for compression + zlib", "#3d3c38", "--", True),
+    ("tinydelta_cz_tuz4k", "tinydelta for compression + tinyuz 4 KB", "#3d3c38", ":", True),
     ("openvcdiff", "open-vcdiff", "#2a78d6", "-", False),
     ("openvcdiff_zlib", "open-vcdiff + zlib", "#eb6834", "--", True),
     ("xdelta3", "xdelta3", "#1baf7a", "-.", False),

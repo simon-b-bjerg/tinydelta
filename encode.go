@@ -1,6 +1,9 @@
 package tinydelta
 
-import "fmt"
+import (
+	"compress/flate"
+	"fmt"
+)
 
 // Encode produces the smallest patch it can find that reconstructs target
 // from dict via Decode, using an optimal parse (dynamic programming over
@@ -24,6 +27,20 @@ type EncodeOptions struct {
 	// of the optimizing one (see Encode).
 	Greedy bool
 
+	// ForCompression writes a format version 2 patch (FormatVersion2),
+	// made for patches that are compressed afterwards, e.g. with zlib or
+	// a small embedded compressor such as heatshrink or tinyuz. Regions
+	// that line up with the dictionary but have a few changed bytes
+	// (moved addresses and branch offsets in firmware) are written as
+	// differences from the dictionary, which compress far better than
+	// the new bytes themselves. Uncompressed, such a patch is usually
+	// larger than the default one. For small changes a version 1 patch
+	// often compresses better, so both are made, each is compressed with
+	// DEFLATE as a stand-in for whatever compressor follows, and the
+	// smaller one is returned: ForCompression may return a version 1
+	// patch. Greedy applies to that version 1 candidate.
+	ForCompression bool
+
 	// MaxInstructionLen, if positive, caps the number of target bytes
 	// any single instruction may produce: longer ADD, SKIP, COPY and
 	// COPY_TARGET runs are split into several instructions. Use it when
@@ -46,6 +63,9 @@ func EncodeWith(dict, target []byte, opts EncodeOptions) ([]byte, error) {
 	maxLen := MaxSize
 	if opts.MaxInstructionLen > 0 && opts.MaxInstructionLen < MaxSize {
 		maxLen = opts.MaxInstructionLen
+	}
+	if opts.ForCompression {
+		return encodeForCompression(dict, target, maxLen, opts.Greedy), nil
 	}
 	if opts.Greedy {
 		return withHeader(encodeGreedy(dict, target, maxLen)), nil
@@ -203,4 +223,39 @@ func dictCandidate(cursor, addr uint64, length int) candidate {
 	delta := int64(addr) - int64(cursor)
 	cost := varintLen(uint64(length)<<2|opCopy) + varintLen(zigzagEncode(delta))
 	return candidate{kind: opCopy, length: length, delta: delta, cost: cost}
+}
+
+// encodeForCompression makes a version 1 and a version 2 patch and
+// returns whichever compresses smaller with DEFLATE (see
+// EncodeOptions.ForCompression).
+func encodeForCompression(dict, target []byte, maxLen int, greedy bool) []byte {
+	var v1 []byte
+	if greedy {
+		v1 = withHeader(encodeGreedy(dict, target, maxLen))
+	} else {
+		v1 = withHeader(encode(dict, target, maxLen))
+	}
+	v2 := withVersion(FormatVersion2, encodeCovers(dict, target, maxLen))
+	if deflatedLen(v2) < deflatedLen(v1) {
+		return v2
+	}
+	return v1
+}
+
+// deflatedLen is the size of b compressed with DEFLATE at its best
+// compression level.
+func deflatedLen(b []byte) int {
+	var n countingWriter
+	w, _ := flate.NewWriter(&n, flate.BestCompression)
+	w.Write(b)
+	w.Close()
+	return int(n)
+}
+
+// countingWriter counts the bytes written to it and discards them.
+type countingWriter int
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	*c += countingWriter(len(p))
+	return len(p), nil
 }

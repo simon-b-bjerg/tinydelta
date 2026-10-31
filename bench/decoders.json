@@ -16,6 +16,14 @@
     "plus_old_file": false,
     "basis": "tinydelta plus an inflate decoder (code not measured, so a lower bound) with a 32 KB window: the patches are compressed with zlib's default 15-bit window"
   },
+  "tinydelta_cz_tuz4k": {
+    "label": "tinydelta for compression + tinyuz, 4 KB dict.",
+    "code": 2287,
+    "buffers": 4096,
+    "stack": null,
+    "plus_old_file": false,
+    "basis": "estimate: tinydelta's callback decoder (720 B; reading format version 2 adds a little) plus the tinyuz decompressor (1,567 B, measured as for HPatchLite); buffers: tinyuz's 4 KB dictionary"
+  },
   "hpatchlite_4k": {
     "label": "HPatchLite, 4 KB dict.",
     "code": 2229,

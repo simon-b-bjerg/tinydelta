@@ -17,6 +17,10 @@ Tools (set the binaries with environment variables; defaults are on PATH):
                        Not run by default: a few hundred MB and a minute or
                        more per firmware pair; add it with --tools.
     tinydelta_zlib     the tinydelta patch (library default), zlib level 9
+    tinydelta_cz_zlib  tinydelta encode -for-compression (format version 2
+                       where it compresses better), zlib level 9
+    tinydelta_cz_tuz4k the same patch compressed with tinyuz -c-4k: the
+                       compressor and dictionary HPatchLite 4k uses   $TINYUZ
     openvcdiff         open-vcdiff encode -target_matches     $OPENVCDIFF
     openvcdiff_zlib   the open-vcdiff patch, zlib level 9
     xdelta3           xdelta3 -9 -S none (VCDIFF, no secondary compression)
@@ -46,7 +50,9 @@ OPENVCDIFF = os.environ.get("OPENVCDIFF", "vcdiff")
 DETOOLS = os.environ.get("DETOOLS", "detools")
 HDIFFI = os.environ.get("HDIFFI", "hdiffi")
 HPATCHI = os.environ.get("HPATCHI", "hpatchi")
+TINYUZ = os.environ.get("TINYUZ", "tinyuz")
 ALL_TOOLS = ["tinydelta", "tinydelta_greedy", "tinydelta_optimal", "tinydelta_zlib",
+             "tinydelta_cz_zlib", "tinydelta_cz_tuz4k",
              "openvcdiff", "openvcdiff_zlib", "xdelta3", "bsdiff",
              "detools", "hpatchlite_4k", "hpatchlite_32k", "zstd"]
 # Run by default: all but tinydelta_optimal, which takes a few hundred MB
@@ -89,6 +95,18 @@ def encode_all(tools, old, new, work):
             sizes[tool] = os.path.getsize(patch)
             if tool == "tinydelta":
                 sizes["tinydelta_zlib"] = len(zlib.compress(read(patch), 9))
+    if "tinydelta_cz_zlib" in tools or "tinydelta_cz_tuz4k" in tools:
+        sh(TINYDELTA, "encode", "-for-compression", old, new, patch)
+        check("tinydelta_cz", sh(TINYDELTA, "decode", old, patch))
+        raw = read(patch)
+        sizes["tinydelta_cz_zlib"] = len(zlib.compress(raw, 9))
+        packed = os.path.join(work, "packed")
+        fresh(packed, out)
+        sh(TINYUZ, "-c-4k", patch, packed)
+        sh(TINYUZ, "-d", packed, out)
+        if read(out) != raw:
+            raise Failure("tinyuz did not restore the tinydelta patch for %s" % new)
+        sizes["tinydelta_cz_tuz4k"] = os.path.getsize(packed)
     if "tinydelta_optimal" in tools:
         env = dict(os.environ, TINYDELTA_ENCODE_UNLIMITED="%s %s %s" % (old, new, patch))
         sh(TINYDELTA_OPTIMAL, "-test.run", "^TestEncodeUnlimited$", env=env)
@@ -162,6 +180,8 @@ def tool_versions(tools):
         versions["detools"] = "detools " + first_line(DETOOLS, "--version")
     if "hpatchlite_4k" in tools or "hpatchlite_32k" in tools:
         versions["hpatchlite"] = os.environ.get("HPATCHLITE_VERSION", "unknown")
+    if "tinydelta_cz_tuz4k" in tools:
+        versions["tinyuz"] = first_line(TINYUZ)
     if "zstd" in tools:
         versions["zstd"] = first_line("zstd", "--version").strip("* ").split(",")[0]
     return versions
