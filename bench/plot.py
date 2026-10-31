@@ -342,12 +342,20 @@ def forest_range(rows, tools, kinds, steps):
     return lo, hi
 
 
+# The forest graph's tools, in the README table's order: what a reader
+# would otherwise use. The rest (HPatchLite's 32 KB dictionary, detools,
+# open-vcdiff's patch zlib-compressed) is in the summary and the other
+# graphs.
+FOREST_TOOLS = ["openvcdiff", "xdelta3", "hpatchlite_4k", "bsdiff", "zstd"]
+
+
 def forest(rows, out):
     kinds = kinds_of(rows)
     steps = sorted({r["step"] for r in rows})
-    tools = [t for t in OTHERS if t[0] in rows[0]]
+    others = {t[0]: t for t in OTHERS}
+    tools = [others[k] for k in FOREST_TOOLS if k in rows[0]]
     FOREST_MIN, FOREST_MAX = forest_range(rows, tools, kinds, steps)
-    fig, axes = plt.subplots(len(kinds), 1, figsize=(7.2, 0.9 + 0.42 * len(tools) * len(kinds) + 0.6 * len(kinds)),
+    fig, axes = plt.subplots(len(kinds), 1, figsize=(8.4, 1.6 + 0.48 * len(tools) * len(kinds) + 0.6 * len(kinds)),
                              squeeze=False, sharex=True, facecolor=SURFACE)
     offsets = {step: (i - (len(steps) - 1) / 2) * 0.22 for i, step in enumerate(steps)}
     for (ax,), kind in zip(axes, kinds):
@@ -394,9 +402,8 @@ def forest(rows, out):
                           label="%d commit%s apart" % (step, "" if step == 1 else "s")) for step in steps]
     axes[0][0].legend(handles=handles, frameon=False, fontsize=9, loc="lower right", labelcolor=INK,
                       bbox_to_anchor=(1.0, 1.0), ncol=len(steps))
-    axes[-1][0].set_xlabel("tinydelta's patch size ÷ the tool's (log scale)\n← tinydelta smaller · larger →\n"
-                           "dot: geometric mean · line: 10th-90th percentile\n"
-                           "arrowhead: the line runs past the axis",
+    axes[-1][0].set_xlabel("tinydelta's patch size ÷ the tool's (log scale)   ← tinydelta smaller · larger →\n"
+                           "dot: geometric mean · line: 10th-90th percentile · arrowhead: it runs past the axis",
                            fontsize=9, color=MUTED, labelpad=8)
     # Title and reading line, placed in inches from the top so they hold
     # for any figure height.
