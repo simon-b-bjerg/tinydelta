@@ -105,17 +105,13 @@ can be a local array, on the stack.
 
 What you give up:
 
-- **Somewhat larger patches for large changes.** Above about 1 KB of
-  patch, tools that compress (HPatchLite, bsdiff, zstd) often produce
-  smaller ones, for a decoder several to thousands of times larger.
 - **Two passes for large changes.** A compression-mode patch is decoded
   twice, and the device stores the intermediate patch in between (see
   [below](#compression-mode)).
 - **Speed was not compared.** The goal is a small decoder, not a fast one.
-- **Small patch reads.** The callback decoder reads the patch a few bytes
-  at a time; on slow flash, wrap `patch_read` in a small buffer.
-- **No checksum, no VCDIFF compatibility.** Send a CRC or hash with the
-  patch (see [On the device](#on-the-device)).
+- **Small patch reads.** The callback decoder reads instruction headers
+  a few bytes at a time; on slow flash, wrap `patch_read` in a small
+  buffer.
 - **Your data may differ.** Two kinds of data from public projects;
   compare on your own files before choosing (`tinydelta encode -v`
   prints the patch size).
@@ -345,9 +341,11 @@ patch = tinydelta.encode(old, new)
 assert tinydelta.decode(old, patch, max_size=len(new)) == new
 ```
 
-The wheels (Linux and Windows, x86-64 and ARM64, Python 3.9 and later)
-bundle the command-line tool, which the package runs; they also install
-the `tinydelta` command. See [`python/README.md`](python/README.md).
+`encode` also takes `for_compression` and `max_distance`, for
+[compression mode](#compression-mode). The wheels (Linux and Windows,
+x86-64 and ARM64, Python 3.9 and later) bundle the command-line tool,
+which the package runs; they also install the `tinydelta` command. See
+[`python/README.md`](python/README.md).
 
 ### C
 
