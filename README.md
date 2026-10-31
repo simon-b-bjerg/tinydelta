@@ -752,10 +752,7 @@ they don't implement. Encoders may still produce different, usually
 smaller, patches for the same input in later releases; they stay valid
 patches of the same version.
 
-Releases 1.0.0 and 1.1.0-rc.1 wrote patches without the version byte.
-Those don't decode with later releases as they are; prepend the byte
-`0x01` to convert one. The Go API
-follows [semantic versioning](https://semver.org).
+The Go API follows [semantic versioning](https://semver.org).
 
 ### Conformance vectors
 
@@ -940,8 +937,6 @@ round-trips every pair of `*.cfg` files in each subdirectory of
 </details>
 
 ### Releases
-
-What changed in each release is in [`CHANGELOG.md`](CHANGELOG.md).
 
 The [release workflow](.github/workflows/release.yml) tests the tagged
 code, builds static Linux and Windows binaries for amd64 and arm64 plus
