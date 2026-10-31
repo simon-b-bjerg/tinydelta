@@ -1,3 +1,7 @@
+/* SPDX-FileCopyrightText: 2026 Simon Bjerg
+ * SPDX-License-Identifier: MIT
+ */
+
 /* tinydelta decoder with the dictionary, patch and target behind
  * callbacks, for data that isn't in RAM (e.g. external flash). See
  * README.md, "Callback decoder", and for the wire format.

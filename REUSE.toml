@@ -1,0 +1,16 @@
+# Licensing for files that cannot carry an SPDX comment header.
+# Checked in CI with "reuse lint"; see https://reuse.software.
+version = 1
+
+[[annotations]]
+path = [
+    "**/*.md",
+    "**/*.json",
+    "**/*.svg",
+    "**/*.csv",
+    "testdata/**",
+    "go.mod",
+    "python/src/tinydelta/py.typed",
+]
+SPDX-FileCopyrightText = "2026 Simon Bjerg"
+SPDX-License-Identifier = "MIT"

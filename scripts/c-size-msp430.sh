@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
 # Prints the C library's code size (.text) and worst-case stack per part
 # for MSP430, as a Markdown table: the original 16-bit MSP430 CPU, and
 # MSP430X (as in the MSP430F5xx/FRxx families) in the small and large

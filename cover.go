@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Simon Bjerg
+// SPDX-License-Identifier: MIT
+
 package tinydelta
 
 // Cover encoder: the encoder for format version 2, which is made for

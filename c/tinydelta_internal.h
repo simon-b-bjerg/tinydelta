@@ -1,3 +1,7 @@
+/* SPDX-FileCopyrightText: 2026 Simon Bjerg
+ * SPDX-License-Identifier: MIT
+ */
+
 /* Wire-format details shared by the decoders (see README.md).
  * Internal: not needed to use the library. */
 #ifndef TINYDELTA_INTERNAL_H

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
 # Fuzzes the C decoders with libFuzzer, AddressSanitizer and
 # UndefinedBehaviorSanitizer (see c/fuzz/fuzz_decode.c), starting from
 # patches made by the Go encoders.

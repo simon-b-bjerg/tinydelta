@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
 """tinydelta: tiny binary patches for small devices.
 
 Creates and applies tinydelta patches by running the tinydelta command-line

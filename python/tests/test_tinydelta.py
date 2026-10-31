@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
 """Tests for the tinydelta Python package. They run whatever binary
 tinydelta.binary_path() finds: $TINYDELTA_BIN, or the one bundled in an
 installed wheel. From the repository root:

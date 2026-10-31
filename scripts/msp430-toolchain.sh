@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
 # Builds a GNU MSP430 toolchain from source into <prefix> (default
 # ~/.cache/msp430): binutils, GCC (C only) with newlib, and GNU's MSP430
 # instruction simulator (msp430-elf-run, from GDB's sim/). Takes a while;

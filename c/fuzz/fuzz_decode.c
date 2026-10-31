@@ -1,3 +1,7 @@
+/* SPDX-FileCopyrightText: 2026 Simon Bjerg
+ * SPDX-License-Identifier: MIT
+ */
+
 /* libFuzzer harness for the C decoders. Run it with scripts/c-fuzz.sh.
  *
  * Every input is decoded by:

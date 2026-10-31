@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
 # Measures how much of the C library the fuzz harness reaches: builds
 # c/fuzz/fuzz_decode.c with coverage instrumentation, replays the seed
 # patches from the Go encoders plus any corpus dirs given (e.g. the one

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Simon Bjerg
+// SPDX-License-Identifier: MIT
+
 // Command tinydelta creates and applies tinydelta patches.
 //
 //	tinydelta encode [-greedy] [-for-compression] [-max-len N] [-max-distance N] [-v] <dictionary> <target> [<patch>]
@@ -21,6 +24,12 @@ import (
 
 // version is set for release builds with -ldflags "-X main.version=v1.2.3".
 var version = ""
+
+// copyrightText follows the version line of "tinydelta version". The
+// version stays alone on the first line so scripts can read just that.
+const copyrightText = `Copyright (c) 2026 Simon Bjerg
+MIT License: https://github.com/simon-b-bjerg/tinydelta/blob/main/LICENSE
+`
 
 const usageText = `tinydelta creates and applies compact binary patches.
 
@@ -59,6 +68,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return decodeCommand(args[1:], stdin, stdout, stderr)
 	case "version", "-version", "--version":
 		fmt.Fprintln(stdout, "tinydelta", versionString())
+		fmt.Fprint(stdout, copyrightText)
 		return exitOK
 	case "help", "-h", "-help", "--help":
 		fmt.Fprint(stdout, usageText)

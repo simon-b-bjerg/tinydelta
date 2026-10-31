@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
 # Measures the patch decoders that run on a microcontroller the same way
 # scripts/c-size.sh measures tinydelta's: compiled for Cortex-M0 with
 # arm-none-eabi-gcc -Os -mthumb, code size as .text, stack per function

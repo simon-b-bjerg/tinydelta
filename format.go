@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Simon Bjerg
+// SPDX-License-Identifier: MIT
+
 // Package tinydelta implements a minimal, custom binary delta format with
 // no RFC 3284 heritage. A patch is a one-byte header, the format version
 // (FormatVersion), followed by a bare stream of instructions; Decode is

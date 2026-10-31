@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
 name: Benchmark
 
 # Compares tinydelta's patch sizes with open-vcdiff, xdelta3 and bsdiff on

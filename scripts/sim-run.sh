@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
 # Runs a test program under a bare-metal instruction simulator, for use as
 # $TINYDELTA_C_RUNNER, e.g. "scripts/sim-run.sh msp430-elf-run".
 #

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
 name: CI
 
 on:
@@ -59,6 +62,13 @@ jobs:
           name: go-fuzz-failures
           path: testdata/fuzz/
           if-no-files-found: ignore
+
+  reuse:
+    name: License headers (REUSE)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: fsfe/reuse-action@v5
 
   c-fuzz:
     name: C decoders fuzzed (ASan + UBSan)
