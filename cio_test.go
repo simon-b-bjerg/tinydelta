@@ -143,7 +143,7 @@ func buildCIODrivers(t *testing.T) []cIOBinary {
 	// default).
 	for _, s := range []int{1, 7, 64} {
 		bin := filepath.Join(dir, fmt.Sprintf("decode_io_%d", s))
-		cCompile(t, bin, fmt.Sprintf("-DTINYDELTA_SCRATCH_SIZE=%d", s), "-DTINYDELTA_FORMAT_V2=1",
+		cCompile(t, bin, fmt.Sprintf("-DTINYDELTA_SCRATCH_SIZE=%d", s),
 			"c/tinydelta_io.c", "c/tinydelta_cache.c", filepath.Join(dir, "driver.c"))
 		bins = append(bins, cIOBinary{s, bin})
 	}

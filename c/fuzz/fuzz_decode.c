@@ -8,8 +8,7 @@
  *     (1, 7 and 64 bytes), each with plain RAM callbacks and with
  *     tinydelta_cache on top of a simulated flash.
  *
- * All of them, built with format version 2 (TINYDELTA_FORMAT_V2), must
- * agree: the same result (OK, MALFORMED, TOO_LARGE or VERSION) and,
+ * All of them must agree: the same result (OK, MALFORMED, TOO_LARGE or VERSION) and,
  * on success, the same target bytes. The callbacks also police the
  * documented contract: sequential target writes, no reads outside the
  * patch or dictionary, no reads of target bytes not yet written, whole

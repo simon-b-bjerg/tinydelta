@@ -11,11 +11,10 @@ text() { arm-none-eabi-size "$1" | awk 'NR == 2 { print $1 }'; }
 
 echo "| part | Cortex-M0 | Cortex-M3 | Cortex-M4 |"
 echo "|---|---|---|---|"
-# name:file:extra flags; the v2 rows have format version 2 compiled in.
-for part in decode:tinydelta_decode: io:tinydelta_io: cache:tinydelta_cache: \
-    decodev2:tinydelta_decode:-DTINYDELTA_FORMAT_V2=1 iov2:tinydelta_io:-DTINYDELTA_FORMAT_V2=1; do
+# name:file:extra flags.
+for part in decode:tinydelta_decode: io:tinydelta_io: cache:tinydelta_cache:; do
   IFS=: read -r name file extra <<< "$part"
-  row="| $file.c${extra:+, with format version 2} |"
+  row="| $file.c |"
   for cpu in cortex-m0 cortex-m3 cortex-m4; do
     (cd "$out" && "$CC" -std=c99 -Os -mcpu="$cpu" -mthumb -fstack-usage \
       -Wall -Wextra -Werror ${extra:+"$extra"} -I"$OLDPWD" -c "$OLDPWD/$file.c" -o "${name}_$cpu.o")
@@ -26,8 +25,8 @@ done
 echo
 echo "Compiler: $($CC --version | head -1); flags: -Os -mthumb; .text only (memcpy from libc not included)."
 echo
-echo "Stack, Cortex-M0, per function (-fstack-usage), version 1 builds, then the callback decoder with version 2:"
+echo "Stack, Cortex-M0, per function (-fstack-usage), per part:"
 echo
 echo '```'
-cat "$out"/{decode,io,cache}_cortex-m0.su "$out"/iov2_cortex-m0.su | awk -F'\t' '{ split($1, f, ":"); printf "%-28s %4d B\n", f[4], $2 }'
+cat "$out"/{decode,io,cache}_cortex-m0.su | awk -F'\t' '{ split($1, f, ":"); printf "%-28s %4d B\n", f[4], $2 }'
 echo '```'

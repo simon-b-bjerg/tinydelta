@@ -303,12 +303,17 @@ def patch_share(rows, out):
 
 
 NICE = [m * 10 ** e for e in range(-3, 3) for m in (1, 2, 5)]  # 1-2-5 axis ends
+# The forest axis never starts left of this: a tool far behind tinydelta
+# (detools on firmware) would otherwise squeeze every other row; its mean
+# is then marked at the axis edge with its value.
+FOREST_FLOOR = 0.05
 
 
 def forest_range(rows, tools, kinds, steps):
     """The forest graph's axis: 1-2-5 values just wide enough for every
-    geometric mean and 90th percentile, and for 1 (the 10th percentile
-    may run off the left, ending in an arrowhead)."""
+    geometric mean and 90th percentile, and for 1, but starting no further
+    left than FOREST_FLOOR (lines may run off the left, ending in an
+    arrowhead)."""
     tiny = tiny_key(rows)
     lows, highs = [1.0], [1.0]
     for key, *_ in tools:
@@ -318,7 +323,7 @@ def forest_range(rows, tools, kinds, steps):
                 if rs:
                     lows.append(geomean(rs))
                     highs.append(percentile(rs, 90))
-    lo = max([v for v in NICE if v <= min(lows) / 1.15] or NICE[:1])
+    lo = max([v for v in NICE if v <= min(lows) / 1.15] + [FOREST_FLOOR])
     hi = min([v for v in NICE if v >= max(highs) * 1.15] or NICE[-1:])
     return lo, hi
 
@@ -354,7 +359,13 @@ def forest(rows, out):
                 if hi > FOREST_MAX:
                     ax.plot([FOREST_MAX], [y], marker=">", markersize=6, color=color)
                 filled = step == steps[0]
-                ax.plot([geomean(rs)], [y], marker="o", markersize=7, color=color,
+                mean = geomean(rs)
+                if mean < FOREST_MIN:  # off the axis: marked at its edge, with the value
+                    ax.annotate("mean %.2g" % mean, (FOREST_MIN, y), xytext=(8, 0), textcoords="offset points",
+                                ha="left", va="center", fontsize=8, color=color,
+                                bbox=dict(boxstyle="round,pad=0.2", facecolor=SURFACE, edgecolor=color, linewidth=0.8))
+                    continue
+                ax.plot([mean], [y], marker="o", markersize=7, color=color,
                         markerfacecolor=color if filled else SURFACE, markeredgewidth=2 if not filled else 1.5,
                         markeredgecolor=color if not filled else SURFACE)
         ax.set_yticks(range(len(tools)), labels, fontsize=9, color=INK)

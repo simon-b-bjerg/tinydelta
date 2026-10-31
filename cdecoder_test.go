@@ -115,14 +115,13 @@ func cCommand(bin string, args ...string) *exec.Cmd {
 	return exec.Command(bin, args...)
 }
 
-// buildCDriver compiles cDriver with the memory decoder, format version 2
-// included, and returns the binary's path.
+// buildCDriver compiles cDriver with the memory decoder and returns the binary's path.
 func buildCDriver(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "decode")
 	os.WriteFile(filepath.Join(dir, "driver.c"), []byte(cDriver), 0o644)
-	cCompile(t, bin, "-DTINYDELTA_FORMAT_V2=1", "c/tinydelta_decode.c", filepath.Join(dir, "driver.c"))
+	cCompile(t, bin, "c/tinydelta_decode.c", filepath.Join(dir, "driver.c"))
 	return bin
 }
 
@@ -199,39 +198,5 @@ func TestCDecoderMatchesGo(t *testing.T) {
 				compare(fmt.Sprintf("%s flip=%d", label, k), p.dict, m, big)
 			}
 		}
-	}
-}
-
-// TestCDecodersWithoutV2 builds both C decoders without format version 2,
-// the default: they must reject a version 2 patch with
-// TINYDELTA_ERR_VERSION and still decode version 1.
-func TestCDecodersWithoutV2(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "driver.c"), []byte(cDriver), 0o644)
-	os.WriteFile(filepath.Join(dir, "io_driver.c"), []byte(cIODriver), 0o644)
-	memory, callback := filepath.Join(dir, "decode"), filepath.Join(dir, "decode_io")
-	cCompile(t, memory, "c/tinydelta_decode.c", filepath.Join(dir, "driver.c"))
-	cCompile(t, callback, "c/tinydelta_io.c", "c/tinydelta_cache.c", filepath.Join(dir, "io_driver.c"))
-
-	r := rand.New(rand.NewSource(14))
-	dict := textFile(r, 2048)
-	tgt := splice(dict, 700, 4, []byte("changed"))
-	v1 := withHeader(encode(dict, tgt, MaxSize))
-	v2 := withVersion(FormatVersion2, encodeCovers(dict, tgt, MaxSize))
-	d, p1, p2, o := filepath.Join(dir, "d"), filepath.Join(dir, "p1"), filepath.Join(dir, "p2"), filepath.Join(dir, "o")
-	os.WriteFile(d, dict, 0o644)
-	os.WriteFile(p1, v1, 0o644)
-	os.WriteFile(p2, v2, 0o644)
-	if msg, err := cCommand(memory, d, p1, o, fmt.Sprint(cCapacity)).CombinedOutput(); err != nil {
-		t.Fatalf("memory decoder, version 1: %v: %s", err, msg)
-	}
-	if msg, err := cCommand(memory, d, p2, o, fmt.Sprint(cCapacity)).CombinedOutput(); err == nil || !strings.Contains(string(msg), "-4") {
-		t.Errorf("memory decoder, version 2: %v: %s; want TINYDELTA_ERR_VERSION (-4)", err, msg)
-	}
-	if _, code, ok := runCIO(t, callback, 0, dict, v1, cCapacity); !ok {
-		t.Fatalf("callback decoder, version 1: code %s", code)
-	}
-	if _, code, ok := runCIO(t, callback, 0, dict, v2, cCapacity); ok || code != "-4" {
-		t.Errorf("callback decoder, version 2: ok=%v code %s; want TINYDELTA_ERR_VERSION (-4)", ok, code)
 	}
 }

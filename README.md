@@ -38,8 +38,8 @@ no compression library.
 - **Optimizing encoder.** Dynamic programming over exact instruction
   costs, never worse than the built-in greedy encoder, which is
   available when speed matters more.
-- **Tiny C decoder.** 392 bytes of code on Cortex-M0 when everything is
-  in RAM; 720 bytes when the data lives on external flash behind your
+- **Tiny C decoder.** 472 bytes of code on Cortex-M0 when everything is
+  in RAM; 852 bytes when the data lives on external flash behind your
   own read/write functions, plus an optional 300-byte page write cache.
 - **No dynamic allocation, no static RAM.** The C decoders never call
   `malloc` and have no global or static variables (0 bytes of `.data`
@@ -98,9 +98,6 @@ What that compression costs on the device:
 | detools + heatshrink | 1,948 B | 0 | ~1.6 KB |
 | tiny-vcdiff (open-vcdiff's format) | 3,881 B | 3,221 B | ~150 B |
 | bsdiff (bzip2) | – | 2.3–3.7 MB | – |
-
-tinydelta's decoders here read format versions 1 and 2. For plain
-patches only, they are 392 B and 720 B ([Code size and stack](#code-size-and-stack)).
 
 What you give up:
 
@@ -185,9 +182,8 @@ two-pass patch is the smaller in 58% of the updates; where the plain
 one wins, it is by a few bytes. The [benchmark](#benchmark) counts the
 smaller of the two.
 
-Each layer starts with its version byte, so a decoder built with
-`TINYDELTA_FORMAT_V2=1` (+132 B on Cortex-M0, +256 B on MSP430) reads both; only the
-number of passes, one or two, comes from the update's metadata. The
+Each layer starts with its version byte, and the decoders read both
+versions; only the number of passes, one or two, comes from the update's metadata. The
 device needs room for the inner patch between the two passes.
 
 On the update server, make the plain patch and the two-pass one, and
@@ -432,12 +428,6 @@ beyond `memcpy`.
 | **callback decoder** | `tinydelta.h`, `tinydelta_internal.h`, `tinydelta_io.h`, `tinydelta_io.c` | the data is elsewhere, e.g. external flash, reached through your own read/write functions |
 | **write cache** (optional) | `tinydelta_cache.h`, `tinydelta_cache.c` | with the callback decoder, to program flash a whole page at a time |
 
-Format version 2 ([compression mode](#compression-mode)) is compiled in
-only with `-DTINYDELTA_FORMAT_V2=1`, for both decoders. Without it, the
-default, the decoders read version 1 only, reject version 2 patches with
-`TINYDELTA_ERR_VERSION`, and are byte for byte the size they were
-before version 2 existed.
-
 ### Code size and stack
 
 `arm-none-eabi-gcc` 13.2, `-Os -mthumb`, default
@@ -447,11 +437,9 @@ even on Cortex-M0). Reproduce with [`scripts/c-size.sh`](scripts/c-size.sh).
 
 | part | Cortex-M0 | Cortex-M3 | Cortex-M4 | stack (Cortex-M0) |
 |---|---:|---:|---:|---:|
-| memory decoder | 392 B | 380 B | 382 B | 64 B |
-| callback decoder | 720 B | 704 B | 704 B | ~200 B\* |
+| memory decoder | 472 B | 450 B | 452 B | 72 B |
+| callback decoder | 852 B | 832 B | 834 B | ~215 B\* |
 | write cache | 300 B | 288 B | 288 B | +32 B |
-| memory decoder, with format version 2 | 472 B | 450 B | 452 B | 64 B |
-| callback decoder, with format version 2 | 852 B | 832 B | 834 B | ~215 B\* |
 
 \* Deepest path, including the 64-byte internal buffer, excluding your
 callbacks' own stack use.
@@ -463,11 +451,9 @@ every 32-bit operation takes several 16-bit instructions.
 
 | part | MSP430 | MSP430X | MSP430X, `-mlarge` | stack (`-mlarge`) |
 |---|---:|---:|---:|---:|
-| memory decoder | 988 B | 956 B | 1,096 B | 112 B |
-| callback decoder | 1,856 B | 1,798 B | 1,814 B | ~245 B\* |
+| memory decoder | 1,170 B | 1,138 B | 1,282 B | 114 B |
+| callback decoder | 2,112 B | 2,054 B | 2,036 B | ~250 B\* |
 | write cache | 628 B | 602 B | 678 B | +40 B |
-| memory decoder, with format version 2 | 1,170 B | 1,138 B | 1,282 B | 112 B |
-| callback decoder, with format version 2 | 2,112 B | 2,054 B | 2,036 B | ~250 B\* |
 
 ### Results
 
@@ -479,7 +465,7 @@ Every decoding function returns a `tinydelta_result`:
 | `TINYDELTA_ERR_MALFORMED` | corrupt or truncated patch, or one that doesn't fit the dictionary |
 | `TINYDELTA_ERR_TOO_LARGE` | the target would exceed its capacity, or the dictionary exceeds `TINYDELTA_MAX_SIZE` |
 | `TINYDELTA_ERR_IO` | one of your callbacks failed (callback decoder only) |
-| `TINYDELTA_ERR_VERSION` | the patch's version byte is one this build doesn't read: version 2 without `TINYDELTA_FORMAT_V2`, a newer version, or not a tinydelta patch |
+| `TINYDELTA_ERR_VERSION` | the patch's version byte is neither 1 nor 2: a newer version, or not a tinydelta patch |
 
 On any error, whatever was already written to the target is incomplete
 and must not be used.

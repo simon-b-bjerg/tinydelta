@@ -16,11 +16,10 @@ TARGETS=("msp430:-mcpu=msp430" "msp430x:-mcpu=msp430x" "msp430x-large:-mcpu=msp4
 
 echo "| part | MSP430 | MSP430X | MSP430X, -mlarge |"
 echo "|---|---|---|---|"
-# name:file:extra flags; the v2 rows have format version 2 compiled in.
-for part in decode:tinydelta_decode: io:tinydelta_io: cache:tinydelta_cache: \
-    decodev2:tinydelta_decode:-DTINYDELTA_FORMAT_V2=1 iov2:tinydelta_io:-DTINYDELTA_FORMAT_V2=1; do
+# name:file:extra flags.
+for part in decode:tinydelta_decode: io:tinydelta_io: cache:tinydelta_cache:; do
   IFS=: read -r name file extra <<< "$part"
-  row="| $file.c${extra:+, with format version 2} |"
+  row="| $file.c |"
   for target in "${TARGETS[@]}"; do
     cpu="${target%%:*}"
     read -ra flags <<< "${target#*:}"
@@ -33,8 +32,8 @@ done
 echo
 echo "Compiler: $($CC --version | head -1); flags: -Os; .text only (memcpy from libc not included)."
 echo
-echo "Stack, MSP430X -mlarge, per function (-fstack-usage), version 1 builds, then the callback decoder with version 2:"
+echo "Stack, MSP430X -mlarge, per function (-fstack-usage), per part:"
 echo
 echo '```'
-cat "$out"/{decode,io,cache}_msp430x-large.su "$out"/iov2_msp430x-large.su | awk -F'\t' '{ n = split($1, f, ":"); printf "%-28s %4d B\n", f[n], $2 }'
+cat "$out"/{decode,io,cache}_msp430x-large.su | awk -F'\t' '{ n = split($1, f, ":"); printf "%-28s %4d B\n", f[n], $2 }'
 echo '```'

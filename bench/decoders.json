@@ -6,7 +6,7 @@
     "buffers": 0,
     "stack": 215,
     "plus_old_file": false,
-    "basis": "measured: callback decoder with TINYDELTA_FORMAT_V2=1 (reads format versions 1 and 2), Cortex-M0, -Os: 852 B code with arm-none-eabi-gcc 13.2; no static RAM or buffers, ~215 B stack. A compression-mode patch is decoded twice, and the intermediate patch has to be stored, e.g. in external flash. Plain patches only: 720 B with the version 1 decoder"
+    "basis": "measured: callback decoder, Cortex-M0, -Os: 852 B code with arm-none-eabi-gcc 13.2; no static RAM or buffers, ~215 B stack. A compression-mode patch is decoded twice, and the intermediate patch has to be stored, e.g. in external flash"
   },
   "hpatchlite_4k": {
     "label": "HPatchLite, 4 KB dict.",
