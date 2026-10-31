@@ -107,11 +107,11 @@ class Item:
         return True
 
 
-def run(cmd, cwd, log):
+def run(cmd, cwd, log, env=None):
     with open(log, "a") as f:
         f.write("\n$ %s\n" % " ".join(cmd))
         f.flush()
-        return subprocess.run(cmd, cwd=cwd, stdout=f, stderr=subprocess.STDOUT).returncode == 0
+        return subprocess.run(cmd, cwd=cwd, stdout=f, stderr=subprocess.STDOUT, env=env).returncode == 0
 
 
 def collect_micropython(cache, name, spec):
@@ -129,7 +129,12 @@ def collect_micropython(cache, name, spec):
                 break
             continue
         git(src, "checkout", "-q", "-f", commit)
-        if not run(["make", "-C", "mpy-cross", "-j", JOBS], src, log):
+        # Reproducible builds: the firmware embeds its build date (the
+        # commit's date instead), and the build scripts order some tables
+        # by Python's randomized string hashes (fixed seed instead).
+        env = dict(os.environ, PYTHONHASHSEED="0",
+                   SOURCE_DATE_EPOCH=git(src, "log", "-1", "--format=%ct", commit).strip())
+        if not run(["make", "-C", "mpy-cross", "-j", JOBS], src, log, env):
             for item, _ in todo:
                 item.skipped.append(commit)
             continue
@@ -138,7 +143,7 @@ def collect_micropython(cache, name, spec):
             board = ["BOARD=" + it["board"]]
             build = os.path.join(port, "build-" + it["board"])
             shutil.rmtree(build, ignore_errors=True)
-            ok = run(["make", "submodules"] + board, port, log) and run(["make", "-j", JOBS] + board, port, log)
+            ok = run(["make", "submodules"] + board, port, log, env) and run(["make", "-j", JOBS] + board, port, log, env)
             parts = sorted(f for f in os.listdir(build) if f.startswith("firmware") and f.endswith(".bin")) if ok else []
             # Boards with separate flash regions get firmware0.bin, firmware1.bin...;
             # the image compared is their concatenation, as flashed.

@@ -46,8 +46,8 @@ OTHERS = [
     ("tinydelta_zlib", "tinydelta + zlib", "#6b6a64", "-", True),
     ("tinydelta_cz_zlib", "tinydelta for compression + zlib", "#3d3c38", "--", True),
     ("tinydelta_cz_tuz4k", "tinydelta for compression + tinyuz 4 KB", "#3d3c38", ":", True),
-    ("tinydelta_cz_twice", "tinydelta for compression, twice", "#9a9890", "-", True),
-    ("tinydelta_cz_twice_1k", "tinydelta for compression, twice, 1 KB window", "#9a9890", "--", True),
+    ("tinydelta_cz_twice", "tinydelta for compression, decoded twice", "#9a9890", "-", True),
+    ("tinydelta_cz_twice_1k", "tinydelta for compression, decoded twice, 1 KB window", "#9a9890", "--", True),
     ("openvcdiff", "open-vcdiff", "#2a78d6", "-", False),
     ("openvcdiff_zlib", "open-vcdiff + zlib", "#eb6834", "--", True),
     ("xdelta3", "xdelta3", "#1baf7a", "-.", False),
@@ -271,7 +271,9 @@ FOREST_MIN, FOREST_MAX = 0.1, 10  # the forest graph's axis; lines beyond end in
 def forest(rows, out):
     kinds = kinds_of(rows)
     steps = sorted({r["step"] for r in rows})
-    tools = [t for t in OTHERS if t[0] in rows[0]]
+    # tinydelta's own compressed variants are compared with the others in
+    # the trade-off graph and the summary, not here.
+    tools = [t for t in OTHERS if t[0] in rows[0] and not t[0].startswith("tinydelta_cz")]
     fig, axes = plt.subplots(len(kinds), 1, figsize=(7.2, 0.9 + 0.42 * len(tools) * len(kinds) + 0.6 * len(kinds)),
                              squeeze=False, sharex=True, facecolor=SURFACE)
     offsets = {step: (i - (len(steps) - 1) / 2) * 0.22 for i, step in enumerate(steps)}
@@ -413,7 +415,10 @@ def tradeoff(rows, out):
     # decoders.json's "tinydelta" stands for whichever tinydelta column the
     # comparisons use (optimal, when measured).
     column = {k: (tiny_key(rows) if k == "tinydelta" else k) for k in decoders}
-    tools = [k for k in decoders if column[k] in rows[0]]
+    # Left out to keep the graph readable: tinydelta + zlib (compression
+    # mode compresses better) and HPatchLite's 32 KB dictionary (close to
+    # its 4 KB one); both are in the summary.
+    tools = [k for k in decoders if column[k] in rows[0] and k not in ("tinydelta_zlib", "hpatchlite_32k")]
     kinds = kinds_of(rows)
     fig, axes = plt.subplots(1, len(kinds), figsize=(5.6 * len(kinds), 4.9), squeeze=False, facecolor=SURFACE)
     for ax, kind in zip(axes[0], kinds):
@@ -431,7 +436,7 @@ def tradeoff(rows, out):
             points.append((footprint, share, d["label"] + (" (at least)" if lower_bound else "")))
         ax.set_xscale("log")
         ax.set_yscale("log")
-        ax.margins(x=0.12, y=0.12)
+        ax.margins(x=0.12, y=0.22)
         place_labels(fig, ax, points)
         ax.xaxis.set_major_locator(ticker.LogLocator(base=10))
         ax.xaxis.set_major_formatter(ticker.FuncFormatter(

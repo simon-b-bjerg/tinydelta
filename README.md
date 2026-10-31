@@ -72,7 +72,7 @@ below 1, tinydelta's is smaller) and how often tinydelta's is smaller:
 | open-vcdiff | **0.37**, smaller in 100% | **0.33**, smaller in 100% |
 | xdelta3 | 0.53, smaller in 100% | 0.55, smaller in 100% |
 | HPatchLite, 4 KB dictionary | 0.97, smaller in 62% | 1.41, smaller in 29% |
-| bsdiff | 0.74, smaller in 62% | 0.96, smaller in 35% |
+| bsdiff | 0.73, smaller in 62% | 0.96, smaller in 35% |
 | zstd `--patch-from` | 0.95, smaller in 58% | 1.21, smaller in 29% |
 
 tinydelta's patch is smaller than open-vcdiff's in every pair, typically a
@@ -138,14 +138,11 @@ SHA-256), all numbers and every graph of this run are in
 <details>
 <summary>About compression</summary>
 
-zlib at level 9 on tinydelta's patch makes it about 22% smaller (median)
-on these data, but larger on very small patches, where zlib's own framing
-costs more than it saves: it helps in 78% of the firmware pairs and 71%
-of the device-tree pairs. Measured earlier on a 230 KB MicroPython image,
-a 512-byte zlib window gave almost the same gain as the default 32 KB
-one, which matters if the device has to decompress; heatshrink gained
-less, about 0–15%. Whether that is worth a decompressor on the device
-depends on your link and flash budget.
+zlib at level 9 on tinydelta's plain patch makes it about 22% smaller
+(median) on these data, but larger on very small patches, where zlib's
+own framing costs more than it saves: it helps in 77% of the firmware
+pairs and 71% of the device-tree pairs. A patch made for compression
+does far better; see [Compression mode](#compression-mode).
 
 </details>
 
@@ -180,8 +177,15 @@ update server:  old + new ──v2──▶ inner ──v1──▶ outer     (s
 device:         outer ──v1──▶ inner ──v2──▶ new
 ```
 
+On the same 166 updates, picking the smaller of the plain and the
+two-pass patch gives patches about a third smaller overall, and 2–2.5×
+smaller on large changes (patches of 1 KB and up), with the same decoder
+plus version 2. With tinyuz (4 KB window) instead of the second pass,
+the patch is smaller than HPatchLite's in every pair; that is in the
+[trade-off graph](#benchmark) too.
+
 Each layer starts with its version byte, so a decoder built with
-`TINYDELTA_FORMAT_V2=1` (+132 B on Cortex-M0) reads both; only the
+`TINYDELTA_FORMAT_V2=1` (+132 B on Cortex-M0, +256 B on MSP430) reads both; only the
 number of passes, one or two, comes from the update's metadata. The
 device needs room for the inner patch between the two passes.
 
@@ -465,6 +469,8 @@ every 32-bit operation takes several 16-bit instructions.
 | memory decoder | 988 B | 956 B | 1,096 B | 112 B |
 | callback decoder | 1,856 B | 1,798 B | 1,814 B | ~245 B\* |
 | write cache | 628 B | 602 B | 678 B | +40 B |
+| memory decoder, with format version 2 | 1,170 B | 1,138 B | 1,282 B | 112 B |
+| callback decoder, with format version 2 | 2,112 B | 2,054 B | 2,036 B | ~250 B\* |
 
 ### Results
 

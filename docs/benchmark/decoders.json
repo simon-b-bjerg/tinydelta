@@ -16,6 +16,22 @@
     "plus_old_file": false,
     "basis": "tinydelta plus an inflate decoder (code not measured, so a lower bound) with a 32 KB window: the patches are compressed with zlib's default 15-bit window"
   },
+  "tinydelta_cz_tuz4k": {
+    "label": "tinydelta, compression mode + tinyuz 4 KB",
+    "code": 2419,
+    "buffers": 4096,
+    "stack": null,
+    "plus_old_file": false,
+    "basis": "callback decoder with TINYDELTA_FORMAT_V2=1 (852 B, measured) plus the tinyuz decompressor (1,567 B, measured as for HPatchLite); buffers: tinyuz's 4 KB dictionary"
+  },
+  "tinydelta_cz_twice": {
+    "label": "tinydelta, compression mode, decoded twice",
+    "code": 852,
+    "buffers": 0,
+    "stack": 200,
+    "plus_old_file": false,
+    "basis": "measured: callback decoder with TINYDELTA_FORMAT_V2=1, Cortex-M0, -Os: 852 B, run twice; no RAM buffers, but the intermediate patch has to be stored, e.g. in external flash"
+  },
   "hpatchlite_4k": {
     "label": "HPatchLite, 4 KB dict.",
     "code": 2229,

@@ -17,28 +17,20 @@
     "basis": "tinydelta plus an inflate decoder (code not measured, so a lower bound) with a 32 KB window: the patches are compressed with zlib's default 15-bit window"
   },
   "tinydelta_cz_tuz4k": {
-    "label": "tinydelta for compression + tinyuz, 4 KB dict.",
-    "code": 2287,
+    "label": "tinydelta, compression mode + tinyuz 4 KB",
+    "code": 2419,
     "buffers": 4096,
     "stack": null,
     "plus_old_file": false,
-    "basis": "estimate: tinydelta's callback decoder (720 B; reading format version 2 adds a little) plus the tinyuz decompressor (1,567 B, measured as for HPatchLite); buffers: tinyuz's 4 KB dictionary"
+    "basis": "callback decoder with TINYDELTA_FORMAT_V2=1 (852 B, measured) plus the tinyuz decompressor (1,567 B, measured as for HPatchLite); buffers: tinyuz's 4 KB dictionary"
   },
   "tinydelta_cz_twice": {
-    "label": "tinydelta for compression, twice",
-    "code": 720,
+    "label": "tinydelta, compression mode, decoded twice",
+    "code": 852,
     "buffers": 0,
     "stack": 200,
     "plus_old_file": false,
-    "basis": "estimate: tinydelta's callback decoder (720 B; reading format version 2 adds a little), run twice; no RAM buffers, but the intermediate patch has to be stored, e.g. in external flash"
-  },
-  "tinydelta_cz_twice_1k": {
-    "label": "tinydelta for compression, twice, 1 KB window",
-    "code": 720,
-    "buffers": 1024,
-    "stack": 200,
-    "plus_old_file": false,
-    "basis": "estimate: as twice, with the second pass limited to 1 KB back, so both passes can stream through a 1 KB ring buffer instead of storing the intermediate patch (the C decoders don't offer that mode yet)"
+    "basis": "measured: callback decoder with TINYDELTA_FORMAT_V2=1, Cortex-M0, -Os: 852 B, run twice; no RAM buffers, but the intermediate patch has to be stored, e.g. in external flash"
   },
   "hpatchlite_4k": {
     "label": "HPatchLite, 4 KB dict.",
