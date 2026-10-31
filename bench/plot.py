@@ -374,7 +374,7 @@ def place_labels(fig, ax, points):
     box = ax.get_window_extent(renderer)
     dots = [ax.transData.transform((x, y)) for x, y, _ in points]
     placed = []
-    offsets = [(dx, dy * reach, ha, va) for reach in (1, 3, 5)
+    offsets = [(dx * (1 + (reach > 1)), dy * reach, ha, va) for reach in (1, 3, 5, 8, 12)
                for dx, dy, ha, va in [(8, 4, "left", "bottom"), (8, -4, "left", "top"),
                                       (-8, 4, "right", "bottom"), (-8, -4, "right", "top"),
                                       (0, 3, "center", "bottom"), (0, -3, "center", "top")]]
@@ -396,7 +396,13 @@ def place_labels(fig, ax, points):
                 text.remove()
             if cost == 0:
                 break
-        placed.append(best[2])
+        cost, text, extent = best
+        if abs(text.xyann[1]) > 6:  # pushed away from its point: a thin leader line
+            text.remove()
+            ax.annotate(label, (x, y), xytext=text.xyann, textcoords="offset points", ha=text.get_ha(),
+                        va=text.get_va(), fontsize=8, color=INK,
+                        arrowprops=dict(arrowstyle="-", color=MUTED, linewidth=0.6, shrinkA=0, shrinkB=4))
+        placed.append(extent)
 
 
 def tradeoff(rows, out):

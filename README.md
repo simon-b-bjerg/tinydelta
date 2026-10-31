@@ -33,8 +33,8 @@ no compression library.
 - **Small patches.** One version byte, then a stream of short
   instructions: no framing, lengths or checksum. An unchanged region
   typically costs one or two bytes. On 166 real firmware and device-tree
-  updates, smaller than open-vcdiff's in every one, typically a third of
-  the size ([Benchmark](#benchmark)).
+  updates, smaller than open-vcdiff's in every one, typically a third to
+  less than half the size ([Benchmark](#benchmark)).
 - **Optimizing encoder.** Dynamic programming over exact instruction
   costs, never worse than the built-in greedy encoder, which is
   available when speed matters more.
@@ -69,17 +69,17 @@ below 1, tinydelta's is smaller) and how often tinydelta's is smaller:
 
 | compared with | firmware (88 pairs) | device trees (78 pairs) |
 |---|---|---|
-| open-vcdiff | **0.37**, smaller in 100% | **0.33**, smaller in 100% |
-| xdelta3 | 0.53, smaller in 100% | 0.55, smaller in 100% |
-| HPatchLite, 4 KB dictionary | 0.97, smaller in 62% | 1.41, smaller in 29% |
-| bsdiff | 0.73, smaller in 62% | 0.96, smaller in 35% |
-| zstd `--patch-from` | 0.95, smaller in 58% | 1.21, smaller in 29% |
+| open-vcdiff | **0.44**, smaller in 100% | **0.33**, smaller in 100% |
+| xdelta3 | 0.37, smaller in 100% | 0.55, smaller in 100% |
+| HPatchLite, 4 KB dictionary | 0.76, smaller in 62% | 1.41, smaller in 29% |
+| bsdiff | 0.46, smaller in 62% | 0.96, smaller in 35% |
+| zstd `--patch-from` | 0.69, smaller in 59% | 1.21, smaller in 29% |
 
-tinydelta's patch is smaller than open-vcdiff's in every pair, typically a
-third of its size. Against the tools that compress their patches it
+tinydelta's patch is smaller than open-vcdiff's in every pair, typically
+a third to less than half of its size. Against the tools that compress their patches it
 depends on the size of the change: when tinydelta's patch is under 1 KB
-(82 pairs), it is the smaller one in 95% of them, typically half the size
-of HPatchLite's; at 1 KB and above (84 pairs), HPatchLite's is always
+(82 pairs), it is the smaller one in 95% of them, typically less than
+half the size of HPatchLite's; at 1 KB and above (84 pairs), HPatchLite's is always
 smaller, typically by 2.4 times. Compression pays off once a change
 touches enough of the file.
 

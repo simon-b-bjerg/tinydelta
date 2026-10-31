@@ -5,9 +5,10 @@ kept here so the README's numbers and graphs stay fixed until they are
 deliberately updated. The method, corpus and tools are described in
 [`bench/README.md`](../../bench/README.md).
 
-- **Run:** [Benchmark workflow run 41197054361](https://github.com/simon-b-bjerg/tinydelta/actions/runs/41197054361), 31 October 2026, on the pull request that added compression mode, with every build made fresh; graphs and `summary.md` regenerated from its `results.csv` with the final `bench/plot.py`. The firmware builds of this run were not byte-reproducible (they embed the build date, and MicroPython's build scripts order some tables by Python's randomized hashes), so a later run gives patch sizes a few bytes different; later runs build with the commit date and a fixed hash seed.
+- **Run:** [Benchmark workflow run 41202776240](https://github.com/simon-b-bjerg/tinydelta/actions/runs/41202776240), 31 October 2026, every build made fresh and byte-reproducible (MicroPython built with the commit's date and a fixed Python hash seed); graphs and `summary.md` regenerated from its `results.csv` with the final `bench/plot.py`. Earlier snapshots used firmware builds that were not reproducible: MicroPython's build scripts ordered some tables by randomized hashes, which reshuffled them in every build and made every firmware patch larger, for every tool (tinydelta's about twice as large, HPatchLite's about 1.5 times).
 - **Corpus:** 166 pairs. Firmware: 88 pairs from 50 builds of MicroPython (stm32 port, NUCLEO_F091RC and PYBV11), consecutive commits between `v1.25.0` and `v1.26.0`. Device trees: 78 pairs from 48 `.dtb` builds of three boards, consecutive commits between `v7.0-dts` and `v7.3-dts`. Pairs are 1 and 5 builds apart.
-- **Compression mode:** `tinydelta_cz_twice*` columns: `encode -for-compression`, then a second tinydelta pass against an empty dictionary (also with `-max-distance 1024`). The run also measured tinydelta's patches with zlib and tinyuz; those columns are left out here.
+- **Compression mode:** `tinydelta_cz_twice*` columns: `encode -for-compression`, then a second tinydelta pass against an empty dictionary (also with `-max-distance 1024`).
+- **tiny-vcdiff:** `openvcdiff_interleaved`, open-vcdiff's interleaved format, which tiny-vcdiff reads.
 - **tinydelta:** the library's default encoding (optimal, with greedy above roughly 100 KB, so greedy for the firmware images); optimal encoding at any size was not run.
 
 | file | what |
