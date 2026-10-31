@@ -288,6 +288,7 @@ The [benchmark](#benchmark) shows what that costs and buys.
   - [Callback decoder](#callback-decoder)
   - [Your own decoder](#your-own-decoder)
   - [On the device](#on-the-device)
+  - [C coding rules](#c-coding-rules)
 - [Wire format](#wire-format)
   - [Integers](#integers)
   - [Instructions](#instructions)
@@ -657,6 +658,38 @@ Then, on the device:
 On any failure, discard the target region and keep running from the
 dictionary.
 
+### C coding rules
+
+The C library follows the
+[BARR-C:2018](https://barrgroup.com/embedded-systems/books/embedded-c-coding-standard)
+embedded C coding standard and is checked against MISRA C:2012 with
+cppcheck's MISRA addon, so it can go into firmware that has to pass a
+MISRA checker:
+
+- **Layout**: [`c/.clang-format`](c/.clang-format) (4-space indent,
+  120 columns, braces on every `if`, `else` and loop body). Run
+  `scripts/c-format.sh --fix` before committing; CI runs it as a check.
+- **Names**: everything public starts with `tinydelta_` / `TINYDELTA_`;
+  internal names are lowercase with underscores.
+- **Types**: fixed-width integers (`uint32_t`, `uint8_t`) for every size
+  and offset, never `int` or `size_t` in the API; `bool` for flags;
+  unsigned literals (`0u`) in unsigned expressions; explicit parentheses
+  instead of relying on operator precedence.
+- **Checks**: every length and offset from a patch is bounds-checked
+  before use, with overflow-free comparisons (`length <= size - start`).
+
+Every MISRA C:2012 rule the addon checks passes, except these
+deviations, listed with their reasons in
+[`scripts/c-analyze.sh`](scripts/c-analyze.sh):
+
+| rule | category | deviation |
+|---|---|---|
+| 15.5 single point of exit | advisory | each failed check returns its error at once, which keeps the decoders flat and short |
+| 17.8 parameters not modified | advisory | offset and length parameters double as loop counters |
+| 18.4 no `+`/`-` on pointers | advisory | buffer + offset addressing, always after a bounds check |
+| 10.8 composite expression cast | required | the masked two-bit opcode is cast to `tinydelta_opcode`, so `-Wswitch-enum` proves every opcode has a case |
+| 11.8 const cast away | required | cppcheck false positive: a callback's `void *ctx` is copied out of the `const tinydelta_io`; no qualifier is removed |
+
 ## Wire format
 
 A patch is one header byte, the **format version**, followed by a
@@ -813,7 +846,8 @@ comparison at the cursor so that even 1–3 byte unchanged runs become a
 ```sh
 go test ./...          # Go tests, plus the C decoders if a C compiler is installed
 scripts/c-check.sh     # strict C build (-Wall -Wextra -Wconversion -Wswitch-enum ... -Werror)
-scripts/c-analyze.sh   # static analysis: gcc -fanalyzer, clang --analyze, clang-tidy
+scripts/c-format.sh    # C formatting check against c/.clang-format (--fix reformats)
+scripts/c-analyze.sh   # static analysis: gcc -fanalyzer, clang --analyze, clang-tidy, cppcheck MISRA
 scripts/c-cbmc.sh      # bounded model checking of the C decoders, every input up to small bounds (needs cbmc)
 scripts/c-fuzz.sh 300 fuzz-corpus   # fuzz the C decoders for 5 min, keeping the corpus (needs clang with libFuzzer)
 scripts/c-coverage.sh fuzz-corpus   # how much of the C library the fuzzer reaches (needs llvm-cov)
@@ -838,7 +872,8 @@ What is tested, and how:
 | `TestVectors`, `TestCVectors` | the Go decoder, the C memory decoder and the C callback decoder (several buffer and page sizes) against every [conformance vector](#conformance-vectors) |
 | C fuzzing ([`c/fuzz/fuzz_decode.c`](c/fuzz/fuzz_decode.c)) | libFuzzer with AddressSanitizer and UndefinedBehaviorSanitizer: every input through an independent reference decoder and all C decoder configurations, which must agree exactly; any memory error, undefined behaviour or breach of the callback contract fails; injected callback failures must give `TINYDELTA_ERR_IO` |
 | `scripts/c-check.sh` | the C library builds with strict warnings as errors |
-| `scripts/c-analyze.sh` | static analysis of the C library with GCC's analyzer, the Clang Static Analyzer and clang-tidy (bug-finding checks, see [`c/.clang-tidy`](c/.clang-tidy)); any finding fails |
+| `scripts/c-format.sh` | the C sources match [`c/.clang-format`](c/.clang-format) |
+| `scripts/c-analyze.sh` | static analysis of the C library with GCC's analyzer, the Clang Static Analyzer, clang-tidy (bug-finding checks, see [`c/.clang-tidy`](c/.clang-tidy)) and cppcheck's MISRA C:2012 addon (see [C coding rules](#c-coding-rules)); any finding fails |
 | `scripts/c-cbmc.sh` ([`c/cbmc/`](c/cbmc/)) | bounded model checking with [CBMC](https://www.cprover.org/cbmc/): not a sample but every input up to small bounds (memory decoder: dictionary 4, patch 8, output 8 bytes; callback decoder: 2, 4 and 4 bytes, at several buffer and page sizes, with and without `target_read`). Proves, within those bounds, no out-of-bounds access and no undefined behaviour, the callback contract, the same result and bytes as the memory decoder, `TINYDELTA_ERR_IO` for any one failing callback, and rejection of bad buffer setups |
 | CodeQL | GitHub's code scanning, security and quality queries, over the Go code and the C library; results in the repository's Security tab |
 
@@ -893,7 +928,7 @@ There are two, one for each side of the format:
 | Update coverage badges | on pushes to `main` only: writes the Go and C coverage figures and the number of conformance vectors for the badges above to the `badges` branch |
 | Go tests on Windows | `go test ./...` for the library and the CLI |
 | Python package | on Linux and Windows, with Python 3.9 and current: the Python tests, including every conformance vector, against a fresh build of the tool; on Linux also builds the wheels, checks them with `twine` and tests the installed wheel |
-| C static analysis | `scripts/c-analyze.sh` |
+| C static analysis | `scripts/c-format.sh` and `scripts/c-analyze.sh` |
 | C decoders model-checked | `scripts/c-cbmc.sh` (CBMC from Ubuntu's packages), a few minutes |
 | CodeQL (separate workflow, also weekly) | CodeQL over the Go code and the C library |
 | Nightly fuzzing (separate workflow) | every night on `main`, an hour each of the C fuzzer and `FuzzEncodeRoundTrip`, continuing from the previous night's corpus, kept in the Actions cache; crashing inputs are uploaded as artifacts |
@@ -985,8 +1020,10 @@ the latest release and pip only installs it when asked for.
 
 ### Contributing
 
-Issues and pull requests are welcome. Please keep `go test ./...` and
-`scripts/c-check.sh` passing and code `gofmt`-formatted. A change to the
+Issues and pull requests are welcome. Please keep `go test ./...`,
+`scripts/c-check.sh` and `scripts/c-analyze.sh` passing, Go code
+`gofmt`-formatted and C code formatted with `scripts/c-format.sh --fix`
+(see [C coding rules](#c-coding-rules)). A change to the
 wire format must update this README, both Go encoders, the Go decoder
 and both C decoders together, with tests.
 

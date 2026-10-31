@@ -13,7 +13,7 @@ typedef struct {
 } decoder;
 
 static uint32_t min_u32(uint32_t a, uint32_t b) {
-    return a < b ? a : b;
+    return (a < b) ? a : b;
 }
 
 /* Reads the varint at the current patch position, with one patch_read of
@@ -24,12 +24,16 @@ static tinydelta_result read_varint(decoder *d, uint32_t *value) {
     uint32_t used;
     tinydelta_result result;
 
-    if (available == 0) return TINYDELTA_ERR_MALFORMED;
+    if (available == 0u) {
+        return TINYDELTA_ERR_MALFORMED;
+    }
     if (d->io->patch_read(d->io->patch_ctx, d->patch_pos, bytes, available) != TINYDELTA_CALLBACK_OK) {
         return TINYDELTA_ERR_IO;
     }
     result = varint_parse(bytes, available, value, &used);
-    if (result == TINYDELTA_OK) d->patch_pos += used;
+    if (result == TINYDELTA_OK) {
+        d->patch_pos += used;
+    }
     return result;
 }
 
@@ -49,7 +53,9 @@ static uint32_t page_room(const decoder *d, uint32_t length) {
 static tinydelta_result write_page(decoder *d) {
     uint32_t length = d->out_pos - d->written;
 
-    if (length == 0) return TINYDELTA_OK;
+    if (length == 0u) {
+        return TINYDELTA_OK;
+    }
     if (d->io->target_write(d->io->target_ctx, d->written, d->io->buffer + (d->written & d->mask), length) !=
         TINYDELTA_CALLBACK_OK) {
         return TINYDELTA_ERR_IO;
@@ -62,151 +68,195 @@ static tinydelta_result write_page(decoder *d) {
  * more than page_room allows) and writes the page out once it is full. */
 static tinydelta_result produced(decoder *d, uint32_t length) {
     d->out_pos += length;
-    return (d->out_pos & (d->io->page_size - 1u)) == 0 ? write_page(d) : TINYDELTA_OK;
+    return ((d->out_pos & (d->io->page_size - 1u)) == 0u) ? write_page(d) : TINYDELTA_OK;
 }
 
 /* Reads length bytes from offset in a read callback's data (dictionary,
  * patch or, for a far COPY_TARGET, the target already written) straight
  * into the buffer. With add_diff (format version 2's ADD_DIFF), each byte
  * also gets the next patch byte added, DIFF_CHUNK bytes at a time. */
-static tinydelta_result read_to_target(decoder *d, tinydelta_read_fn read, void *ctx,
-                                       uint32_t offset, uint32_t length, int add_diff) {
+static tinydelta_result
+read_to_target(decoder *d, tinydelta_read_fn read, void *ctx, uint32_t offset, uint32_t length, bool add_diff) {
     uint8_t diff[DIFF_CHUNK];
-    while (length > 0) {
+    while (length > 0u) {
         uint32_t chunk = page_room(d, length);
-        uint8_t *out = write_position(d);
+        uint8_t *out   = write_position(d);
         tinydelta_result result;
 
-        if (add_diff) chunk = min_u32(chunk, DIFF_CHUNK);
-        if (read(ctx, offset, out, chunk) != TINYDELTA_CALLBACK_OK) return TINYDELTA_ERR_IO;
+        if (add_diff) {
+            chunk = min_u32(chunk, DIFF_CHUNK);
+        }
+        if (read(ctx, offset, out, chunk) != TINYDELTA_CALLBACK_OK) {
+            return TINYDELTA_ERR_IO;
+        }
         if (add_diff) {
             if (d->io->patch_read(d->io->patch_ctx, d->patch_pos, diff, chunk) != TINYDELTA_CALLBACK_OK) {
                 return TINYDELTA_ERR_IO;
             }
-            for (uint32_t i = 0; i < chunk; i++) out[i] = (uint8_t)(out[i] + diff[i]);
+            for (uint32_t i = 0; i < chunk; i++) {
+                out[i] = (uint8_t)(out[i] + diff[i]);
+            }
             d->patch_pos += chunk;
         }
         result = produced(d, chunk);
-        if (result != TINYDELTA_OK) return result;
+        if (result != TINYDELTA_OK) {
+            return result;
+        }
         offset += chunk;
         length -= chunk;
     }
     return TINYDELTA_OK;
 }
 
-
 /* COPY_TARGET within the buffer: byte by byte, so a source overlapping
  * the bytes being written (a short repeating run) works. */
 static tinydelta_result copy_in_buffer(decoder *d, uint32_t distance, uint32_t length) {
     uint8_t *buffer = d->io->buffer;
 
-    while (length > 0) {
+    while (length > 0u) {
         uint32_t chunk = page_room(d, length);
         tinydelta_result result;
 
         for (uint32_t i = 0; i < chunk; i++) {
-            uint32_t at = d->out_pos + i;
+            uint32_t at          = d->out_pos + i;
             buffer[at & d->mask] = buffer[(at - distance) & d->mask];
         }
         result = produced(d, chunk);
-        if (result != TINYDELTA_OK) return result;
+        if (result != TINYDELTA_OK) {
+            return result;
+        }
         length -= chunk;
     }
     return TINYDELTA_OK;
 }
 
 /* Powers of two, page_size at most buffer_size (so it divides it). */
-static int buffer_valid(const tinydelta_io *io) {
-    return io->buffer != 0 && io->page_size != 0 && (io->page_size & (io->page_size - 1u)) == 0 &&
-           io->buffer_size >= io->page_size && (io->buffer_size & (io->buffer_size - 1u)) == 0;
+static bool buffer_valid(const tinydelta_io *io) {
+    return (io->buffer != NULL) && (io->page_size != 0u) && ((io->page_size & (io->page_size - 1u)) == 0u) &&
+           (io->buffer_size >= io->page_size) && ((io->buffer_size & (io->buffer_size - 1u)) == 0u);
 }
 
 tinydelta_result tinydelta_decode_io(const tinydelta_io *io, uint32_t *target_len) {
     decoder d;
-    uint32_t cursor = 0; /* dictionary read position */
+    uint32_t cursor     = 0; /* dictionary read position */
     uint32_t target_cap = min_u32(io->target_cap, TINYDELTA_MAX_SIZE);
     uint8_t version;
     tinydelta_result result;
 
-    d.io = io;
-    d.mask = io->buffer_size - 1u;
+    d.io        = io;
+    d.mask      = io->buffer_size - 1u;
     d.patch_pos = TINYDELTA_HEADER_LEN;
-    d.out_pos = 0;
-    d.written = 0;
-    if (!buffer_valid(io)) return TINYDELTA_ERR_MALFORMED;
-    if (io->dict_len > TINYDELTA_MAX_SIZE) return TINYDELTA_ERR_TOO_LARGE;
-    if (io->patch_len < TINYDELTA_HEADER_LEN) return TINYDELTA_ERR_MALFORMED;
+    d.out_pos   = 0;
+    d.written   = 0;
+    if (!buffer_valid(io)) {
+        return TINYDELTA_ERR_MALFORMED;
+    }
+    if (io->dict_len > TINYDELTA_MAX_SIZE) {
+        return TINYDELTA_ERR_TOO_LARGE;
+    }
+    if (io->patch_len < TINYDELTA_HEADER_LEN) {
+        return TINYDELTA_ERR_MALFORMED;
+    }
     if (io->patch_read(io->patch_ctx, 0, &version, TINYDELTA_HEADER_LEN) != TINYDELTA_CALLBACK_OK) {
         return TINYDELTA_ERR_IO;
     }
-    const int is_v2 = version == TINYDELTA_FORMAT_VERSION_2;
-    if (version != TINYDELTA_FORMAT_VERSION && !is_v2) return TINYDELTA_ERR_VERSION;
+    const bool is_v2 = (version == TINYDELTA_FORMAT_VERSION_2);
+    if ((version != TINYDELTA_FORMAT_VERSION) && !is_v2) {
+        return TINYDELTA_ERR_VERSION;
+    }
 
     while (d.patch_pos < io->patch_len) {
-        uint32_t instruction, length, delta, address;
+        uint32_t instruction;
+        uint32_t length;
+        uint32_t delta;
+        uint32_t address;
 
         result = read_varint(&d, &instruction);
-        if (result != TINYDELTA_OK) return result;
+        if (result != TINYDELTA_OK) {
+            return result;
+        }
 
         length = instruction_length(instruction);
-        if (length > target_cap - d.out_pos) return TINYDELTA_ERR_TOO_LARGE;
+        if (length > (target_cap - d.out_pos)) {
+            return TINYDELTA_ERR_TOO_LARGE;
+        }
 
         switch (instruction_opcode(instruction)) {
         case TINYDELTA_OP_COPY:
             result = read_varint(&d, &delta);
-            if (result != TINYDELTA_OK) return result;
+            if (result != TINYDELTA_OK) {
+                return result;
+            }
             address = cursor + zigzag_decode(delta);
-            if (!range_within(address, length, io->dict_len)) return TINYDELTA_ERR_MALFORMED;
+            if (!range_within(address, length, io->dict_len)) {
+                return TINYDELTA_ERR_MALFORMED;
+            }
 
-            result = read_to_target(&d, io->dict_read, io->dict_ctx, address, length, 0);
+            result = read_to_target(&d, io->dict_read, io->dict_ctx, address, length, false);
             cursor = address + length;
             break;
 
         case TINYDELTA_OP_ADD:
-            if (!range_within(d.patch_pos, length, io->patch_len)) return TINYDELTA_ERR_MALFORMED;
+            if (!range_within(d.patch_pos, length, io->patch_len)) {
+                return TINYDELTA_ERR_MALFORMED;
+            }
 
-            result = read_to_target(&d, io->patch_read, io->patch_ctx, d.patch_pos, length, 0);
+            result = read_to_target(&d, io->patch_read, io->patch_ctx, d.patch_pos, length, false);
             d.patch_pos += length;
             cursor += length;
             break;
 
         case TINYDELTA_OP_SKIP:
-            if (!range_within(cursor, length, io->dict_len)) return TINYDELTA_ERR_MALFORMED;
+            if (!range_within(cursor, length, io->dict_len)) {
+                return TINYDELTA_ERR_MALFORMED;
+            }
 
-            result = read_to_target(&d, io->dict_read, io->dict_ctx, cursor, length, 0);
+            result = read_to_target(&d, io->dict_read, io->dict_ctx, cursor, length, false);
             cursor += length;
             break;
 
         case TINYDELTA_OP_COPY_TARGET:
             if (is_v2) { /* ADD_DIFF: dictionary byte at the cursor + patch byte */
-                if (!range_within(cursor, length, io->dict_len) ||
-                    !range_within(d.patch_pos, length, io->patch_len)) return TINYDELTA_ERR_MALFORMED;
-                result = read_to_target(&d, io->dict_read, io->dict_ctx, cursor, length, 1);
+                if (!range_within(cursor, length, io->dict_len) || !range_within(d.patch_pos, length, io->patch_len)) {
+                    return TINYDELTA_ERR_MALFORMED;
+                }
+                result = read_to_target(&d, io->dict_read, io->dict_ctx, cursor, length, true);
                 cursor += length;
                 break;
             }
             result = read_varint(&d, &delta);
-            if (result != TINYDELTA_OK) return result;
+            if (result != TINYDELTA_OK) {
+                return result;
+            }
             address = d.out_pos + zigzag_decode(delta);
-            if (address >= d.out_pos) return TINYDELTA_ERR_MALFORMED; /* must be earlier output */
+            if (address >= d.out_pos) {
+                return TINYDELTA_ERR_MALFORMED; /* must be earlier output */
+            }
 
-            if (d.out_pos - address <= io->buffer_size) {
+            if ((d.out_pos - address) <= io->buffer_size) {
                 result = copy_in_buffer(&d, d.out_pos - address, length);
-            } else if (io->target_read == 0) {
+            } else if (io->target_read == NULL) {
                 return TINYDELTA_ERR_MALFORMED; /* reaches back further than the buffer */
             } else {
                 /* The source is more than a buffer back, so it lies before
                  * the current page: already written, the whole way. */
-                result = read_to_target(&d, io->target_read, io->target_ctx, address, length, 0);
+                result = read_to_target(&d, io->target_read, io->target_ctx, address, length, false);
             }
             cursor += length;
             break;
+        default: /* unreachable: the opcode is two bits and each value has a case */
+            result = TINYDELTA_ERR_MALFORMED;
+            break;
         }
-        if (result != TINYDELTA_OK) return result;
+        if (result != TINYDELTA_OK) {
+            return result;
+        }
     }
 
     result = write_page(&d); /* the last, partial page */
-    if (result != TINYDELTA_OK) return result;
+    if (result != TINYDELTA_OK) {
+        return result;
+    }
     *target_len = d.out_pos;
     return TINYDELTA_OK;
 }

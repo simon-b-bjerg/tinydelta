@@ -3,6 +3,8 @@
 #ifndef TINYDELTA_INTERNAL_H
 #define TINYDELTA_INTERNAL_H
 
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "tinydelta.h"
@@ -46,29 +48,28 @@ static inline uint32_t instruction_length(uint32_t instruction) {
  * the 5th byte may only carry bits 28-31.
  */
 
-#define VARINT_MAX_BYTES      5u
-#define VARINT_BITS_PER_BYTE  7u
-#define VARINT_VALUE_MASK     0x7Fu
-#define VARINT_CONTINUES      0x80u
-#define VARINT_LAST_BYTE_MAX  0x0Fu
+#define VARINT_MAX_BYTES     5u
+#define VARINT_BITS_PER_BYTE 7u
+#define VARINT_VALUE_MASK    0x7Fu
+#define VARINT_CONTINUES     0x80u
+#define VARINT_LAST_BYTE_MAX 0x0Fu
 
 /* Parses one varint from the start of bytes[0 .. available). On success
  * sets *value and *used (the bytes it took). Fails if the varint is
  * truncated or holds more than 32 bits. */
-static inline tinydelta_result varint_parse(const uint8_t *bytes, uint32_t available,
-                                            uint32_t *value, uint32_t *used) {
+static inline tinydelta_result varint_parse(const uint8_t *bytes, uint32_t available, uint32_t *value, uint32_t *used) {
     uint32_t result = 0;
-    uint32_t limit = available < VARINT_MAX_BYTES ? available : VARINT_MAX_BYTES;
+    uint32_t limit  = (available < VARINT_MAX_BYTES) ? available : VARINT_MAX_BYTES;
 
     for (uint32_t i = 0; i < limit; i++) {
         uint8_t byte = bytes[i];
-        if (i == VARINT_MAX_BYTES - 1 && byte > VARINT_LAST_BYTE_MAX) {
+        if ((i == (VARINT_MAX_BYTES - 1u)) && (byte > VARINT_LAST_BYTE_MAX)) {
             return TINYDELTA_ERR_MALFORMED; /* more than 32 bits */
         }
-        result |= (uint32_t)(byte & VARINT_VALUE_MASK) << (VARINT_BITS_PER_BYTE * i);
+        result |= ((uint32_t)byte & VARINT_VALUE_MASK) << (VARINT_BITS_PER_BYTE * i);
         if (!(byte & VARINT_CONTINUES)) {
             *value = result;
-            *used = i + 1;
+            *used  = i + 1u;
             return TINYDELTA_OK;
         }
     }
@@ -88,7 +89,7 @@ static inline uint32_t zigzag_decode(uint32_t encoded) {
 
 /* True if [start, start + length) lies within [0, size). */
 static inline int range_within(uint32_t start, uint32_t length, uint32_t size) {
-    return start <= size && length <= size - start;
+    return (start <= size) && (length <= (size - start));
 }
 
 #endif

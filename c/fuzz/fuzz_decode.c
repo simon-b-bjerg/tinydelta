@@ -40,16 +40,25 @@
 #define FUZZ_HEADER_SIZE 5u
 #define FUZZ_MAX_TARGET  4096u
 
-#define FAIL(...) do { fprintf(stderr, "fuzz_decode: " __VA_ARGS__); fputc('\n', stderr); abort(); } while (0)
+#define FAIL(...)                                                                                                      \
+    do {                                                                                                               \
+        fprintf(stderr, "fuzz_decode: " __VA_ARGS__);                                                                  \
+        fputc('\n', stderr);                                                                                           \
+        abort();                                                                                                       \
+    } while (0)
 
 /* ---- Reference decoder --------------------------------------------------- */
 
 static int ref_varint(const uint8_t *patch, uint64_t patch_len, uint64_t *pos, uint64_t *value) {
     uint64_t result = 0;
     for (int i = 0; i < 5; i++) {
-        if (*pos >= patch_len) return -1;
+        if (*pos >= patch_len) {
+            return -1;
+        }
         uint8_t byte = patch[(*pos)++];
-        if (i == 4 && byte > 0x0F) return -1;
+        if (i == 4 && byte > 0x0F) {
+            return -1;
+        }
         result |= (uint64_t)(byte & 0x7F) << (7 * i);
         if (!(byte & 0x80)) {
             *value = result;
@@ -63,53 +72,83 @@ static int64_t ref_zigzag(uint64_t z) {
     return (int64_t)(z >> 1) ^ -(int64_t)(z & 1);
 }
 
-static tinydelta_result ref_decode(const uint8_t *dict, uint64_t dict_len,
-                                   const uint8_t *patch, uint64_t patch_len,
-                                   uint8_t *out, uint64_t out_cap, uint64_t *out_len) {
+static tinydelta_result ref_decode(const uint8_t *dict,
+                                   uint64_t dict_len,
+                                   const uint8_t *patch,
+                                   uint64_t patch_len,
+                                   uint8_t *out,
+                                   uint64_t out_cap,
+                                   uint64_t *out_len) {
     uint64_t patch_pos = 1, out_pos = 0; /* past the version byte */
     int64_t cursor = 0;
 
-    if (patch_len < 1) return TINYDELTA_ERR_MALFORMED;
-    if (patch[0] != 1 && patch[0] != 2) return TINYDELTA_ERR_VERSION;
+    if (patch_len < 1) {
+        return TINYDELTA_ERR_MALFORMED;
+    }
+    if (patch[0] != 1 && patch[0] != 2) {
+        return TINYDELTA_ERR_VERSION;
+    }
     const int version2 = patch[0] == 2; /* opcode 3 is ADD_DIFF */
     while (patch_pos < patch_len) {
         uint64_t instruction, z;
-        if (ref_varint(patch, patch_len, &patch_pos, &instruction)) return TINYDELTA_ERR_MALFORMED;
+        if (ref_varint(patch, patch_len, &patch_pos, &instruction)) {
+            return TINYDELTA_ERR_MALFORMED;
+        }
         uint64_t length = instruction >> 2;
-        if (out_pos + length > out_cap) return TINYDELTA_ERR_TOO_LARGE;
+        if (out_pos + length > out_cap) {
+            return TINYDELTA_ERR_TOO_LARGE;
+        }
 
         switch (instruction & 3) {
         case 0: { /* COPY */
-            if (ref_varint(patch, patch_len, &patch_pos, &z)) return TINYDELTA_ERR_MALFORMED;
+            if (ref_varint(patch, patch_len, &patch_pos, &z)) {
+                return TINYDELTA_ERR_MALFORMED;
+            }
             int64_t address = cursor + ref_zigzag(z);
-            if (address < 0 || (uint64_t)address + length > dict_len) return TINYDELTA_ERR_MALFORMED;
+            if (address < 0 || (uint64_t)address + length > dict_len) {
+                return TINYDELTA_ERR_MALFORMED;
+            }
             memcpy(out + out_pos, dict + address, length);
             cursor = address + (int64_t)length;
             break;
         }
         case 1: /* ADD */
-            if (patch_pos + length > patch_len) return TINYDELTA_ERR_MALFORMED;
+            if (patch_pos + length > patch_len) {
+                return TINYDELTA_ERR_MALFORMED;
+            }
             memcpy(out + out_pos, patch + patch_pos, length);
             patch_pos += length;
             cursor += (int64_t)length;
             break;
         case 2: /* SKIP */
-            if ((uint64_t)cursor + length > dict_len) return TINYDELTA_ERR_MALFORMED;
+            if ((uint64_t)cursor + length > dict_len) {
+                return TINYDELTA_ERR_MALFORMED;
+            }
             memcpy(out + out_pos, dict + cursor, length);
             cursor += (int64_t)length;
             break;
         default: { /* COPY_TARGET, or in version 2 ADD_DIFF */
             if (version2) {
-                if ((uint64_t)cursor + length > dict_len || patch_pos + length > patch_len) return TINYDELTA_ERR_MALFORMED;
-                for (uint64_t i = 0; i < length; i++) out[out_pos + i] = (uint8_t)(dict[(uint64_t)cursor + i] + patch[patch_pos + i]);
+                if ((uint64_t)cursor + length > dict_len || patch_pos + length > patch_len) {
+                    return TINYDELTA_ERR_MALFORMED;
+                }
+                for (uint64_t i = 0; i < length; i++) {
+                    out[out_pos + i] = (uint8_t)(dict[(uint64_t)cursor + i] + patch[patch_pos + i]);
+                }
                 patch_pos += length;
                 cursor += (int64_t)length;
                 break;
             }
-            if (ref_varint(patch, patch_len, &patch_pos, &z)) return TINYDELTA_ERR_MALFORMED;
+            if (ref_varint(patch, patch_len, &patch_pos, &z)) {
+                return TINYDELTA_ERR_MALFORMED;
+            }
             int64_t address = (int64_t)out_pos + ref_zigzag(z);
-            if (address < 0 || (uint64_t)address >= out_pos) return TINYDELTA_ERR_MALFORMED;
-            for (uint64_t i = 0; i < length; i++) out[out_pos + i] = out[(uint64_t)address + i];
+            if (address < 0 || (uint64_t)address >= out_pos) {
+                return TINYDELTA_ERR_MALFORMED;
+            }
+            for (uint64_t i = 0; i < length; i++) {
+                out[out_pos + i] = out[(uint64_t)address + i];
+            }
             cursor += (int64_t)length;
             break;
         }
@@ -127,7 +166,9 @@ static uint32_t calls, fail_at;
 static int failure_injected;
 
 static int fail_now(void) {
-    if (++calls != fail_at) return 0;
+    if (++calls != fail_at) {
+        return 0;
+    }
     failure_injected = 1;
     return 1;
 }
@@ -145,25 +186,39 @@ typedef struct {
 
 static int source_read(void *ctx, uint32_t offset, uint8_t *buf, uint32_t len) {
     const source *s = ctx;
-    if (len == 0 || offset > s->len || len > s->len - offset) FAIL("read [%u,+%u) outside %u-byte source", offset, len, s->len);
-    if (fail_now()) return TINYDELTA_CALLBACK_FAILED;
+    if (len == 0 || offset > s->len || len > s->len - offset) {
+        FAIL("read [%u,+%u) outside %u-byte source", offset, len, s->len);
+    }
+    if (fail_now()) {
+        return TINYDELTA_CALLBACK_FAILED;
+    }
     memcpy(buf, s->bytes + offset, len);
     return TINYDELTA_CALLBACK_OK;
 }
 
 static int flash_read(void *ctx, uint32_t offset, uint8_t *buf, uint32_t len) {
     const flash *f = ctx;
-    if (offset > f->programmed || len > f->programmed - offset) FAIL("flash read [%u,+%u) of unprogrammed data", offset, len);
-    if (fail_now()) return TINYDELTA_CALLBACK_FAILED;
+    if (offset > f->programmed || len > f->programmed - offset) {
+        FAIL("flash read [%u,+%u) of unprogrammed data", offset, len);
+    }
+    if (fail_now()) {
+        return TINYDELTA_CALLBACK_FAILED;
+    }
     memcpy(buf, f->bytes + offset, len);
     return TINYDELTA_CALLBACK_OK;
 }
 
 static int flash_program(void *ctx, uint32_t offset, const uint8_t *buf, uint32_t len) {
     flash *f = ctx;
-    if (offset != f->programmed || offset % f->page_size != 0) FAIL("flash program at %u, expected page-aligned %u", offset, f->programmed);
-    if (len == 0 || len > f->page_size || len > FUZZ_MAX_TARGET - offset) FAIL("flash program of %u bytes", len);
-    if (fail_now()) return TINYDELTA_CALLBACK_FAILED;
+    if (offset != f->programmed || offset % f->page_size != 0) {
+        FAIL("flash program at %u, expected page-aligned %u", offset, f->programmed);
+    }
+    if (len == 0 || len > f->page_size || len > FUZZ_MAX_TARGET - offset) {
+        FAIL("flash program of %u bytes", len);
+    }
+    if (fail_now()) {
+        return TINYDELTA_CALLBACK_FAILED;
+    }
     memcpy(f->bytes + offset, buf, len);
     f->programmed += len;
     return TINYDELTA_CALLBACK_OK;
@@ -175,24 +230,30 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     static uint8_t ref_out[FUZZ_MAX_TARGET], mem_out[FUZZ_MAX_TARGET];
     static flash target_flash;
 
-    if (size < FUZZ_HEADER_SIZE) return 0;
-    uint32_t out_cap = (uint32_t)(data[0] | (data[1] << 8)) % (FUZZ_MAX_TARGET + 1u);
-    uint32_t dict_len = data[2];
+    if (size < FUZZ_HEADER_SIZE) {
+        return 0;
+    }
+    uint32_t out_cap   = (uint32_t)(data[0] | (data[1] << 8)) % (FUZZ_MAX_TARGET + 1u);
+    uint32_t dict_len  = data[2];
     /* The callback decoder: a page of 1-32 bytes, a buffer of 1-4 pages. */
     uint32_t page_size = 1u << (data[3] % 6u), buffer_size = page_size << ((data[3] >> 3) % 3u);
     fail_at = data[4];
     data += FUZZ_HEADER_SIZE;
     size -= FUZZ_HEADER_SIZE;
-    if (dict_len > size) dict_len = (uint32_t)size;
-    const uint8_t *dict = data;
+    if (dict_len > size) {
+        dict_len = (uint32_t)size;
+    }
+    const uint8_t *dict  = data;
     const uint8_t *patch = data + dict_len;
-    uint32_t patch_len = (uint32_t)size - dict_len;
+    uint32_t patch_len   = (uint32_t)size - dict_len;
 
-    uint64_t ref_len = 0;
-    uint32_t mem_len = 0;
+    uint64_t ref_len     = 0;
+    uint32_t mem_len     = 0;
     tinydelta_result ref = ref_decode(dict, dict_len, patch, patch_len, ref_out, out_cap, &ref_len);
     tinydelta_result mem = tinydelta_decode(dict, dict_len, patch, patch_len, mem_out, out_cap, &mem_len);
-    if (mem != ref) FAIL("memory decoder returned %d, reference %d", mem, ref);
+    if (mem != ref) {
+        FAIL("memory decoder returned %d, reference %d", mem, ref);
+    }
     if (ref == TINYDELTA_OK && (mem_len != ref_len || memcmp(mem_out, ref_out, mem_len) != 0)) {
         FAIL("memory decoder output differs from reference");
     }
@@ -201,28 +262,38 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         source patch_src = {patch, patch_len}, dict_src = {dict, dict_len};
         uint8_t buffer[128];
         tinydelta_io io = {
-            .patch_read = source_read, .patch_ctx = &patch_src, .patch_len = patch_len,
-            .dict_read = source_read, .dict_ctx = &dict_src, .dict_len = dict_len,
-            .target_write = flash_program, .target_read = with_read ? flash_read : NULL,
-            .target_ctx = &target_flash, .target_cap = out_cap,
-            .buffer = buffer, .buffer_size = buffer_size, .page_size = page_size,
+            .patch_read   = source_read,
+            .patch_ctx    = &patch_src,
+            .patch_len    = patch_len,
+            .dict_read    = source_read,
+            .dict_ctx     = &dict_src,
+            .dict_len     = dict_len,
+            .target_write = flash_program,
+            .target_read  = with_read ? flash_read : NULL,
+            .target_ctx   = &target_flash,
+            .target_cap   = out_cap,
+            .buffer       = buffer,
+            .buffer_size  = buffer_size,
+            .page_size    = page_size,
         };
         memset(&target_flash, 0, sizeof target_flash);
-        target_flash.page_size = page_size;
-        calls = 0;
-        failure_injected = 0;
-        uint32_t io_len = 0;
+        target_flash.page_size  = page_size;
+        calls                   = 0;
+        failure_injected        = 0;
+        uint32_t io_len         = 0;
         tinydelta_result result = tinydelta_decode_io(&io, &io_len);
         if (failure_injected) {
-            if (result != TINYDELTA_ERR_IO) FAIL("callback decoder returned %d after a failed callback", result);
+            if (result != TINYDELTA_ERR_IO) {
+                FAIL("callback decoder returned %d after a failed callback", result);
+            }
             continue;
         }
         if (result != mem && !(!with_read && result == TINYDELTA_ERR_MALFORMED)) {
-            FAIL("callback decoder (buffer %u, page %u, target_read %d) returned %d, memory decoder %d",
-                 buffer_size, page_size, with_read, result, mem);
+            FAIL("callback decoder (buffer %u, page %u, target_read %d) returned %d, memory decoder %d", buffer_size,
+                 page_size, with_read, result, mem);
         }
-        if (result == TINYDELTA_OK &&
-            (io_len != mem_len || target_flash.programmed != mem_len || memcmp(target_flash.bytes, mem_out, mem_len) != 0)) {
+        if (result == TINYDELTA_OK && (io_len != mem_len || target_flash.programmed != mem_len ||
+                                       memcmp(target_flash.bytes, mem_out, mem_len) != 0)) {
             FAIL("callback decoder output differs");
         }
     }

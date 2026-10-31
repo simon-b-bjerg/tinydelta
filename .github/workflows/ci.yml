@@ -110,11 +110,15 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install clang and clang-tidy
+      - name: Install clang, clang-tidy, clang-format and cppcheck
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang-18 clang-tidy-18
-      - name: GCC analyzer, Clang Static Analyzer and clang-tidy
+          sudo apt-get install -y --no-install-recommends clang-18 clang-tidy-18 clang-format-18 cppcheck
+      - name: Formatting (c/.clang-format)
+        env:
+          CLANG_FORMAT: clang-format-18
+        run: scripts/c-format.sh
+      - name: GCC analyzer, Clang Static Analyzer, clang-tidy and cppcheck MISRA
         env:
           CLANG: clang-18
           CLANG_TIDY: clang-tidy-18

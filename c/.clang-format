@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
+# C layout for the library (README.md, "C coding rules"). Needs
+# clang-format 18 or later; check with scripts/c-format.sh.
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 120
+AlignConsecutiveMacros: Consecutive
+AlignConsecutiveAssignments:
+  Enabled: true
+  AcrossComments: true
+AlignTrailingComments: true
+AllowShortFunctionsOnASingleLine: None
+AllowShortEnumsOnASingleLine: false
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+BinPackParameters: false
+InsertBraces: true
