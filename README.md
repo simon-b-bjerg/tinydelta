@@ -48,9 +48,9 @@ no compression library.
   memory is buffers you pass in, so the decoders are reentrant.
 - **Verified.** The C decoders are tested against the Go decoder on
   valid, truncated and corrupted patches, on x86-64, 32-bit ARM and
-  16-bit MSP430 (in GNU's instruction simulator), and
-  fuzzed with address and undefined-behaviour sanitizers, in CI
-  ([Tests](#tests)).
+  16-bit MSP430 (in GNU's instruction simulator), fuzzed with address
+  and undefined-behaviour sanitizers, and model-checked with CBMC for
+  every input up to small bounds, in CI ([Tests](#tests)).
 - **Simple, documented format.** The full wire format fits on one page
   ([below](#wire-format)), so a decoder in another language is an
   afternoon's work, and the C decoder is easy to adapt to the I/O your
@@ -809,6 +809,7 @@ comparison at the cursor so that even 1–3 byte unchanged runs become a
 go test ./...          # Go tests, plus the C decoders if a C compiler is installed
 scripts/c-check.sh     # strict C build (-Wall -Wextra -Wconversion -Wswitch-enum ... -Werror)
 scripts/c-analyze.sh   # static analysis: gcc -fanalyzer, clang --analyze, clang-tidy
+scripts/c-cbmc.sh      # bounded model checking of the C decoders, every input up to small bounds (needs cbmc)
 scripts/c-fuzz.sh 300 fuzz-corpus   # fuzz the C decoders for 5 min, keeping the corpus (needs clang with libFuzzer)
 scripts/c-coverage.sh fuzz-corpus   # how much of the C library the fuzzer reaches (needs llvm-cov)
 scripts/c-size.sh      # Cortex-M code size and stack (needs arm-none-eabi-gcc)
@@ -833,6 +834,7 @@ What is tested, and how:
 | C fuzzing ([`c/fuzz/fuzz_decode.c`](c/fuzz/fuzz_decode.c)) | libFuzzer with AddressSanitizer and UndefinedBehaviorSanitizer: every input through an independent reference decoder and all C decoder configurations, which must agree exactly; any memory error, undefined behaviour or breach of the callback contract fails; injected callback failures must give `TINYDELTA_ERR_IO` |
 | `scripts/c-check.sh` | the C library builds with strict warnings as errors |
 | `scripts/c-analyze.sh` | static analysis of the C library with GCC's analyzer, the Clang Static Analyzer and clang-tidy (bug-finding checks, see [`c/.clang-tidy`](c/.clang-tidy)); any finding fails |
+| `scripts/c-cbmc.sh` ([`c/cbmc/`](c/cbmc/)) | bounded model checking with [CBMC](https://www.cprover.org/cbmc/): not a sample but every input up to small bounds (memory decoder: dictionary 4, patch 8, output 8 bytes; callback decoder: 2, 4 and 4 bytes, at several buffer and page sizes, with and without `target_read`). Proves, within those bounds, no out-of-bounds access and no undefined behaviour, the callback contract, the same result and bytes as the memory decoder, `TINYDELTA_ERR_IO` for any one failing callback, and rejection of bad buffer setups |
 | CodeQL | GitHub's code scanning, security and quality queries, over the Go code and the C library; results in the repository's Security tab |
 
 Not covered: nothing runs on a real microcontroller; the Cortex-M and
@@ -887,6 +889,7 @@ There are two, one for each side of the format:
 | Go tests on Windows | `go test ./...` for the library and the CLI |
 | Python package | on Linux and Windows, with Python 3.9 and current: the Python tests, including every conformance vector, against a fresh build of the tool; on Linux also builds the wheels, checks them with `twine` and tests the installed wheel |
 | C static analysis | `scripts/c-analyze.sh` |
+| C decoders model-checked | `scripts/c-cbmc.sh` (CBMC from Ubuntu's packages), a few minutes |
 | CodeQL (separate workflow, also weekly) | CodeQL over the Go code and the C library |
 | Nightly fuzzing (separate workflow) | every night on `main`, an hour each of the C fuzzer and `FuzzEncodeRoundTrip`, continuing from the previous night's corpus, kept in the Actions cache; crashing inputs are uploaded as artifacts |
 | C library on 32-bit ARM | `scripts/c-check.sh` for x86-64 and ARM, the C decoder tests on 32-bit ARM under QEMU, and the Cortex-M code size and stack report (informational) |

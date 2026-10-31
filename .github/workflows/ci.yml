@@ -120,6 +120,19 @@ jobs:
           CLANG_TIDY: clang-tidy-18
         run: scripts/c-analyze.sh
 
+  c-cbmc:
+    name: C decoders model-checked (CBMC)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install CBMC
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cbmc
+      - name: Every input up to small bounds
+        run: scripts/c-cbmc.sh
+
   python:
     name: Python package (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
