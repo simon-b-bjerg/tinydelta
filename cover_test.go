@@ -12,7 +12,13 @@ import (
 // after an insertion, 12 bytes of code and a 32-bit address, over and
 // over, with every address moved by the insertion's length.
 func shiftedFirmware(r *rand.Rand) (dict, target []byte) {
-	const entries, insert = 2000, 36
+	return shiftedFirmwareN(r, 2000)
+}
+
+// shiftedFirmwareN is shiftedFirmware with the given number of entries
+// (16 bytes each).
+func shiftedFirmwareN(r *rand.Rand, entries int) (dict, target []byte) {
+	const insert = 36
 	dict = make([]byte, 0, entries*16)
 	target = make([]byte, 0, entries*16+insert)
 	target = append(target, randomFile(r, insert)...)
@@ -67,12 +73,14 @@ func TestEncodeForCompression(t *testing.T) {
 		{"empty target", text, nil, 0},
 	}
 	for _, c := range cases {
-		patch := mustEncode(t, c.dict, c.target, EncodeOptions{ForCompression: true})
-		if got, err := Decode(c.dict, patch); err != nil || !bytes.Equal(got, c.target) {
-			t.Fatalf("%s: round trip failed: %v", c.name, err)
-		}
-		if c.version != 0 && patch[0] != c.version {
-			t.Errorf("%s: version %d, want %d", c.name, patch[0], c.version)
+		for _, greedy := range []bool{false, true} {
+			patch := mustEncode(t, c.dict, c.target, EncodeOptions{ForCompression: true, Greedy: greedy})
+			if got, err := Decode(c.dict, patch); err != nil || !bytes.Equal(got, c.target) {
+				t.Fatalf("%s (greedy %v): round trip failed: %v", c.name, greedy, err)
+			}
+			if c.version != 0 && patch[0] != c.version {
+				t.Errorf("%s (greedy %v): version %d, want %d", c.name, greedy, patch[0], c.version)
+			}
 		}
 		v2 := withVersion(FormatVersion2, encodeCovers(c.dict, c.target, MaxSize))
 		if got, err := Decode(c.dict, v2); err != nil || !bytes.Equal(got, c.target) {
