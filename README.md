@@ -522,8 +522,9 @@ The buffer also keeps the last `buffer_size` bytes of the target, so
 back reads flash through `target_read`. Encode with `-max-distance` set
 to the buffer size (`EncodeOptions.MaxTargetDistance`) and there are no
 such copies: `target_read` can be `NULL`, and a patch that does reach
-further back is rejected as malformed. The limit costs little: on the
-benchmark's firmware, about 1% with a 256-byte buffer and 0.3% with 4 KB.
+further back is rejected as malformed. On the benchmark, the limit
+typically makes firmware patches 0.6% larger with a 256-byte buffer and
+0.1% with 4 KB, and device-tree patches 6% and 1%.
 
 <details>
 <summary>Example: patch, dictionary and target in three regions of one SPI flash</summary>
