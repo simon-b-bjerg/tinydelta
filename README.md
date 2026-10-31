@@ -33,8 +33,8 @@ no compression library.
 - **Small patches.** One version byte, then a stream of short
   instructions: no framing, lengths or checksum. An unchanged region
   typically costs one or two bytes. On 166 real firmware and device-tree
-  updates, smaller than open-vcdiff's in every one, typically a fifth to
-  a third the size ([Benchmark](#benchmark)).
+  updates, smaller than open-vcdiff's in every one, typically about a
+  fifth the size ([Benchmark](#benchmark)).
 - **Optimizing encoder.** Dynamic programming over exact instruction
   costs, never worse than the built-in greedy encoder, which is
   available when speed matters more.
@@ -73,19 +73,20 @@ below 1, tinydelta's is smaller) and how often tinydelta's is smaller:
 
 | compared with | firmware (88 pairs) | device trees (78 pairs) |
 |---|---|---|
-| open-vcdiff | **0.31**, smaller in 100% | **0.20**, smaller in 100% |
-| xdelta3 | 0.26, smaller in 100% | 0.33, smaller in 100% |
-| HPatchLite, 4 KB dictionary | 0.54, smaller in 80% | 0.86, smaller in 37% |
-| bsdiff | 0.33, smaller in 62% | 0.58, smaller in 35% |
-| zstd `--patch-from` | 0.49, smaller in 94% | 0.74, smaller in 78% |
+| open-vcdiff | **0.18**, smaller in 100% | **0.20**, smaller in 100% |
+| xdelta3 | 0.32, smaller in 100% | 0.33, smaller in 100% |
+| HPatchLite, 4 KB dictionary | 1.04, smaller in 18% | 0.86, smaller in 37% |
+| bsdiff | 1.28, smaller in 9% | 0.58, smaller in 35% |
+| zstd `--patch-from` | 0.73, smaller in 94% | 0.74, smaller in 78% |
 
 tinydelta's patch is smaller than open-vcdiff's in every pair, typically
-a fifth to a third of its size. Against the tools that compress their
+about a fifth of its size. Against the tools that compress their
 patches it depends on the size of the change: when tinydelta's patch is
-under 1 KB (85 pairs), it is the smaller one in 96% of them, typically
-less than half the size of HPatchLite's; at 1 KB and above (81 pairs),
-HPatchLite's is smaller in 79% of them, typically by 8%, and bsdiff's in
-all of them, by about 30%.
+under 1 KB (37 pairs), it is the smaller one in 89% of them, typically
+about half the size of HPatchLite's; at 1 KB and above (129 pairs),
+HPatchLite's is smaller in 91% of them and bsdiff's in all of them, with
+tinydelta's typically 11% and 38% larger. Most firmware updates are in
+that second group.
 
 ![Every pair: tinydelta against open-vcdiff, HPatchLite, bsdiff and zstd](docs/benchmark/pairs.svg)
 
@@ -182,11 +183,11 @@ device:         outer ──v1──▶ inner ──v2──▶ new
 ```
 
 On the same 166 updates, picking the smaller of the plain and the
-two-pass patch gives patches a third smaller typically, and 2.2× smaller
-on large changes (patches of 1 KB and up), than plain patches alone. The
-two-pass patch is the smaller in 58% of the updates; where the plain
-one wins, it is by a few bytes. The [benchmark](#benchmark) counts the
-smaller of the two.
+two-pass patch gives patches about half the size typically, and 2.2×
+smaller on large changes (patches of 1 KB and up), than plain patches
+alone. The two-pass patch is the smaller in 86% of the updates; where
+the plain one wins, it is by a few bytes. The [benchmark](#benchmark)
+counts the smaller of the two.
 
 Each layer starts with its version byte, and the decoders read both
 versions; only the number of passes, one or two, comes from the
@@ -525,8 +526,8 @@ back reads flash through `target_read`. Encode with `-max-distance` set
 to the buffer size (`EncodeOptions.MaxTargetDistance`) and there are no
 such copies: `target_read` can be `NULL`, and a patch that does reach
 further back is rejected as malformed. On the benchmark, the limit
-typically makes firmware patches 0.6% larger with a 256-byte buffer and
-0.1% with 4 KB, and device-tree patches 6% and 1%.
+typically makes firmware patches 2% larger with a 256-byte buffer and
+0.4% with 4 KB, and device-tree patches 6% and 1%.
 
 <details>
 <summary>Example: patch, dictionary and target in three regions of one SPI flash</summary>
