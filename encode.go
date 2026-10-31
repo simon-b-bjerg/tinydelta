@@ -28,15 +28,16 @@ type EncodeOptions struct {
 	Greedy bool
 
 	// ForCompression writes a format version 2 patch (FormatVersion2),
-	// made for patches that are compressed afterwards, e.g. with zlib or
-	// a small embedded compressor such as heatshrink or tinyuz. Regions
+	// made for patches that are compressed afterwards: in compression
+	// mode (see the README), by encoding the patch again with tinydelta
+	// against an empty dictionary. Regions
 	// that line up with the dictionary but have a few changed bytes
 	// (moved addresses and branch offsets in firmware) are written as
 	// differences from the dictionary, which compress far better than
 	// the new bytes themselves. Uncompressed, such a patch is usually
 	// larger than the default one. For small changes a version 1 patch
 	// often compresses better, so both are made, each is compressed with
-	// DEFLATE as a stand-in for whatever compressor follows, and the
+	// DEFLATE as a stand-in for the second pass, and the
 	// smaller one is returned: ForCompression may return a version 1
 	// patch. Greedy applies to that version 1 candidate.
 	ForCompression bool
@@ -44,8 +45,8 @@ type EncodeOptions struct {
 	// MaxTargetDistance, if positive, limits how far back from the
 	// current output position a COPY_TARGET may read: at most this many
 	// bytes. A decoder then only needs the last MaxTargetDistance bytes
-	// of the target it has produced, in a ring buffer for example,
-	// instead of being able to read all of it back. That is what makes a
+	// of the target it has produced, such as the C callback decoder's
+	// buffer, instead of being able to read all of it back. That is what makes a
 	// second pass practical on a device: a patch encoded again against an
 	// empty dictionary (see the README) decodes in one stream with a
 	// buffer of this size. 0 means no limit. Smaller limits give larger

@@ -73,7 +73,7 @@ func encodeCommand(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("encode", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	greedy := fs.Bool("greedy", false, "use the fast greedy encoder instead of the optimal one\n(patches are typically a few percent larger)")
-	forCompression := fs.Bool("for-compression", false, "make a patch that will be compressed afterwards (e.g. with zlib,\nheatshrink or tinyuz): may be format version 2, which only\ndecoders that read version 2 accept")
+	forCompression := fs.Bool("for-compression", false, "make a patch to encode again against an empty dictionary\n(compression mode, see the README); may be format version 2")
 	maxDistance := fs.Int("max-distance", 0, "limit how far back a copy from the target may read, so a decoder\nonly needs that many bytes of recent output (0 means no limit)")
 	maxLen := fs.Int("max-len", 0, "limit the target bytes any one instruction produces\n(0 means no limit)")
 	verbose := fs.Bool("v", false, "print sizes to standard error")

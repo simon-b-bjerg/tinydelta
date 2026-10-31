@@ -60,7 +60,7 @@ no compression library.
 
 166 real version pairs: builds of consecutive commits of MicroPython
 firmware (two Cortex-M boards, ~300 KB) and of Linux device trees (three
-boards, ~63 KB), one and five commits apart, against seven other delta
+boards, ~63 KB), one and five commits apart, against six other delta
 tools. Every patch was decoded again and checked against the target.
 tinydelta is what an integrator ships following this README: per update,
 the smaller of the plain patch and [compression mode](#compression-mode),
@@ -93,7 +93,7 @@ What that compression costs on the device:
 
 | decoder | code (Cortex-M0, `-Os`) | RAM besides stack | stack |
 |---|---:|---:|---:|
-| **tinydelta**, memory decoder | **472 B** | **0** | 64 B |
+| **tinydelta**, memory decoder | **472 B** | **0** | 72 B |
 | **tinydelta**, callback decoder | **876 B** | **256 B** buffer\* | ~175 B |
 | HPatchLite + tinyuz | ~2.2 KB | 4–32 KB dictionary | – |
 | detools + heatshrink | 1,948 B | 0 | ~1.6 KB |
@@ -134,7 +134,10 @@ against an empty dictionary) and the smaller counts; both are listed on
 their own in the summary, with how often each wins. The other tools run at their
 smallest settings: open-vcdiff with `-target_matches`, xdelta3 `-9 -S
 none`, HPatchLite `hdiffi -c-tuz-4k` (and `-32k`), detools with
-heatshrink, zstd `-19 --patch-from`. Decoder code sizes are measured with
+heatshrink, zstd `-19 --patch-from`. The graphs also show open-vcdiff's
+patch compressed afterwards with zlib at level 9 ("open-vcdiff,
+zlib-compressed"), and the trade-off graph places tiny-vcdiff with
+open-vcdiff's interleaved output, the variant it reads. Decoder code sizes are measured with
 `arm-none-eabi-gcc` where the decoder builds for a microcontroller, and
 otherwise taken from each tool's documentation.
 
@@ -166,13 +169,14 @@ holds the old and new file in memory. Every figure and its source is in
 ## Compression mode
 
 For updates that change a lot, `encode -for-compression`
-(`EncodeOptions.ForCompression`) writes format version 2: where the new
-file still lines up with the old one but a few bytes changed (moved
-addresses, branch offsets), it stores the *difference* from the old
-bytes, so the same shift gives the same byte everywhere. That patch is
-no smaller by itself, but it compresses very well, and tinydelta can
-compress it: encoded again against an empty dictionary, its repeats
-become short copies.
+(`EncodeOptions.ForCompression`) makes a patch for a second pass. Where
+the new file still lines up with the old one but a few bytes changed
+(moved addresses, branch offsets), format version 2 stores the
+*difference* from the old bytes, so the same shift gives the same byte
+everywhere. That patch is no smaller by itself, but it compresses very
+well, and tinydelta can compress it: encoded again against an empty
+dictionary, its repeats become short copies. Where version 2 doesn't
+pay off, the first pass is an ordinary version 1 patch.
 
 ```text
 update server:  old + new ──v2──▶ inner ──v1──▶ outer     (sent)
@@ -240,7 +244,7 @@ own output further back than the buffer holds: its `target_read` can be
 ## Why another delta format?
 
 Established formats were not designed for a decoder that has to fit in a
-few hundred bytes of flash and use no RAM:
+few hundred bytes of flash and use almost no RAM:
 
 - **VCDIFF (RFC 3284)** is a general format with windows, a 256-entry
   instruction code table, an address cache with near and same modes, and
@@ -254,7 +258,7 @@ few hundred bytes of flash and use no RAM:
   bzip2 with a lighter compressor (heatshrink), which brings code and
   stack back up.
 
-tinydelta makes different trade-offs: a one-byte header, no framing or compression,
+tinydelta makes different trade-offs: a one-byte header, no framing, no compression library,
 four instructions, one integer encoding and 32-bit arithmetic, with all
 the effort in the encoder. The decoder is simple because the format has
 almost nothing to decode.
@@ -389,7 +393,7 @@ patch, err := tinydelta.EncodeWith(oldFile, newFile, tinydelta.EncodeOptions{
 	MaxInstructionLen: 1024, // no instruction produces more than 1024 bytes
 })
 patch, err := tinydelta.EncodeWith(oldFile, newFile, tinydelta.EncodeOptions{
-	ForCompression: true, // a patch to compress afterwards (format version 2)
+	ForCompression: true, // a patch to encode again (compression mode)
 })
 
 newFile, err := tinydelta.Decode(oldFile, patch)
@@ -497,7 +501,7 @@ pointer for each data source, the sizes, and one buffer of yours:
 
 | data | callbacks | access pattern |
 |---|---|---|
-| patch | `patch_read` | front to back, a few bytes at a time |
+| patch | `patch_read` | front to back: instruction headers a few bytes at a time, literal bytes straight into the buffer |
 | dictionary | `dict_read` | random offsets |
 | target | `target_write`, `target_read` | writes are whole pages, in order, at page-aligned offsets, plus a final partial page; reads (optional, may be `NULL`) only of bytes already written |
 
@@ -561,7 +565,8 @@ tinydelta_result apply_patch(uint32_t dict_len, uint32_t patch_len,
 The decoders here are a starting point, not the only way to use the
 format. A decoder is one loop over four instructions with three
 numbers of state (patch position, target position and dictionary
-cursor), and [`tinydelta_decode.c`](c/tinydelta_decode.c) is 80 lines.
+cursor), and [`tinydelta_decode.c`](c/tinydelta_decode.c) is under
+100 lines.
 So rather than fitting your device around the callback interface, you
 can rewrite the loop around what the device already has: a data cursor
 or stream object, a flash driver with its own buffering, a file system.
@@ -790,6 +795,12 @@ comparison at the cursor so that even 1–3 byte unchanged runs become a
   encoded size. The cursor is what makes this worthwhile: a slightly
   shorter match that keeps the cursor aligned can save more later than
   a longer one that moves it, which is where greedy loses a few percent.
+- **For compression** (`-for-compression`) adds a cover encoder, like
+  bsdiff's: it finds regions that line up with the dictionary apart from
+  a few changed bytes, writes them as `SKIP` and `ADD_DIFF`, and
+  realigns with `COPY` between them. It also makes a version 1 patch and
+  keeps whichever compresses smaller with DEFLATE, standing in for the
+  second pass.
 
 ## Development
 
