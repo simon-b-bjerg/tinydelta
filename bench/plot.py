@@ -38,6 +38,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib import ticker  # noqa: E402
+from matplotlib.transforms import Bbox  # noqa: E402
 
 # The other tools in a fixed order: tinydelta's compressed variants (grays) and categorical slots 1-8 (validated with the dataviz palette
 # checks), a line style each, and whether the patch is compressed (which
@@ -365,6 +366,13 @@ def pair_scatter(rows, out, name, mine, mine_label, other):
     save(fig, out, name)
 
 
+def gap(extent, point):
+    """Distance from a point to a label's box, in display units."""
+    dx = max(extent.x0 - point[0], 0, point[0] - extent.x1)
+    dy = max(extent.y0 - point[1], 0, point[1] - extent.y1)
+    return (dx * dx + dy * dy) ** 0.5
+
+
 def place_labels(fig, ax, points):
     """Labels each point at the first of a few positions around it where
     the label overlaps no other label, no point and stays inside the panel;
@@ -380,12 +388,18 @@ def place_labels(fig, ax, points):
                                       (0, 3, "center", "bottom"), (0, -3, "center", "top")]]
     for (x, y, label), dot in zip(points, dots):
         best = None
-        for dx, dy, ha, va in offsets:
+        # A point with another close by gets its label set off with a
+        # leader line, so the line, not proximity, says which point it is.
+        crowded = any(d is not dot and gap(Bbox([d, d]), dot) < 20 for d in dots)
+        for dx, dy, ha, va in (offsets[6:] if crowded else offsets):
             text = ax.annotate(label, (x, y), xytext=(dx, dy), textcoords="offset points",
                                ha=ha, va=va, fontsize=8, color=INK)
             extent = text.get_window_extent(renderer).expanded(1.05, 1.15)
             cost = 3 * sum(extent.overlaps(other) for other in placed)
             cost += sum(1 for d in dots if d is not dot and extent.contains(*d))
+            # A label nearer another point than its own reads as that point's.
+            own = gap(extent, dot)
+            cost += 2 * any(gap(extent, d) < own for d in dots if d is not dot)
             cost += 0 if (extent.x0 >= box.x0 and extent.x1 <= box.x1 and extent.y0 >= box.y0
                           and extent.y1 <= box.y1) else 5
             if best is None or cost < best[0]:
@@ -397,7 +411,7 @@ def place_labels(fig, ax, points):
             if cost == 0:
                 break
         cost, text, extent = best
-        if abs(text.xyann[1]) > 6:  # pushed away from its point: a thin leader line
+        if crowded or abs(text.xyann[0]) > 8 or abs(text.xyann[1]) > 4:  # not right beside its point: a leader line
             text.remove()
             ax.annotate(label, (x, y), xytext=text.xyann, textcoords="offset points", ha=text.get_ha(),
                         va=text.get_va(), fontsize=8, color=INK,
