@@ -178,7 +178,7 @@ func TestOptimalEncoderDirectly(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			greedy := encodeGreedy(c.dict, c.tgt, MaxSize)
-			opt := encodeOptimal(c.dict, c.tgt, greedy, MaxSize)
+			opt := encodeOptimal(c.dict, c.tgt, greedy, MaxSize, MaxSize)
 			if opt == nil {
 				t.Fatal("encodeOptimal declined an input well under its size limit")
 			}
@@ -205,7 +205,7 @@ func TestEncodeFallsBackToGreedyWhenTooLarge(t *testing.T) {
 	dict := textFile(r, fileSize)
 	tgt := splice(dict, 1000, 50, textFile(r, 80))
 	greedy := encodeGreedy(dict, tgt, MaxSize)
-	if opt := encodeOptimal(dict, tgt, greedy, MaxSize); opt != nil {
+	if opt := encodeOptimal(dict, tgt, greedy, MaxSize, MaxSize); opt != nil {
 		t.Fatal("encodeOptimal ran despite exceeding optMaxStates")
 	}
 	patch := encode(dict, tgt, MaxSize)

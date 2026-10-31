@@ -21,6 +21,11 @@ Tools (set the binaries with environment variables; defaults are on PATH):
                        where it compresses better), zlib level 9
     tinydelta_cz_tuz4k the same patch compressed with tinyuz -c-4k: the
                        compressor and dictionary HPatchLite 4k uses   $TINYUZ
+    tinydelta_cz_twice the same patch encoded again by tinydelta, against
+                       an empty dictionary: the device decodes twice with
+                       the same decoder
+    tinydelta_cz_twice_1k  the same, the second pass with -max-distance 1024,
+                       so it decodes in one stream with a 1 KB buffer
     openvcdiff         open-vcdiff encode -target_matches     $OPENVCDIFF
     openvcdiff_zlib   the open-vcdiff patch, zlib level 9
     xdelta3           xdelta3 -9 -S none (VCDIFF, no secondary compression)
@@ -52,7 +57,7 @@ HDIFFI = os.environ.get("HDIFFI", "hdiffi")
 HPATCHI = os.environ.get("HPATCHI", "hpatchi")
 TINYUZ = os.environ.get("TINYUZ", "tinyuz")
 ALL_TOOLS = ["tinydelta", "tinydelta_greedy", "tinydelta_optimal", "tinydelta_zlib",
-             "tinydelta_cz_zlib", "tinydelta_cz_tuz4k",
+             "tinydelta_cz_zlib", "tinydelta_cz_tuz4k", "tinydelta_cz_twice", "tinydelta_cz_twice_1k",
              "openvcdiff", "openvcdiff_zlib", "xdelta3", "bsdiff",
              "detools", "hpatchlite_4k", "hpatchlite_32k", "zstd"]
 # Run by default: all but tinydelta_optimal, which takes a few hundred MB
@@ -95,7 +100,7 @@ def encode_all(tools, old, new, work):
             sizes[tool] = os.path.getsize(patch)
             if tool == "tinydelta":
                 sizes["tinydelta_zlib"] = len(zlib.compress(read(patch), 9))
-    if "tinydelta_cz_zlib" in tools or "tinydelta_cz_tuz4k" in tools:
+    if any(t.startswith("tinydelta_cz_") for t in tools):
         sh(TINYDELTA, "encode", "-for-compression", old, new, patch)
         check("tinydelta_cz", sh(TINYDELTA, "decode", old, patch))
         raw = read(patch)
@@ -107,6 +112,14 @@ def encode_all(tools, old, new, work):
         if read(out) != raw:
             raise Failure("tinyuz did not restore the tinydelta patch for %s" % new)
         sizes["tinydelta_cz_tuz4k"] = os.path.getsize(packed)
+        empty = os.path.join(work, "empty")
+        open(empty, "wb").close()
+        for tool, extra in (("tinydelta_cz_twice", []), ("tinydelta_cz_twice_1k", ["-max-distance", "1024"])):
+            if tool in tools:
+                sh(*([TINYDELTA, "encode"] + extra + [empty, patch, packed]))
+                if sh(TINYDELTA, "decode", empty, packed) != raw:
+                    raise Failure("%s: the second pass did not restore the patch for %s" % (tool, new))
+                sizes[tool] = os.path.getsize(packed)
     if "tinydelta_optimal" in tools:
         env = dict(os.environ, TINYDELTA_ENCODE_UNLIMITED="%s %s %s" % (old, new, patch))
         sh(TINYDELTA_OPTIMAL, "-test.run", "^TestEncodeUnlimited$", env=env)

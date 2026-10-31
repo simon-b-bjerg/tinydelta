@@ -45,11 +45,12 @@ type match struct{ addr, length int }
 // cursor offsets, and a bounded set of lengths for each match.
 //
 // No instruction produces more than maxLen (at least 1) target bytes.
+// No COPY_TARGET reads more than maxDistance bytes back.
 //
 // greedy is EncodeGreedy's patch for the same input and maxLen: the cursor
 // offsets its COPYs land on are always tracked, so its parse stays
 // reachable.
-func encodeOptimal(dict, target, greedy []byte, maxLen int) []byte {
+func encodeOptimal(dict, target, greedy []byte, maxLen, maxDistance int) []byte {
 	n := len(target)
 	if n == 0 {
 		return nil
@@ -132,7 +133,7 @@ func encodeOptimal(dict, target, greedy []byte, maxLen int) []byte {
 	addQ := make([]monoDeque, len(bands)*K)  // values cost[p]-p
 	skipQ := make([]monoDeque, len(bands)*K) // values cost[p]
 	runStart := make([]int, K)               // SKIP at offset o is valid only from runStart[o] on
-	sm := newSelfMatcher(target)
+	sm := newSelfMatcher(target, maxDistance)
 	base := make([]int32, K)
 
 	for q := 0; q <= n; q++ {
@@ -193,6 +194,9 @@ func encodeOptimal(dict, target, greedy []byte, maxLen int) []byte {
 		// the longest per delta cost.
 		bestSelf := map[int]match{}
 		for _, m := range chainMatches(sm.head, sm.next, target, target, q) {
+			if q-m.addr > maxDistance {
+				break // the chain runs from the nearest position back
+			}
 			c := varintLen(zigzagEncode(int64(m.addr - q)))
 			if cur, ok := bestSelf[c]; !ok || m.length > cur.length {
 				bestSelf[c] = m

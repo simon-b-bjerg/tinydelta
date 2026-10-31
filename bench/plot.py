@@ -46,6 +46,8 @@ OTHERS = [
     ("tinydelta_zlib", "tinydelta + zlib", "#6b6a64", "-", True),
     ("tinydelta_cz_zlib", "tinydelta for compression + zlib", "#3d3c38", "--", True),
     ("tinydelta_cz_tuz4k", "tinydelta for compression + tinyuz 4 KB", "#3d3c38", ":", True),
+    ("tinydelta_cz_twice", "tinydelta for compression, twice", "#9a9890", "-", True),
+    ("tinydelta_cz_twice_1k", "tinydelta for compression, twice, 1 KB window", "#9a9890", "--", True),
     ("openvcdiff", "open-vcdiff", "#2a78d6", "-", False),
     ("openvcdiff_zlib", "open-vcdiff + zlib", "#eb6834", "--", True),
     ("xdelta3", "xdelta3", "#1baf7a", "-.", False),
