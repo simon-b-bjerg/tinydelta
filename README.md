@@ -87,6 +87,8 @@ less than half the size of HPatchLite's; at 1 KB and above (81 pairs),
 HPatchLite's is smaller in 79% of them, typically by 8%, and bsdiff's in
 all of them, by about 30%.
 
+![Every pair: tinydelta against open-vcdiff, HPatchLite, bsdiff and zstd](docs/benchmark/pairs.svg)
+
 What that compression costs on the device:
 
 ![Patch size against decoder footprint](docs/benchmark/tradeoff.svg)
@@ -130,19 +132,19 @@ against an empty dictionary) and the smaller counts; both are listed on
 their own in the summary, with how often each wins. The other tools run at their
 smallest settings: open-vcdiff with `-target_matches`, xdelta3 `-9 -S
 none`, HPatchLite `hdiffi -c-tuz-4k` (and `-32k`), detools with
-heatshrink, zstd `-19 --patch-from`. The graphs also show open-vcdiff's
-patch compressed afterwards with zlib at level 9 ("open-vcdiff,
-zlib-compressed"), and the trade-off graph places tiny-vcdiff with
-open-vcdiff's interleaved output, the variant it reads. Decoder code sizes are measured with
+heatshrink, zstd `-19 --patch-from`. The overview graph shows the five
+tools in the table above; detools, HPatchLite with a 32 KB dictionary
+and open-vcdiff's patch compressed afterwards with zlib at level 9 are
+in the [summary](docs/benchmark/summary.md). The trade-off graph places
+tiny-vcdiff with open-vcdiff's interleaved output, the variant it reads.
+Decoder code sizes are measured with
 `arm-none-eabi-gcc` where the decoder builds for a microcontroller, and
 otherwise taken from each tool's documentation.
 
 The method, the scripts and how to run them are in
 [`bench/README.md`](bench/README.md); the exact inputs (every commit and
 SHA-256), all numbers and every graph of this run are in
-[`docs/benchmark/`](docs/benchmark/), including the pair-by-pair view:
-
-![Every pair: tinydelta against open-vcdiff, HPatchLite, bsdiff and zstd](docs/benchmark/pairs.svg)
+[`docs/benchmark/`](docs/benchmark/).
 
 </details>
 
