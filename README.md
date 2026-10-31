@@ -100,8 +100,8 @@ What you give up:
 
 - **Larger patches for large changes.** Above about 1 KB of patch, tools
   that compress (HPatchLite, bsdiff, zstd) produce smaller ones, for a
-  decoder several to thousands of times larger. Compressing tinydelta's
-  patch narrows the gap (see below).
+  decoder several to thousands of times larger. Compression mode
+  narrows the gap (see [below](#compression-mode)).
 - **Speed was not compared.** The goal is a small decoder, not a fast one.
 - **Small patch reads.** The callback decoder reads the patch a few bytes
   at a time; on slow flash, wrap `patch_read` in a small buffer.
@@ -135,16 +135,6 @@ SHA-256), all numbers and every graph of this run are in
 
 </details>
 
-<details>
-<summary>About compression</summary>
-
-zlib at level 9 on tinydelta's plain patch makes it about 22% smaller
-(median) on these data, but larger on very small patches, where zlib's
-own framing costs more than it saves: it helps in 77% of the firmware
-pairs and 71% of the device-tree pairs. A patch made for compression
-does far better; see [Compression mode](#compression-mode).
-
-</details>
 
 <details>
 <summary>Decoder footprint notes</summary>
@@ -180,9 +170,8 @@ device:         outer ──v1──▶ inner ──v2──▶ new
 On the same 166 updates, picking the smaller of the plain and the
 two-pass patch gives patches about a third smaller overall, and 2–2.5×
 smaller on large changes (patches of 1 KB and up), with the same decoder
-plus version 2. With tinyuz (4 KB window) instead of the second pass,
-the patch is smaller than HPatchLite's in every pair; that is in the
-[trade-off graph](#benchmark) too.
+plus version 2 (the [trade-off graph](#benchmark) shows where that
+lands).
 
 Each layer starts with its version byte, so a decoder built with
 `TINYDELTA_FORMAT_V2=1` (+132 B on Cortex-M0, +256 B on MSP430) reads both; only the
@@ -228,10 +217,6 @@ if (result == TINYDELTA_OK) {
 The final hash of the new firmware covers both passes. `-max-distance N`
 (`MaxTargetDistance`) limits how far back a patch reads its own output,
 for a decoder that keeps only the last N bytes.
-
-With a real decompressor on the device (tinyuz, heatshrink, a small
-inflate), compress the inner patch with it instead of the second pass:
-smaller still, for the decompressor's code and window.
 
 </details>
 

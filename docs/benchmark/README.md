@@ -7,7 +7,7 @@ deliberately updated. The method, corpus and tools are described in
 
 - **Run:** [Benchmark workflow run 41197054361](https://github.com/simon-b-bjerg/tinydelta/actions/runs/41197054361), 31 October 2026, on the pull request that added compression mode, with every build made fresh; graphs and `summary.md` regenerated from its `results.csv` with the final `bench/plot.py`. The firmware builds of this run were not byte-reproducible (they embed the build date, and MicroPython's build scripts order some tables by Python's randomized hashes), so a later run gives patch sizes a few bytes different; later runs build with the commit date and a fixed hash seed.
 - **Corpus:** 166 pairs. Firmware: 88 pairs from 50 builds of MicroPython (stm32 port, NUCLEO_F091RC and PYBV11), consecutive commits between `v1.25.0` and `v1.26.0`. Device trees: 78 pairs from 48 `.dtb` builds of three boards, consecutive commits between `v7.0-dts` and `v7.3-dts`. Pairs are 1 and 5 builds apart.
-- **Compression mode:** `tinydelta_cz_*` columns: `encode -for-compression`, then zlib, tinyuz with a 4 KB window, or a second tinydelta pass against an empty dictionary (with and without `-max-distance 1024`).
+- **Compression mode:** `tinydelta_cz_twice*` columns: `encode -for-compression`, then a second tinydelta pass against an empty dictionary (also with `-max-distance 1024`). The run also measured tinydelta's patches with zlib and tinyuz; those columns are left out here.
 - **tinydelta:** the library's default encoding (optimal, with greedy above roughly 100 KB, so greedy for the firmware images); optimal encoding at any size was not run.
 
 | file | what |

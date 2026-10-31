@@ -61,10 +61,6 @@ jobs:
             https://github.com/sisong/HPatchLite "$RUNNER_TEMP/HPatchLite"
           make -C "$RUNNER_TEMP/HPatchLite" -j "$(nproc)" > /dev/null
           cp "$RUNNER_TEMP/HPatchLite/hdiffi" "$RUNNER_TEMP/HPatchLite/hpatchi" "$RUNNER_TEMP/bin/"
-          # tinyuz on its own, to compress tinydelta's patches the way
-          # HPatchLite compresses its own.
-          make -C "$RUNNER_TEMP/HPatchLite/tinyuz" -j "$(nproc)" tinyuz > /dev/null
-          cp "$RUNNER_TEMP/HPatchLite/tinyuz/tinyuz" "$RUNNER_TEMP/bin/"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       # Builds are cached even when a later step fails, and collect.py
       # continues from them, so a run doesn't repeat finished builds.

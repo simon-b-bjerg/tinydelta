@@ -24,8 +24,7 @@ results, so the inputs can be rebuilt and checked.
 | tool | settings |
 |---|---|
 | tinydelta | `encode`, as the library does it, which the comparisons use: optimal, falling back to greedy above roughly 100 KB, so greedy for these firmware images; also `encode -greedy`. Optimal at any size (`TestEncodeUnlimited`, the encoder's memory limit lifted) is available with `run.py --tools ...,tinydelta_optimal`, but is not run by default: it takes a few hundred MB and a minute or more per firmware pair |
-| tinydelta + zlib | the tinydelta patch at zlib level 9; zlib's framing makes very small patches larger |
-| tinydelta, compression mode | `encode -for-compression` (format version 2 where it compresses better), then: zlib level 9; tinyuz `-c-4k`, the compressor and window HPatchLite 4 KB uses; or a second tinydelta pass against an empty dictionary, also with `-max-distance 1024`. Shown in the trade-off graph and the summary, not in the forest graph |
+| tinydelta, compression mode | `encode -for-compression` (format version 2 where it compresses better), encoded again by tinydelta against an empty dictionary, also with `-max-distance 1024`: what a device decodes twice with the same decoder. Shown in the trade-off graph and the summary, not in the forest graph |
 | open-vcdiff | `encode -target_matches`, its smallest setting; also its output zlib-compressed at level 9, the pipeline tinydelta replaces |
 | xdelta3 | `-9 -S none` (VCDIFF, no secondary compression) |
 | bsdiff | bsdiff 4 (bzip2 inside) |
@@ -58,9 +57,8 @@ commits to `bench-results-preview`, replaced each time. The results:
 | `inputs/`, `corpus.json`, `results-tools.json` | the commit and SHA-256 of every build, the corpus and the tool versions |
 
 Every graph is also a PNG, for slides. Every comparison has one baseline:
-tinydelta's patch as it is sent, uncompressed. tinydelta + zlib is a row
-like any other tool, showing what compression would add; what it costs
-the decoder shows in the trade-off graph.
+tinydelta's patch as it is sent. Compression mode, decoded twice, is in
+the trade-off graph and the summary.
 
 Decoder footprints ([`decoders.json`](decoders.json)) are code plus the
 RAM buffers a decoder needs (dictionaries, windows, caches); stack is

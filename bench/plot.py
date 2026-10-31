@@ -22,7 +22,7 @@ Writes to <output dir>:
     patch_share.svg   each tool's patch size as a share of the target
 Each graph is also written as a PNG for slides. Every comparison uses one
 baseline: tinydelta's patch as it is sent, uncompressed (the optimal
-encoder's, when measured). tinydelta + zlib is a row like any other tool.
+encoder's, when measured).
 Needs matplotlib.
 """
 
@@ -43,11 +43,8 @@ from matplotlib import ticker  # noqa: E402
 # checks), a line style each, and whether the patch is compressed (which
 # groups the distribution graph's rows).
 OTHERS = [
-    ("tinydelta_zlib", "tinydelta + zlib", "#6b6a64", "-", True),
-    ("tinydelta_cz_zlib", "tinydelta for compression + zlib", "#3d3c38", "--", True),
-    ("tinydelta_cz_tuz4k", "tinydelta for compression + tinyuz 4 KB", "#3d3c38", ":", True),
-    ("tinydelta_cz_twice", "tinydelta for compression, decoded twice", "#9a9890", "-", True),
-    ("tinydelta_cz_twice_1k", "tinydelta for compression, decoded twice, 1 KB window", "#9a9890", "--", True),
+    ("tinydelta_cz_twice", "tinydelta, compression mode, decoded twice", "#6b6a64", "-", True),
+    ("tinydelta_cz_twice_1k", "tinydelta, compression mode, decoded twice, 1 KB window", "#6b6a64", "--", True),
     ("openvcdiff", "open-vcdiff", "#2a78d6", "-", False),
     ("openvcdiff_zlib", "open-vcdiff + zlib", "#eb6834", "--", True),
     ("xdelta3", "xdelta3", "#1baf7a", "-.", False),
@@ -154,8 +151,8 @@ def summary(rows, tools_file, out):
     lines += [
         "Ratio = tinydelta's patch size / the other tool's; below 1, tinydelta is smaller. "
         "Geometric mean is the right average for ratios; \"smaller\" is the share of pairs where "
-        "tinydelta is smaller. tinydelta is %s, uncompressed as it is sent; tinydelta + zlib is "
-        "that patch at zlib level 9, compared like any other tool." % (
+        "tinydelta is smaller. tinydelta is %s, as it is sent; its compression mode, decoded twice, "
+        "is compared like any other tool." % (
             "the optimal encoder at any size" if tiny == "tinydelta_optimal" else "the library default"),
         "",
     ]
@@ -197,7 +194,7 @@ def summary(rows, tools_file, out):
 # The comparisons the distribution and pair graphs show: what compression
 # would add, the format tinydelta replaces, the closest embedded
 # alternative, and the strongest on size. The rest is in the forest graph.
-KEY_TOOLS = ["tinydelta_zlib", "openvcdiff", "hpatchlite_4k", "bsdiff"]
+KEY_TOOLS = ["openvcdiff", "hpatchlite_4k", "bsdiff"]
 
 
 def ratio_ecdf(rows, out):
@@ -329,7 +326,7 @@ def forest(rows, out):
     save(fig, out, "forest")
 
 
-PAIR_TOOLS = ["openvcdiff", "hpatchlite_4k", "bsdiff"]  # KEY_TOOLS, less tinydelta + zlib
+PAIR_TOOLS = KEY_TOOLS
 KIND_MARKERS = ["o", "^", "s", "D"]
 
 
@@ -415,10 +412,9 @@ def tradeoff(rows, out):
     # decoders.json's "tinydelta" stands for whichever tinydelta column the
     # comparisons use (optimal, when measured).
     column = {k: (tiny_key(rows) if k == "tinydelta" else k) for k in decoders}
-    # Left out to keep the graph readable: tinydelta + zlib (compression
-    # mode compresses better) and HPatchLite's 32 KB dictionary (close to
-    # its 4 KB one); both are in the summary.
-    tools = [k for k in decoders if column[k] in rows[0] and k not in ("tinydelta_zlib", "hpatchlite_32k")]
+    # HPatchLite's 32 KB dictionary is left out to keep the graph readable
+    # (it is close to the 4 KB one); it is in the summary.
+    tools = [k for k in decoders if column[k] in rows[0] and k != "hpatchlite_32k"]
     kinds = kinds_of(rows)
     fig, axes = plt.subplots(1, len(kinds), figsize=(5.6 * len(kinds), 4.9), squeeze=False, facecolor=SURFACE)
     for ax, kind in zip(axes[0], kinds):

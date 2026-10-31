@@ -5,6 +5,5 @@
  "bsdiff": "bsdiff 4.3-23",
  "detools": "detools 0.53.0",
  "hpatchlite": "HPatchLite v1.0.2",
- "tinyuz": "tinyuz v1.1.1",
  "zstd": "Zstandard CLI (64-bit) v1.5.7"
 }
