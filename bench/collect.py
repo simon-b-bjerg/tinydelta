@@ -62,6 +62,7 @@ class Item:
         self.versions = json.load(open(self.index)) if os.path.exists(self.index) else []
         self.done_commits = {v["commit"] for v in self.versions}
         self.skipped = []
+        self.resume_at = 0  # index in the commit list to continue from (keep_only)
 
     def keep_only(self, commits):
         """Drops cached builds unless every one comes from this commit list,
@@ -79,6 +80,15 @@ class Item:
             self.versions, self.done_commits = [], set()
             if os.path.exists(self.index):
                 os.remove(self.index)
+        # Continue after the last cached build, never before it: commits
+        # before it were already examined in order (a build identical to
+        # the one before it is not recorded), and building them again
+        # would append older versions after newer ones.
+        self.resume_at = position[self.versions[-1]["commit"]] + 1 if self.versions else 0
+
+    def pending(self, index, commit):
+        """Whether the commit at index in the walk still needs building."""
+        return not self.full() and index >= self.resume_at and commit not in self.done_commits
 
     def full(self):
         return len(self.versions) >= self.max_versions
@@ -112,8 +122,8 @@ def collect_micropython(cache, name, spec):
     commits = commits_touching(src, spec["from"], spec["to"], MICROPYTHON_PATHS)
     for item, _ in items:
         item.keep_only(commits)
-    for commit in commits:
-        todo = [(item, it) for item, it in items if not item.full() and commit not in item.done_commits]
+    for index, commit in enumerate(commits):
+        todo = [(item, it) for item, it in items if item.pending(index, commit)]
         if not todo:
             if all(item.full() for item, _ in items):
                 break
@@ -156,10 +166,10 @@ def collect_dtb(cache, name, spec):
         commits = commits_touching(src, spec["from"], spec["to"], [os.path.dirname(dts), "include"],
                                    first_parent=False)
         item.keep_only(commits)
-        for commit in commits:
+        for index, commit in enumerate(commits):
             if item.full():
                 break
-            if commit in item.done_commits:
+            if not item.pending(index, commit):
                 continue
             git(src, "checkout", "-q", "-f", commit)
             if not os.path.exists(os.path.join(src, dts)):

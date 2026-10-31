@@ -8,8 +8,8 @@
  *     (1, 7 and 64 bytes), each with plain RAM callbacks and with
  *     tinydelta_cache on top of a simulated flash.
  *
- * All of them must agree: the same result (OK, MALFORMED, TOO_LARGE or
- * VERSION) and,
+ * All of them, built with format version 2 (TINYDELTA_FORMAT_V2), must
+ * agree: the same result (OK, MALFORMED, TOO_LARGE or VERSION) and,
  * on success, the same target bytes. The callbacks also police the
  * documented contract: sequential target writes, no reads outside the
  * patch or dictionary, no reads of target bytes not yet written, whole
@@ -77,7 +77,8 @@ static tinydelta_result ref_decode(const uint8_t *dict, uint64_t dict_len,
     int64_t cursor = 0;
 
     if (patch_len < 1) return TINYDELTA_ERR_MALFORMED;
-    if (patch[0] != 1) return TINYDELTA_ERR_VERSION;
+    if (patch[0] != 1 && patch[0] != 2) return TINYDELTA_ERR_VERSION;
+    const int version2 = patch[0] == 2; /* opcode 3 is ADD_DIFF */
     while (patch_pos < patch_len) {
         uint64_t instruction, z;
         if (ref_varint(patch, patch_len, &patch_pos, &instruction)) return TINYDELTA_ERR_MALFORMED;
@@ -104,7 +105,14 @@ static tinydelta_result ref_decode(const uint8_t *dict, uint64_t dict_len,
             memcpy(out + out_pos, dict + cursor, length);
             cursor += (int64_t)length;
             break;
-        default: { /* COPY_TARGET */
+        default: { /* COPY_TARGET, or in version 2 ADD_DIFF */
+            if (version2) {
+                if ((uint64_t)cursor + length > dict_len || patch_pos + length > patch_len) return TINYDELTA_ERR_MALFORMED;
+                for (uint64_t i = 0; i < length; i++) out[out_pos + i] = (uint8_t)(dict[(uint64_t)cursor + i] + patch[patch_pos + i]);
+                patch_pos += length;
+                cursor += (int64_t)length;
+                break;
+            }
             if (ref_varint(patch, patch_len, &patch_pos, &z)) return TINYDELTA_ERR_MALFORMED;
             int64_t address = (int64_t)out_pos + ref_zigzag(z);
             if (address < 0 || (uint64_t)address >= out_pos) return TINYDELTA_ERR_MALFORMED;

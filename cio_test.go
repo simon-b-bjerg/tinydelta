@@ -143,7 +143,7 @@ func buildCIODrivers(t *testing.T) []cIOBinary {
 	// default).
 	for _, s := range []int{1, 7, 64} {
 		bin := filepath.Join(dir, fmt.Sprintf("decode_io_%d", s))
-		cCompile(t, bin, fmt.Sprintf("-DTINYDELTA_SCRATCH_SIZE=%d", s),
+		cCompile(t, bin, fmt.Sprintf("-DTINYDELTA_SCRATCH_SIZE=%d", s), "-DTINYDELTA_FORMAT_V2=1",
 			"c/tinydelta_io.c", "c/tinydelta_cache.c", filepath.Join(dir, "driver.c"))
 		bins = append(bins, cIOBinary{s, bin})
 	}
@@ -226,9 +226,13 @@ func TestCIODecoderMatchesGo(t *testing.T) {
 		}
 		for _, enc := range []struct {
 			name string
-			fn   func(dict, target []byte, maxLen int) []byte
-		}{{"optimal", encode}, {"greedy", encodeGreedy}} {
-			patch := withHeader(enc.fn(p.dict, p.tgt, MaxSize))
+			fn   func(dict, target []byte) []byte
+		}{
+			{"optimal", func(d, t []byte) []byte { return withHeader(encode(d, t, MaxSize)) }},
+			{"greedy", func(d, t []byte) []byte { return withHeader(encodeGreedy(d, t, MaxSize)) }},
+			{"version 2", func(d, t []byte) []byte { return withVersion(FormatVersion2, encodeCovers(d, t, MaxSize)) }},
+		} {
+			patch := enc.fn(p.dict, p.tgt)
 			for _, b := range bins {
 				for _, page := range pages {
 					label := fmt.Sprintf("%s/%s scratch=%d page=%d", p.name, enc.name, b.scratch, page)
@@ -248,19 +252,20 @@ func TestCIODecoderMatchesGo(t *testing.T) {
 
 	// Corrupted and truncated patches: same accept/reject (and output) as Go.
 	for _, p := range pairs[:6] {
-		patch := withHeader(encode(p.dict, p.tgt, MaxSize))
-		for k := 0; k < 6 && len(patch) > 0; k++ {
-			variants := [][]byte{patch[:r.Intn(len(patch))]}
-			m := append([]byte{}, patch...)
-			m[r.Intn(len(m))] = byte(r.Intn(256))
-			variants = append(variants, m)
-			for _, v := range variants {
-				want, gErr := decodeAsC(p.dict, v, capacity)
-				for _, b := range bins {
-					for _, page := range pages {
-						got, _, ok := runCIO(t, b.path, page, p.dict, v, capacity)
-						if (gErr == nil) != ok || (ok && !bytes.Equal(got, want)) {
-							t.Errorf("%s corrupted (scratch=%d page=%d): Go err=%v, C accepted=%v", p.name, b.scratch, page, gErr, ok)
+		for _, patch := range [][]byte{withHeader(encode(p.dict, p.tgt, MaxSize)), withVersion(FormatVersion2, encodeCovers(p.dict, p.tgt, MaxSize))} {
+			for k := 0; k < 6 && len(patch) > 0; k++ {
+				variants := [][]byte{patch[:r.Intn(len(patch))]}
+				m := append([]byte{}, patch...)
+				m[r.Intn(len(m))] = byte(r.Intn(256))
+				variants = append(variants, m)
+				for _, v := range variants {
+					want, gErr := DecodeReaderLimit(p.dict, bytes.NewReader(v), capacity)
+					for _, b := range bins {
+						for _, page := range pages {
+							got, _, ok := runCIO(t, b.path, page, p.dict, v, capacity)
+							if (gErr == nil) != ok || (ok && !bytes.Equal(got, want)) {
+								t.Errorf("%s corrupted (scratch=%d page=%d): Go err=%v, C accepted=%v", p.name, b.scratch, page, gErr, ok)
+							}
 						}
 					}
 				}
@@ -277,16 +282,17 @@ func TestCIODecoderCallbackFailures(t *testing.T) {
 	r := rand.New(rand.NewSource(22))
 	dict := textFile(r, 2048)
 	tgt := splice(splice(dict, 500, 10, []byte("changed!")), 1500, 0, bytes.Repeat([]byte{'q'}, 100))
-	patch := withHeader(encode(dict, tgt, MaxSize))
-	for _, b := range bins {
-		for _, page := range []int{0, 7} {
-			for n := 1; n <= 40; n++ {
-				_, code, ok := runCIO(t, b.path, page, dict, patch, cCapacity, fmt.Sprint(n))
-				if ok {
-					break // fewer than n callback calls: nothing left to fail
-				}
-				if code != "-3" {
-					t.Errorf("scratch=%d page=%d failing call %d: code %s, want TINYDELTA_ERR_IO (-3)", b.scratch, page, n, code)
+	for _, patch := range [][]byte{withHeader(encode(dict, tgt, MaxSize)), withVersion(FormatVersion2, encodeCovers(dict, tgt, MaxSize))} {
+		for _, b := range bins {
+			for _, page := range []int{0, 7} {
+				for n := 1; n <= 40; n++ {
+					_, code, ok := runCIO(t, b.path, page, dict, patch, cCapacity, fmt.Sprint(n))
+					if ok {
+						break // fewer than n callback calls: nothing left to fail
+					}
+					if code != "-3" {
+						t.Errorf("scratch=%d page=%d failing call %d: code %s, want TINYDELTA_ERR_IO (-3)", b.scratch, page, n, code)
+					}
 				}
 			}
 		}

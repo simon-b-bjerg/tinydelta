@@ -9,11 +9,12 @@ cd "$(dirname "$0")/.."
 out="$1"
 shift
 CLANG="${CLANG:-clang}"
-flags=(-std=c99 -g -fsanitize=fuzzer -Ic "$@")
+flags=(-std=c99 -g -fsanitize=fuzzer -Ic -DTINYDELTA_FORMAT_V2=1 "$@")
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-# The callback decoder at three scratch-buffer sizes, renamed apart.
+# Every decoder with format version 2 compiled in; the callback decoder
+# at three scratch-buffer sizes, renamed apart.
 for size in 1 7 64; do
   "$CLANG" "${flags[@]}" -c c/tinydelta_io.c -DTINYDELTA_SCRATCH_SIZE="$size" \
     -Dtinydelta_decode_io="fuzz_decode_io_scratch$size" -o "$work/io_$size.o"

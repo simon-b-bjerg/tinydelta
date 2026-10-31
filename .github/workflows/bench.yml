@@ -72,13 +72,14 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: bench/.cache/builds
-          key: bench-builds-${{ hashFiles('bench/corpus.json') }}-${{ github.run_id }}
+          key: bench-builds-v2-${{ hashFiles('bench/corpus.json') }}-${{ github.run_id }}
           # Any earlier builds will do: collect.py keeps only the series that
           # still match the corpus and its commit walk, so a changed
           # corpus.json does not rebuild unchanged items.
+          # (v2: builds from before collect.py resumed in order are not reused.)
           restore-keys: |
-            bench-builds-${{ hashFiles('bench/corpus.json') }}-
-            bench-builds-
+            bench-builds-v2-${{ hashFiles('bench/corpus.json') }}-
+            bench-builds-v2-
       - name: Build the corpus (MicroPython firmware, device trees)
         run: python3 bench/collect.py bench/.cache
       - name: Cache the builds
@@ -86,7 +87,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: bench/.cache/builds
-          key: bench-builds-${{ hashFiles('bench/corpus.json') }}-${{ github.run_id }}
+          key: bench-builds-v2-${{ hashFiles('bench/corpus.json') }}-${{ github.run_id }}
       - name: Encode every pair with every tool
         env:
           OPENVCDIFF_VERSION: open-vcdiff ${{ env.OPENVCDIFF_COMMIT }}

@@ -115,14 +115,14 @@ func cCommand(bin string, args ...string) *exec.Cmd {
 	return exec.Command(bin, args...)
 }
 
-// buildCDriver compiles cDriver with the memory decoder and returns the
-// binary's path.
+// buildCDriver compiles cDriver with the memory decoder, format version 2
+// included, and returns the binary's path.
 func buildCDriver(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "decode")
 	os.WriteFile(filepath.Join(dir, "driver.c"), []byte(cDriver), 0o644)
-	cCompile(t, bin, "c/tinydelta_decode.c", filepath.Join(dir, "driver.c"))
+	cCompile(t, bin, "-DTINYDELTA_FORMAT_V2=1", "c/tinydelta_decode.c", filepath.Join(dir, "driver.c"))
 	return bin
 }
 
@@ -149,7 +149,7 @@ func TestCDecoderMatchesGo(t *testing.T) {
 	}
 	compare := func(label string, dict, patch []byte, capacity int) {
 		t.Helper()
-		want, gErr := decodeAsC(dict, patch, capacity)
+		want, gErr := DecodeReaderLimit(dict, bytes.NewReader(patch), capacity)
 		got, cOK := cDecode(dict, patch, capacity)
 		if (gErr == nil) != cOK || (cOK && !bytes.Equal(got, want)) {
 			t.Errorf("%s: Go err=%v, C accepted=%v (outputs equal: %v)", label, gErr, cOK, bytes.Equal(got, want))
@@ -176,9 +176,13 @@ func TestCDecoderMatchesGo(t *testing.T) {
 		}
 		for _, enc := range []struct {
 			name string
-			fn   func(dict, target []byte, maxLen int) []byte
-		}{{"optimal", encode}, {"greedy", encodeGreedy}} {
-			patch := withHeader(enc.fn(p.dict, p.tgt, MaxSize))
+			fn   func(dict, target []byte) []byte
+		}{
+			{"optimal", func(d, t []byte) []byte { return withHeader(encode(d, t, MaxSize)) }},
+			{"greedy", func(d, t []byte) []byte { return withHeader(encodeGreedy(d, t, MaxSize)) }},
+			{"version 2", func(d, t []byte) []byte { return withVersion(FormatVersion2, encodeCovers(d, t, MaxSize)) }},
+		} {
+			patch := enc.fn(p.dict, p.tgt)
 			label := p.name + "/" + enc.name
 			got, ok := cDecode(p.dict, patch, big)
 			if !ok || !bytes.Equal(got, p.tgt) {
@@ -198,11 +202,36 @@ func TestCDecoderMatchesGo(t *testing.T) {
 	}
 }
 
-// decodeAsC is DecodeReaderLimit restricted to the format versions the C
-// decoders implement (version 1 only, so far), for comparing the two.
-func decodeAsC(dict, patch []byte, capacity int) ([]byte, error) {
-	if len(patch) > 0 && patch[0] != FormatVersion {
-		return nil, ErrUnsupportedVersion
+// TestCDecodersWithoutV2 builds both C decoders without format version 2,
+// the default: they must reject a version 2 patch with
+// TINYDELTA_ERR_VERSION and still decode version 1.
+func TestCDecodersWithoutV2(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "driver.c"), []byte(cDriver), 0o644)
+	os.WriteFile(filepath.Join(dir, "io_driver.c"), []byte(cIODriver), 0o644)
+	memory, callback := filepath.Join(dir, "decode"), filepath.Join(dir, "decode_io")
+	cCompile(t, memory, "c/tinydelta_decode.c", filepath.Join(dir, "driver.c"))
+	cCompile(t, callback, "c/tinydelta_io.c", "c/tinydelta_cache.c", filepath.Join(dir, "io_driver.c"))
+
+	r := rand.New(rand.NewSource(14))
+	dict := textFile(r, 2048)
+	tgt := splice(dict, 700, 4, []byte("changed"))
+	v1 := withHeader(encode(dict, tgt, MaxSize))
+	v2 := withVersion(FormatVersion2, encodeCovers(dict, tgt, MaxSize))
+	d, p1, p2, o := filepath.Join(dir, "d"), filepath.Join(dir, "p1"), filepath.Join(dir, "p2"), filepath.Join(dir, "o")
+	os.WriteFile(d, dict, 0o644)
+	os.WriteFile(p1, v1, 0o644)
+	os.WriteFile(p2, v2, 0o644)
+	if msg, err := cCommand(memory, d, p1, o, fmt.Sprint(cCapacity)).CombinedOutput(); err != nil {
+		t.Fatalf("memory decoder, version 1: %v: %s", err, msg)
 	}
-	return DecodeReaderLimit(dict, bytes.NewReader(patch), capacity)
+	if msg, err := cCommand(memory, d, p2, o, fmt.Sprint(cCapacity)).CombinedOutput(); err == nil || !strings.Contains(string(msg), "-4") {
+		t.Errorf("memory decoder, version 2: %v: %s; want TINYDELTA_ERR_VERSION (-4)", err, msg)
+	}
+	if _, code, ok := runCIO(t, callback, 0, dict, v1, cCapacity); !ok {
+		t.Fatalf("callback decoder, version 1: code %s", code)
+	}
+	if _, code, ok := runCIO(t, callback, 0, dict, v2, cCapacity); ok || code != "-4" {
+		t.Errorf("callback decoder, version 2: ok=%v code %s; want TINYDELTA_ERR_VERSION (-4)", ok, code)
+	}
 }
