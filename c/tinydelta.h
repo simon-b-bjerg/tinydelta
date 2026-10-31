@@ -30,9 +30,9 @@ typedef enum {
                                      dictionary exceeds TINYDELTA_MAX_SIZE */
     TINYDELTA_ERR_IO        = -3, /* a read/write callback reported failure
                                      (tinydelta_decode_io only) */
-    TINYDELTA_ERR_VERSION   = -4  /* the patch's version byte is not
-                                     TINYDELTA_FORMAT_VERSION: a patch for
-                                     another decoder, or not a patch */
+    TINYDELTA_ERR_VERSION   = -4  /* the patch's version byte is neither 1
+                                     nor 2: a newer format version, or not
+                                     a patch */
 } tinydelta_result;
 
 /* Applies patch to dict and writes the target into out, which holds

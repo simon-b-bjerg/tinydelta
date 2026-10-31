@@ -17,7 +17,7 @@ TARGETS=("msp430:-mcpu=msp430" "msp430x:-mcpu=msp430x" "msp430x-large:-mcpu=msp4
 echo "| part | MSP430 | MSP430X | MSP430X, -mlarge |"
 echo "|---|---|---|---|"
 # name:file:extra flags.
-for part in decode:tinydelta_decode: io:tinydelta_io: cache:tinydelta_cache:; do
+for part in decode:tinydelta_decode: io:tinydelta_io:; do
   IFS=: read -r name file extra <<< "$part"
   row="| $file.c |"
   for target in "${TARGETS[@]}"; do
@@ -35,5 +35,5 @@ echo
 echo "Stack, MSP430X -mlarge, per function (-fstack-usage), per part:"
 echo
 echo '```'
-cat "$out"/{decode,io,cache}_msp430x-large.su | awk -F'\t' '{ n = split($1, f, ":"); printf "%-28s %4d B\n", f[n], $2 }'
+cat "$out"/{decode,io}_msp430x-large.su | awk -F'\t' '{ n = split($1, f, ":"); printf "%-28s %4d B\n", f[n], $2 }'
 echo '```'

@@ -50,21 +50,33 @@ def binary_path():
     return path
 
 
-def encode(dictionary, target, *, greedy=False, max_instruction_len=0):
+def encode(dictionary, target, *, greedy=False, max_instruction_len=0,
+           for_compression=False, max_distance=0):
     """Returns a patch that turns dictionary into target (both bytes-like).
 
     greedy uses the fast greedy encoder instead of the optimal one (patches
     are typically a few percent larger). max_instruction_len, if above 0,
     limits the target bytes any one instruction produces.
+
+    for_compression makes the first pass of compression mode: a patch to
+    encode again against an empty dictionary, which shrinks it when a
+    change touches much of the file (format version 2 where that pays
+    off). max_distance, if above 0, limits how far back the patch reads
+    its own output, so a decoder only needs a buffer that large; see the
+    README.
     """
     if max_instruction_len < 0:
         raise ValueError("max_instruction_len must be 0 (no limit) or more")
+    if max_distance < 0:
+        raise ValueError("max_distance must be 0 (no limit) or more")
     with tempfile.TemporaryDirectory(prefix="tinydelta-") as work:
         dict_file = _write(work, "dictionary", dictionary)
         target_file = _write(work, "target", target)
-        args = ["encode", "-max-len", str(max_instruction_len)]
+        args = ["encode", "-max-len", str(max_instruction_len), "-max-distance", str(max_distance)]
         if greedy:
             args.append("-greedy")
+        if for_compression:
+            args.append("-for-compression")
         return _run(args + [dict_file, target_file])
 
 

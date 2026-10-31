@@ -16,6 +16,9 @@ Tools (set the binaries with environment variables; defaults are on PATH):
                        `go test -c` (TestEncodeUnlimited)   $TINYDELTA_OPTIMAL
                        Not run by default: a few hundred MB and a minute or
                        more per firmware pair; add it with --tools.
+    tinydelta_window_256, _1k, _4k  tinydelta encode -max-distance 256/1024/4096:
+                       what the callback decoder (tinydelta_decode_io) can
+                       decode with a buffer of that size and no target_read
     tinydelta_cz_twice tinydelta encode -for-compression (format version 2
                        where it compresses better), encoded again by tinydelta against
                        an empty dictionary: the device decodes twice with
@@ -53,7 +56,8 @@ OPENVCDIFF = os.environ.get("OPENVCDIFF", "vcdiff")
 DETOOLS = os.environ.get("DETOOLS", "detools")
 HDIFFI = os.environ.get("HDIFFI", "hdiffi")
 HPATCHI = os.environ.get("HPATCHI", "hpatchi")
-ALL_TOOLS = ["tinydelta", "tinydelta_greedy", "tinydelta_optimal",
+WINDOWS = (("tinydelta_window_256", 256), ("tinydelta_window_1k", 1024), ("tinydelta_window_4k", 4096))
+ALL_TOOLS = ["tinydelta", "tinydelta_greedy", "tinydelta_optimal"] + [t for t, _ in WINDOWS] + [
              "tinydelta_cz_twice", "tinydelta_cz_twice_1k",
              "openvcdiff", "openvcdiff_zlib", "openvcdiff_interleaved", "xdelta3", "bsdiff",
              "detools", "hpatchlite_4k", "hpatchlite_32k", "zstd"]
@@ -93,6 +97,11 @@ def encode_all(tools, old, new, work):
         tool = "tinydelta_greedy" if greedy else "tinydelta"
         if tool in tools:
             sh(*([TINYDELTA, "encode"] + (["-greedy"] if greedy else []) + [old, new, patch]))
+            check(tool, sh(TINYDELTA, "decode", old, patch))
+            sizes[tool] = os.path.getsize(patch)
+    for tool, window in WINDOWS:
+        if tool in tools:
+            sh(TINYDELTA, "encode", "-max-distance", str(window), old, new, patch)
             check(tool, sh(TINYDELTA, "decode", old, patch))
             sizes[tool] = os.path.getsize(patch)
     if any(t.startswith("tinydelta_cz_") for t in tools):

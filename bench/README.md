@@ -1,8 +1,8 @@
 # Patch size benchmark
 
-Compares tinydelta's patch sizes with open-vcdiff, xdelta3 and bsdiff on
-real version pairs, so the comparison reflects actual updates rather than
-synthetic edits.
+Compares tinydelta's patch sizes with six other delta tools (open-vcdiff,
+xdelta3, bsdiff, detools, HPatchLite and zstd) on real version pairs, so
+the comparison reflects actual updates rather than synthetic edits.
 
 ## Corpus
 
@@ -23,9 +23,11 @@ results, so the inputs can be rebuilt and checked.
 
 | tool | settings |
 |---|---|
-| tinydelta | `encode`, as the library does it, which the comparisons use: optimal, falling back to greedy above roughly 100 KB, so greedy for these firmware images; also `encode -greedy`. Optimal at any size (`TestEncodeUnlimited`, the encoder's memory limit lifted) is available with `run.py --tools ...,tinydelta_optimal`, but is not run by default: it takes a few hundred MB and a minute or more per firmware pair |
-| tinydelta, compression mode | `encode -for-compression` (format version 2 where it compresses better), encoded again by tinydelta against an empty dictionary, also with `-max-distance 1024`: what a device decodes twice with the same decoder. Shown in the trade-off graph and the summary, not in the forest graph |
-| open-vcdiff | `encode -target_matches`, its smallest setting; also its output zlib-compressed at level 9, the pipeline tinydelta replaces |
+| tinydelta | per pair, the smaller of the plain patch (`encode`, the library's default: optimal, falling back to greedy above roughly 100 KB, so greedy for these firmware images) and the compression-mode patch (`encode -for-compression`, then `encode` again against an empty dictionary), the one an update server would send. This is the tinydelta in every graph and comparison |
+| tinydelta variants | in the summary only: `encode -greedy`; compression mode with its second pass limited to `-max-distance 1024`; the plain patch limited to `-max-distance 256`, `1024` and `4096`, which the callback decoder decodes without `target_read` with a buffer of that size. Optimal at any size (`TestEncodeUnlimited`, the encoder's memory limit lifted) is available with `run.py --tools ...,tinydelta_optimal`, but is not run by default: it takes a few hundred MB and a minute or more per firmware pair |
+| open-vcdiff | `encode -target_matches`, its smallest setting |
+| open-vcdiff, zlib-compressed | open-vcdiff's patch compressed afterwards with zlib (DEFLATE) at level 9; the decoder would need zlib too, which the trade-off graph doesn't show |
+| tiny-vcdiff | open-vcdiff with `-interleaved`, the VCDIFF variant that [tiny-vcdiff](https://github.com/jue89/tiny-vcdiff), an embedded decoder, reads; in the trade-off graph only, with tiny-vcdiff's code and RAM |
 | xdelta3 | `-9 -S none` (VCDIFF, no secondary compression) |
 | bsdiff | bsdiff 4 (bzip2 inside) |
 | detools | `create_patch -c heatshrink`: sequential patch, the embedded bsdiff variant |
@@ -47,7 +49,7 @@ commits to `bench-results-preview`, replaced each time. The results:
 
 | file | what |
 |---|---|
-| `forest.svg` | the headline: per kind of data and tool, tinydelta's patch size divided by the tool's (geometric mean, 10th-90th percentile), 1 and 5 commits apart |
+| `forest.svg` | the headline: per kind of data, tinydelta's patch size divided by that of open-vcdiff, xdelta3, HPatchLite (4 KB), bsdiff and zstd (geometric mean, 10th-90th percentile), 1 and 5 commits apart |
 | `pairs.svg` | every pair: tinydelta against open-vcdiff, HPatchLite (4 KB), bsdiff and zstd, colour by tool, marker by kind of data |
 | `ratio_ecdf_<kind>.svg`, `patch_share_<kind>.svg` | the full distributions, one graph per kind of data (`firmware`, `device_tree`): the size ratio, and patch size as a share of the target |
 | `tradeoff.svg` | each tool's median patch size against its decoder's footprint on the device: code plus RAM buffers, stack excluded |
@@ -57,11 +59,9 @@ commits to `bench-results-preview`, replaced each time. The results:
 | `inputs/`, `corpus.json`, `results-tools.json` | the commit and SHA-256 of every build, the corpus and the tool versions |
 
 Every graph is also a PNG, for slides. Every comparison has one baseline,
-"tinydelta": per pair, the smaller of the plain patch and compression
-mode decoded twice, as sent, which is what the README tells integrators
-to ship. Its footprint is the decoder that reads both format versions.
-The summary also lists both on their own, and how often compression mode
-wins.
+"tinydelta" as defined above, as sent. Its footprint is the callback
+decoder with a 256-byte buffer. The summary also lists the plain patch
+and compression mode on their own, and how often compression mode wins.
 
 Decoder footprints ([`decoders.json`](decoders.json)) are code plus the
 RAM buffers a decoder needs (dictionaries, windows, caches); stack is

@@ -23,7 +23,10 @@ typedef enum {
                                      moves to just past the copied bytes */
     TINYDELTA_OP_ADD         = 1, /* literal bytes, taken from the patch */
     TINYDELTA_OP_SKIP        = 2, /* dictionary at the cursor */
-    TINYDELTA_OP_COPY_TARGET = 3  /* earlier target bytes, at position + delta */
+    TINYDELTA_OP_COPY_TARGET = 3  /* version 1: earlier target bytes, at
+                                     position + delta; version 2: ADD_DIFF,
+                                     patch bytes added to the dictionary
+                                     bytes at the cursor */
 } tinydelta_opcode;
 
 #define TINYDELTA_OPCODE_BITS 2u
