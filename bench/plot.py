@@ -48,7 +48,7 @@ from matplotlib.transforms import Bbox  # noqa: E402
 # compressed (which groups the distribution graph's rows).
 OTHERS = [
     ("openvcdiff", "open-vcdiff", "#2a78d6", "-", False),
-    ("openvcdiff_zlib", "open-vcdiff + zlib", "#eb6834", "--", True),
+    ("openvcdiff_zlib", "open-vcdiff, zlib-compressed", "#eb6834", "--", True),
     ("xdelta3", "xdelta3", "#1baf7a", "-.", False),
     ("bsdiff", "bsdiff", "#eda100", ":", True),
     ("detools", "detools (heatshrink)", "#e87ba4", "-", True),
@@ -223,9 +223,9 @@ def summary(rows, tools_file, out):
         f.write("\n".join(lines))
 
 
-# The comparisons the distribution and pair graphs show: what compression
-# would add, the format tinydelta replaces, the closest embedded
-# alternative, and the strongest on size. The rest is in the forest graph.
+# The comparisons the distribution graphs show: the VCDIFF reference, the
+# closest embedded alternative, and the strongest on size. The rest is in
+# the forest graph.
 KEY_TOOLS = ["openvcdiff", "hpatchlite_4k", "bsdiff"]
 
 
@@ -398,7 +398,7 @@ def forest(rows, out):
 
 
 KIND_MARKERS = ["o", "^", "s", "D"]
-# The pair graph's tools: the format tinydelta replaces, the closest
+# The pair graph's tools: the VCDIFF reference, the closest
 # embedded alternative, and the strongest compressors on size.
 PAIR_TOOLS = ["openvcdiff", "hpatchlite_4k", "bsdiff", "zstd"]
 
