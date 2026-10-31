@@ -164,6 +164,35 @@ holds the old and new file in memory. Every figure and its source is in
 
 </details>
 
+## Compression mode
+
+For updates that change a lot, tinydelta can make patches that are meant
+to shrink further on their way to the device.
+`EncodeOptions.ForCompression` (CLI: `encode -for-compression`) writes
+format version 2 when it compresses better: regions that still line up
+with the old file but have a few changed bytes (moved addresses, branch
+offsets) are written as differences from the old bytes, so the same
+shift gives the same difference byte wherever it occurs. Uncompressed,
+such a patch is no smaller; compressed, it is. For small changes the
+plain version 1 patch usually compresses better, and that is what you
+get then.
+
+On the device there are three levels, each a superset of the one before:
+
+| level | decoder | what the device needs |
+|---|---|---|
+| plain | as above | nothing more |
+| compression mode, decoded twice | `TINYDELTA_FORMAT_V2=1`: +132 B on Cortex-M0 | room for an intermediate patch |
+| compression mode + a small decompressor | the same, plus e.g. tinyuz or heatshrink | the decompressor's code and window |
+
+"Decoded twice" needs no other code: the version 2 patch is encoded
+again by tinydelta against an empty dictionary, which finds the repeated
+difference patterns. The device decodes that outer patch (empty
+dictionary) into a scratch area, then the result against the old
+firmware. With `MaxTargetDistance` (CLI: `-max-distance N`) the outer
+patch never reads more than N bytes back, so a decoder could keep only
+the last N bytes of the intermediate patch instead of all of it.
+
 ## Why another delta format?
 
 Established formats were not designed for a decoder that has to fit in a
@@ -192,6 +221,7 @@ The [benchmark](#benchmark) shows what that costs and buys.
 
 - [Highlights](#highlights)
 - [Benchmark](#benchmark)
+- [Compression mode](#compression-mode)
 - [Why another delta format?](#why-another-delta-format)
 - [Installation](#installation)
   - [Command-line tool](#command-line-tool)
@@ -281,7 +311,7 @@ from a release.
 ## Command-line usage
 
 ```text
-tinydelta encode [-greedy] [-max-len N] [-v] <dictionary> <target> [<patch>]
+tinydelta encode [-greedy] [-for-compression] [-max-len N] [-max-distance N] [-v] <dictionary> <target> [<patch>]
 tinydelta decode [-max-size N] [-v] <dictionary> <patch> [<target>]
 tinydelta version
 ```
@@ -298,7 +328,9 @@ An omitted output file, or `-`, means standard output, and a patch of
 `encode -greedy` trades a few percent of patch size for much faster
 encoding. `encode -max-len N` makes sure no single instruction produces
 more than N target bytes (see [below](#limiting-instruction-length)).
-`decode -max-size` rejects patches whose output would exceed
+`encode -for-compression` and `encode -max-distance N` are for patches
+that are compressed or encoded a second time (see
+[Compression mode](#compression-mode)). `decode -max-size` rejects patches whose output would exceed
 the given size. The exit status is 0 on success, 1 on failure and 2 on
 a usage error.
 
@@ -313,6 +345,9 @@ patch, err := tinydelta.EncodeGreedy(oldFile, newFile) // fast
 patch, err := tinydelta.EncodeWith(oldFile, newFile, tinydelta.EncodeOptions{
 	MaxInstructionLen: 1024, // no instruction produces more than 1024 bytes
 })
+patch, err := tinydelta.EncodeWith(oldFile, newFile, tinydelta.EncodeOptions{
+	ForCompression: true, // a patch to compress afterwards (format version 2)
+})
 
 newFile, err := tinydelta.Decode(oldFile, patch)
 newFile, err := tinydelta.DecodeReaderLimit(oldFile, r, maxSize) // from an io.Reader, capped
@@ -322,7 +357,7 @@ newFile, err := tinydelta.DecodeReaderLimit(oldFile, r, maxSize) // from an io.R
 |---|---|
 | `Encode` | Optimizing parse; roughly 100–300 ms for a few KB. Never larger than `EncodeGreedy`'s patch; falls back to greedy above roughly 100 KB to bound memory. |
 | `EncodeGreedy` | One pass with one byte of lookahead; well under a millisecond for a few KB, patches typically a few percent larger. |
-| `EncodeWith` | Either encoder, chosen with `EncodeOptions.Greedy`, with options such as `MaxInstructionLen`. |
+| `EncodeWith` | Either encoder, chosen with `EncodeOptions.Greedy`, with options such as `MaxInstructionLen`, `ForCompression` and `MaxTargetDistance` ([Compression mode](#compression-mode)). |
 | `Decode`, `DecodeReader` | Apply a patch from a byte slice or an `io.Reader`. |
 | `DecodeReaderLimit` | As `DecodeReader`, but fails with `ErrTooLarge` before the target would exceed a size you choose. |
 
@@ -358,6 +393,12 @@ beyond `memcpy`.
 | **callback decoder** | `tinydelta.h`, `tinydelta_internal.h`, `tinydelta_io.h`, `tinydelta_io.c` | the data is elsewhere, e.g. external flash, reached through your own read/write functions |
 | **write cache** (optional) | `tinydelta_cache.h`, `tinydelta_cache.c` | with the callback decoder, to program flash a whole page at a time |
 
+Format version 2 ([compression mode](#compression-mode)) is compiled in
+only with `-DTINYDELTA_FORMAT_V2=1`, for both decoders. Without it, the
+default, the decoders read version 1 only, reject version 2 patches with
+`TINYDELTA_ERR_VERSION`, and are byte for byte the size they were
+before version 2 existed.
+
 ### Code size and stack
 
 `arm-none-eabi-gcc` 13.2, `-Os -mthumb`, default
@@ -370,6 +411,8 @@ even on Cortex-M0). Reproduce with [`scripts/c-size.sh`](scripts/c-size.sh).
 | memory decoder | 392 B | 380 B | 382 B | 64 B |
 | callback decoder | 720 B | 704 B | 704 B | ~200 B\* |
 | write cache | 300 B | 288 B | 288 B | +32 B |
+| memory decoder, with format version 2 | 472 B | 450 B | 452 B | 64 B |
+| callback decoder, with format version 2 | 852 B | 832 B | 834 B | ~215 B\* |
 
 \* Deepest path, including the 64-byte internal buffer, excluding your
 callbacks' own stack use.
@@ -395,7 +438,7 @@ Every decoding function returns a `tinydelta_result`:
 | `TINYDELTA_ERR_MALFORMED` | corrupt or truncated patch, or one that doesn't fit the dictionary |
 | `TINYDELTA_ERR_TOO_LARGE` | the target would exceed its capacity, or the dictionary exceeds `TINYDELTA_MAX_SIZE` |
 | `TINYDELTA_ERR_IO` | one of your callbacks failed (callback decoder only) |
-| `TINYDELTA_ERR_VERSION` | the patch's version byte isn't `TINYDELTA_FORMAT_VERSION`: a patch for another decoder version, or not a tinydelta patch |
+| `TINYDELTA_ERR_VERSION` | the patch's version byte is one this build doesn't read: version 2 without `TINYDELTA_FORMAT_V2`, a newer version, or not a tinydelta patch |
 
 On any error, whatever was already written to the target is incomplete
 and must not be used.
@@ -585,7 +628,7 @@ else before, between or after them. Decoding needs the **dictionary**
 (the old file) and produces the **target** (the new file).
 
 ```text
-patch = version (1 byte, currently 0x01) + instructions
+patch = version (1 byte: 0x01, or 0x02 for compression mode) + instructions
 ```
 
 A decoder rejects a patch whose version byte it doesn't implement, and
@@ -624,6 +667,13 @@ len    = v >> 2        // number of target bytes this instruction produces
 | 1 | `ADD` | `len` literal bytes | those bytes, as-is |
 | 2 | `SKIP` | — | `len` bytes from `dict[cursor]` |
 | 3 | `COPY_TARGET` | zigzag `delta` | `len` bytes from the target already produced, starting at `pos + delta` (must be `< pos`), copied byte by byte |
+
+Format version 2, made for patches that are compressed afterwards (see
+[Compression mode](#compression-mode)), is identical except for opcode 3:
+
+| opcode | name | followed by | produces |
+|---|---|---|---|
+| 3 | `ADD_DIFF` | `len` difference bytes | `dict[cursor + i] + byte i` (mod 256) for each of them; `[cursor, cursor + len)` must lie within the dictionary |
 
 ### State
 
@@ -666,12 +716,12 @@ patch:      01 2a 15 42 52 4f 57 4e 72 05 21       (11 bytes)
 
 ### Stability
 
-Format version 1 is fixed: a version-1 patch from any encoder decodes
-with any decoder that implements version 1, Go or C. A change to the
+Format versions 1 and 2 are fixed: a patch from any encoder decodes
+with any decoder that implements its version, Go or C. A change to the
 instruction set gets a new version byte, and decoders reject versions
 they don't implement. Encoders may still produce different, usually
 smaller, patches for the same input in later releases; they stay valid
-version-1 patches.
+patches of the same version.
 
 Release 1.0.0 wrote patches without the version byte. Those don't
 decode with later releases as they are; prepend the byte `0x01` to
