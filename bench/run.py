@@ -24,6 +24,8 @@ Tools (set the binaries with environment variables; defaults are on PATH):
                        so it decodes in one stream with a 1 KB buffer
     openvcdiff         open-vcdiff encode -target_matches     $OPENVCDIFF
     openvcdiff_zlib   the open-vcdiff patch, zlib level 9
+    openvcdiff_interleaved  open-vcdiff encode -interleaved -target_matches:
+                      the format tiny-vcdiff, an embedded VCDIFF decoder, reads
     xdelta3           xdelta3 -9 -S none (VCDIFF, no secondary compression)
     bsdiff            bsdiff 4 (with bzip2 inside)
     detools           detools create_patch -c heatshrink (sequential, the
@@ -53,7 +55,7 @@ HDIFFI = os.environ.get("HDIFFI", "hdiffi")
 HPATCHI = os.environ.get("HPATCHI", "hpatchi")
 ALL_TOOLS = ["tinydelta", "tinydelta_greedy", "tinydelta_optimal",
              "tinydelta_cz_twice", "tinydelta_cz_twice_1k",
-             "openvcdiff", "openvcdiff_zlib", "xdelta3", "bsdiff",
+             "openvcdiff", "openvcdiff_zlib", "openvcdiff_interleaved", "xdelta3", "bsdiff",
              "detools", "hpatchlite_4k", "hpatchlite_32k", "zstd"]
 # Run by default: all but tinydelta_optimal, which takes a few hundred MB
 # and a minute or more per firmware pair (--tools adds it).
@@ -117,6 +119,11 @@ def encode_all(tools, old, new, work):
         check("openvcdiff", read(out))
         sizes["openvcdiff"] = os.path.getsize(patch)
         sizes["openvcdiff_zlib"] = len(zlib.compress(read(patch), 9))
+    if "openvcdiff_interleaved" in tools:
+        sh(OPENVCDIFF, "encode", "-dictionary", old, "-target", new, "-delta", patch, "-target_matches", "-interleaved")
+        sh(OPENVCDIFF, "decode", "-dictionary", old, "-delta", patch, "-target", out)
+        check("openvcdiff_interleaved", read(out))
+        sizes["openvcdiff_interleaved"] = os.path.getsize(patch)
     if "xdelta3" in tools:
         sh("xdelta3", "-e", "-f", "-9", "-S", "none", "-s", old, new, patch)
         sh("xdelta3", "-d", "-f", "-s", old, patch, out)
@@ -169,7 +176,7 @@ def first_line(*cmd):
 
 def tool_versions(tools):
     versions = {"tinydelta": first_line(TINYDELTA, "version")}
-    if "openvcdiff" in tools or "openvcdiff_zlib" in tools:
+    if any(t.startswith("openvcdiff") for t in tools):
         versions["openvcdiff"] = os.environ.get("OPENVCDIFF_VERSION", "unknown")
     if "xdelta3" in tools:
         versions["xdelta3"] = first_line("xdelta3", "-V").split(",")[0]  # drop the copyright

@@ -131,7 +131,7 @@ The method, the scripts and how to run them are in
 SHA-256), all numbers and every graph of this run are in
 [`docs/benchmark/`](docs/benchmark/), including the pair-by-pair view:
 
-![Every pair: tinydelta against open-vcdiff, bsdiff and HPatchLite](docs/benchmark/pairs.svg)
+![Every pair: tinydelta against HPatchLite](docs/benchmark/pairs.svg)
 
 </details>
 
@@ -172,6 +172,8 @@ two-pass patch gives patches about a third smaller overall, and 2–2.5×
 smaller on large changes (patches of 1 KB and up), with the same decoder
 plus version 2 (the [trade-off graph](#benchmark) shows where that
 lands).
+
+![Every pair: compression mode, decoded twice, against HPatchLite](docs/benchmark/pairs_compression.svg)
 
 Each layer starts with its version byte, so a decoder built with
 `TINYDELTA_FORMAT_V2=1` (+132 B on Cortex-M0, +256 B on MSP430) reads both; only the

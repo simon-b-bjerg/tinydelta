@@ -326,43 +326,43 @@ def forest(rows, out):
     save(fig, out, "forest")
 
 
-PAIR_TOOLS = KEY_TOOLS
 KIND_MARKERS = ["o", "^", "s", "D"]
+KIND_COLORS = ["#2a78d6", "#eda100", "#1baf7a", "#e87ba4"]  # categorical slots, validated
 
 
-def pair_scatter(rows, out):
-    tools = [t for t in OTHERS if t[0] in PAIR_TOOLS and t[0] in rows[0]]
-    if not tools:
+def pair_scatter(rows, out, name, mine, mine_label, other):
+    """Every pair as one dot: the other tool's patch size across,
+    tinydelta's (column mine) up. One panel; the kinds of data by marker."""
+    labels = {k: (l, c) for k, l, c, _, _ in OTHERS}
+    if mine not in rows[0] or other not in rows[0]:
         return
-    kinds = kinds_of(rows)
-    fig, axes = plt.subplots(1, len(tools), figsize=(4.0 * len(tools), 4.3), squeeze=False, facecolor=SURFACE)
-    for ax, (key, label, color, _, compressed) in zip(axes[0], tools):
-        tiny = against(rows, compressed)
-        style(ax)
-        sizes = [r[k] for r in rows for k in (key, tiny)]
-        lo, hi = max(1, min(sizes)) / 1.5, max(sizes) * 1.5
-        ax.plot([lo, hi], [lo, hi], color=MUTED, linewidth=1)
-        for kind, marker in zip(kinds, KIND_MARKERS):
-            sel = [r for r in rows if r["kind"] == kind]
-            ax.scatter([r[key] for r in sel], [r[tiny] for r in sel], s=22, marker=marker, color=color,
-                       alpha=0.75, edgecolors=SURFACE, linewidths=0.6, label=kind)
-        ax.set_xscale("log")
-        ax.set_yscale("log")
-        for axis in (ax.xaxis, ax.yaxis):  # decades only: the range spans several
-            axis.set_major_locator(ticker.LogLocator(base=10))
-            axis.set_major_formatter(ticker.FuncFormatter(lambda x, _: "{:,.0f}".format(x)))
-            axis.set_minor_formatter(ticker.NullFormatter())
-        ax.set_xlim(lo, hi)
-        ax.set_ylim(lo, hi)
-        ax.set_aspect("equal")
-        ax.set_title("vs %s" % label, fontsize=11, color=INK, loc="left")
-        ax.set_xlabel("%s patch (bytes)" % label, fontsize=9, color=MUTED)
-        ax.set_ylabel("tinydelta patch (bytes)", fontsize=9, color=MUTED)
-        ax.text(0.97, 0.05, "below the line:\ntinydelta smaller", transform=ax.transAxes, ha="right",
-                fontsize=8, color=MUTED)
-    axes[0][0].legend(frameon=False, fontsize=8, loc="upper left", labelcolor=INK)
+    label = labels[other][0]
+    fig, ax = plt.subplots(figsize=(5.2, 5.0), facecolor=SURFACE)
+    style(ax)
+    sizes = [r[k] for r in rows for k in (other, mine)]
+    lo, hi = max(1, min(sizes)) / 1.5, max(sizes) * 1.5
+    ax.plot([lo, hi], [lo, hi], color=MUTED, linewidth=1)
+    for kind, marker, color in zip(kinds_of(rows), KIND_MARKERS, KIND_COLORS):
+        sel = [r for r in rows if r["kind"] == kind]
+        ax.scatter([r[other] for r in sel], [r[mine] for r in sel], s=24, marker=marker, color=color,
+                   alpha=0.75, edgecolors=SURFACE, linewidths=0.6, label=kind)
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    for axis in (ax.xaxis, ax.yaxis):  # decades only: the range spans several
+        axis.set_major_locator(ticker.LogLocator(base=10))
+        axis.set_major_formatter(ticker.FuncFormatter(lambda x, _: "{:,.0f}".format(x)))
+        axis.set_minor_formatter(ticker.NullFormatter())
+    ax.set_xlim(lo, hi)
+    ax.set_ylim(lo, hi)
+    ax.set_aspect("equal")
+    ax.set_title("%s\nvs %s, every pair" % (mine_label, label), fontsize=11, color=INK, loc="left")
+    ax.set_xlabel("%s patch (bytes, log scale)" % label, fontsize=9, color=MUTED)
+    ax.set_ylabel("%s patch (bytes, log scale)" % mine_label, fontsize=9, color=MUTED)
+    ax.text(0.97, 0.05, "below the line:\n%s smaller" % mine_label, transform=ax.transAxes, ha="right",
+            fontsize=8, color=MUTED)
+    ax.legend(frameon=False, fontsize=8, loc="upper left", labelcolor=INK)
     fig.tight_layout()
-    save(fig, out, "pairs")
+    save(fig, out, name)
 
 
 def place_labels(fig, ax, points):
@@ -408,6 +408,7 @@ def tradeoff(rows, out):
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "decoders.json")
     decoders = {k: v for k, v in json.load(open(path)).items() if not k.startswith("_")}
     colors = {k: c for k, _, c, _, _ in OTHERS}
+    colors["openvcdiff_interleaved"] = colors["openvcdiff"]  # tiny-vcdiff: the same format family
     colors.update({k: c for k, _, c in TINY_VARIANTS})
     # decoders.json's "tinydelta" stands for whichever tinydelta column the
     # comparisons use (optimal, when measured).
@@ -461,7 +462,11 @@ def main():
         sys.exit("plot: no rows in %s" % results)
     summary(rows, os.path.splitext(results)[0] + "-tools.json", out)
     forest(rows, out)
-    pair_scatter(rows, out)
+    # tinydelta against the closest embedded alternative, plain and in
+    # compression mode decoded twice.
+    pair_scatter(rows, out, "pairs", tiny_key(rows), "tinydelta", "hpatchlite_4k")
+    pair_scatter(rows, out, "pairs_compression", "tinydelta_cz_twice", "tinydelta, compression mode, decoded twice",
+                 "hpatchlite_4k")
     tradeoff(rows, out)
     ratio_ecdf(rows, out)
     patch_share(rows, out)

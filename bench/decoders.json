@@ -56,13 +56,13 @@
     "plus_old_file": true,
     "basis": "zstd --patch-from uses the whole old file as its window, so the decoder needs at least the old file in memory"
   },
-  "openvcdiff": {
-    "label": "open-vcdiff",
-    "code": null,
-    "buffers": 0,
-    "stack": null,
-    "plus_old_file": true,
-    "basis": "open-vcdiff's decoder (C++) works on the whole dictionary in memory"
+  "openvcdiff_interleaved": {
+    "label": "tiny-vcdiff (VCDIFF, interleaved)",
+    "code": 3881,
+    "buffers": 3221,
+    "stack": 150,
+    "plus_old_file": false,
+    "basis": "measured on a 230 KB MicroPython image (README, decoder footprint notes): tiny-vcdiff linked into a small test program for Cortex-M0, -Os, --gc-sections: 3,881 B code, 3,221 B static RAM, ~150 B stack; it reads open-vcdiff's interleaved format, so its patch sizes are open-vcdiff's with -interleaved"
   },
   "xdelta3": {
     "label": "xdelta3",
