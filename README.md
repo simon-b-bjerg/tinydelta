@@ -30,15 +30,15 @@ no compression library.
 
 ## Highlights
 
-- **Small patches.** No header, framing or checksum: a patch is just a
-  stream of short instructions. An unchanged region typically costs one
+- **Small patches.** One version byte, then a stream of short
+  instructions: no framing, lengths or checksum. An unchanged region typically costs one
   or two bytes.
 - **Optimizing encoder.** Dynamic programming over exact instruction
   costs, never worse than the built-in greedy encoder, which is
   available when speed matters more.
-- **Tiny C decoder.** 380 bytes of code on Cortex-M0 when everything is
-  in RAM; 712 bytes when the data lives on external flash behind your
-  own read/write functions, plus an optional 304-byte page write cache.
+- **Tiny C decoder.** 392 bytes of code on Cortex-M0 when everything is
+  in RAM; 720 bytes when the data lives on external flash behind your
+  own read/write functions, plus an optional 300-byte page write cache.
 - **No dynamic allocation, no static RAM.** The C decoders never call
   `malloc` and have no global or static variables (0 bytes of `.data`
   and `.bss`). All working state is on the stack, and the only other
@@ -60,8 +60,8 @@ files, in both directions:
 
 | encoder | A → B | B → A |
 |---|---:|---:|
-| **tinydelta** | **277 B** | **232 B** |
-| tinydelta, greedy | 297 B | 237 B |
+| **tinydelta** | **278 B** | **233 B** |
+| tinydelta, greedy | 298 B | 238 B |
 | xdelta3 3.0, `-9 -S none` | 407 B | 336 B |
 | bsdiff 4.3 | 436 B | 455 B |
 | open-vcdiff, interleaved, `-target_matches` | 677 B | 520 B |
@@ -103,7 +103,7 @@ few hundred bytes of flash and use no RAM:
   bzip2 with a lighter compressor (heatshrink), which brings code and
   stack back up.
 
-tinydelta makes different trade-offs: no header, framing or compression,
+tinydelta makes different trade-offs: a one-byte header, no framing or compression,
 four instructions, one integer encoding and 32-bit arithmetic, with all
 the effort in the encoder. The decoder is simple because the format has
 almost nothing to decode.
@@ -115,9 +115,9 @@ were built with `arm-none-eabi-gcc -Os -mthumb` and linked with
 
 | decoder | patch | code (Cortex-M0) | static RAM | stack |
 |---|---:|---:|---:|---:|
-| **tinydelta**, memory decoder, greedy patch | **4,530 B** | **380 B** | 0 | 64 B |
-| **tinydelta**, memory decoder, optimal patch¹ | **4,431 B** | **380 B** | 0 | 64 B |
-| **tinydelta**, callback decoder, greedy patch | **4,530 B** | 712 B | 0 | ~190 B |
+| **tinydelta**, memory decoder, greedy patch | **4,531 B** | **392 B** | 0 | 64 B |
+| **tinydelta**, memory decoder, optimal patch¹ | **4,432 B** | **392 B** | 0 | 64 B |
+| **tinydelta**, callback decoder, greedy patch | **4,531 B** | 720 B | 0 | ~190 B |
 | detools + heatshrink (default settings²) | 4,772 B | 1,948 B | 0 | ~1.6 KB |
 | tiny-vcdiff (open-vcdiff, interleaved) | 10,848 B | 3,881 B | 3,221 B | ~150 B |
 
@@ -329,16 +329,16 @@ beyond `memcpy`.
 
 ### Code size and stack
 
-`arm-none-eabi-gcc` 10.3, `-Os -mthumb`, default
+`arm-none-eabi-gcc` 13.2, `-Os -mthumb`, default
 `TINYDELTA_SCRATCH_SIZE` (64). Code size is `.text`; `memcpy` comes from
 your C library, and nothing else is pulled in (no software division
 even on Cortex-M0). Reproduce with [`scripts/c-size.sh`](scripts/c-size.sh).
 
 | part | Cortex-M0 | Cortex-M3 | Cortex-M4 | stack (Cortex-M0) |
 |---|---:|---:|---:|---:|
-| memory decoder | 380 B | 362 B | 366 B | 64 B |
-| callback decoder | 712 B | 660 B | 660 B | ~200 B\* |
-| write cache | 304 B | 288 B | 288 B | +32 B |
+| memory decoder | 392 B | 380 B | 382 B | 64 B |
+| callback decoder | 720 B | 704 B | 704 B | ~200 B\* |
+| write cache | 300 B | 288 B | 288 B | +32 B |
 
 \* Deepest path, including the 64-byte internal buffer, excluding your
 callbacks' own stack use.
@@ -350,8 +350,8 @@ every 32-bit operation takes several 16-bit instructions.
 
 | part | MSP430 | MSP430X | MSP430X, `-mlarge` | stack (`-mlarge`) |
 |---|---:|---:|---:|---:|
-| memory decoder | 964 B | 932 B | 1,068 B | 112 B |
-| callback decoder | 1,740 B | 1,682 B | 1,736 B | ~245 B\* |
+| memory decoder | 988 B | 956 B | 1,096 B | 112 B |
+| callback decoder | 1,856 B | 1,798 B | 1,814 B | ~245 B\* |
 | write cache | 628 B | 602 B | 678 B | +40 B |
 
 ### Results
@@ -364,6 +364,7 @@ Every decoding function returns a `tinydelta_result`:
 | `TINYDELTA_ERR_MALFORMED` | corrupt or truncated patch, or one that doesn't fit the dictionary |
 | `TINYDELTA_ERR_TOO_LARGE` | the target would exceed its capacity, or the dictionary exceeds `TINYDELTA_MAX_SIZE` |
 | `TINYDELTA_ERR_IO` | one of your callbacks failed (callback decoder only) |
+| `TINYDELTA_ERR_VERSION` | the patch's version byte isn't `TINYDELTA_FORMAT_VERSION`: a patch for another decoder version, or not a tinydelta patch |
 
 On any error, whatever was already written to the target is incomplete
 and must not be used.
@@ -478,6 +479,8 @@ are:
   [`tinydelta_internal.h`](c/tinydelta_internal.h): a negative delta
   then wraps far above any valid position, and one unsigned check
   rejects it.
+- **The version byte.** Reject any patch whose first byte isn't the
+  version your decoder implements.
 - **Varints.** At most 5 bytes, and the 5th may only carry 4 bits.
 - **The end.** Write the last, partial page once, and only after the
   whole patch decoded successfully.
@@ -492,10 +495,10 @@ the same target bytes.
 
 ### On the device
 
-A patch is deliberately bare: it has no header, no checksum, no length
-and no end marker. It doesn't say which dictionary it was made for, and
-a patch cut off between two instructions still decodes, into a shorter
-target. Those checks belong in your update protocol, which already has
+A patch is deliberately bare: one version byte, then instructions, with
+no checksum, no length and no end marker. It doesn't say which
+dictionary it was made for, and a patch cut off between two
+instructions still decodes, into a shorter target. Those checks belong in your update protocol, which already has
 to carry the patch and usually has its own metadata.
 
 #### Suggested integration
@@ -505,7 +508,6 @@ that announces the update:
 
 | field | why |
 |---|---|
-| format version | the patch has no version marker of its own |
 | dictionary CRC or hash | applying a patch to the wrong base image decodes "successfully" into garbage |
 | patch length | the decoder runs until the patch ends, so a missing tail can't be detected from the patch alone |
 | target length | caps the output and detects a short result |
@@ -536,9 +538,20 @@ dictionary.
 
 ## Wire format
 
-A patch is a sequence of instructions, decoded until the patch ends.
-There is nothing before, between or after them. Decoding needs the
-**dictionary** (the old file) and produces the **target** (the new file).
+A patch is one header byte, the **format version**, followed by a
+sequence of instructions, decoded until the patch ends. There is nothing
+else before, between or after them. Decoding needs the **dictionary**
+(the old file) and produces the **target** (the new file).
+
+```text
+patch = version (1 byte, currently 0x01) + instructions
+```
+
+A decoder rejects a patch whose version byte it doesn't implement, and
+a patch with no bytes at all (a header alone is valid: an empty target).
+The version names the instruction set, so a future set gets a new
+version, and decoders that don't know it refuse it instead of producing
+a wrong target.
 
 ### Integers
 
@@ -601,8 +614,9 @@ bytes, two bytes up to 4095.
 ```text
 dictionary: "the quick brown fox jumps over the lazy dog"
 target:     "the quick BROWN fox jumps over the lazy dog!"
-patch:      2a 15 42 52 4f 57 4e 72 05 21          (10 bytes)
+patch:      01 2a 15 42 52 4f 57 4e 72 05 21       (11 bytes)
 
+01          version 1
 2a          SKIP 10        (10<<2 | 2)   "the quick "
 15 ...      ADD 5          (5<<2 | 1)    "BROWN"
 72          SKIP 28        (28<<2 | 2)   " fox jumps over the lazy dog"
@@ -611,11 +625,16 @@ patch:      2a 15 42 52 4f 57 4e 72 05 21          (10 bytes)
 
 ### Stability
 
-The wire format is fixed for the 1.x releases: a patch made by any 1.x
-encoder decodes with any 1.x decoder, Go or C. The format has no version
-marker, so an incompatible change would be a new major version. Encoders
-may still produce different, usually smaller, patches for the same input
-in later releases; they stay valid for every 1.x decoder. The Go API
+Format version 1 is fixed: a version-1 patch from any encoder decodes
+with any decoder that implements version 1, Go or C. A change to the
+instruction set gets a new version byte, and decoders reject versions
+they don't implement. Encoders may still produce different, usually
+smaller, patches for the same input in later releases; they stay valid
+version-1 patches.
+
+Release 1.0.0 wrote patches without the version byte. Those don't
+decode with later releases as they are; prepend the byte `0x01` to
+convert one. The Go API
 follows [semantic versioning](https://semver.org).
 
 ### Conformance vectors

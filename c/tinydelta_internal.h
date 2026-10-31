@@ -7,6 +7,12 @@
 
 #include "tinydelta.h"
 
+/* ---- Header ------------------------------------------------------------
+ * One byte, the format version, before the first instruction.
+ */
+
+#define TINYDELTA_HEADER_LEN 1u
+
 /* ---- Instructions -------------------------------------------------------
  * Every instruction starts with one varint: the opcode in its low bits, the
  * number of target bytes the instruction produces (its length) above them.

@@ -20,13 +20,13 @@ type vector struct {
 	name        string
 	capacity    int
 	dict, patch []byte
-	result      string // OK, MALFORMED or TOO_LARGE
+	result      string // OK, MALFORMED, TOO_LARGE or VERSION
 	target      []byte // with OK only
 }
 
 // vectorCodes are the C decoders' result codes, as the C test drivers
 // print them.
-var vectorCodes = map[string]string{"MALFORMED": "-1", "TOO_LARGE": "-2"}
+var vectorCodes = map[string]string{"MALFORMED": "-1", "TOO_LARGE": "-2", "VERSION": "-4"}
 
 func readVectors(t *testing.T) []vector {
 	t.Helper()
@@ -77,7 +77,7 @@ func readVectors(t *testing.T) []vector {
 			}
 		case vectorCodes[v.result] != "" && len(fields) == 5:
 		default:
-			bad("result must be OK followed by the target, or MALFORMED or TOO_LARGE alone")
+			bad("result must be OK followed by the target, or MALFORMED, TOO_LARGE or VERSION alone")
 		}
 		vectors = append(vectors, v)
 	}
@@ -98,6 +98,8 @@ func goResult(v vector) (string, []byte) {
 		return "OK", target
 	case errors.Is(err, ErrTooLarge):
 		return "TOO_LARGE", nil
+	case errors.Is(err, ErrUnsupportedVersion):
+		return "VERSION", nil
 	default:
 		return "MALFORMED", nil
 	}

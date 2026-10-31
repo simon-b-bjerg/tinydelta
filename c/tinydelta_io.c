@@ -122,9 +122,14 @@ tinydelta_result tinydelta_decode_io(const tinydelta_io *io, uint32_t *target_le
     tinydelta_result result;
 
     d.io = io;
-    d.patch_pos = 0;
+    d.patch_pos = TINYDELTA_HEADER_LEN;
     d.out_pos = 0;
     if (io->dict_len > TINYDELTA_MAX_SIZE) return TINYDELTA_ERR_TOO_LARGE;
+    if (io->patch_len < TINYDELTA_HEADER_LEN) return TINYDELTA_ERR_MALFORMED;
+    if (io->patch_read(io->patch_ctx, 0, d.scratch, TINYDELTA_HEADER_LEN) != TINYDELTA_CALLBACK_OK) {
+        return TINYDELTA_ERR_IO;
+    }
+    if (d.scratch[0] != TINYDELTA_FORMAT_VERSION) return TINYDELTA_ERR_VERSION;
 
     while (d.patch_pos < io->patch_len) {
         uint32_t instruction, length, delta, address;

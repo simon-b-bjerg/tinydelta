@@ -69,7 +69,7 @@ func TestRoundTrip3KBFixtures(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			patch := encode(c.dict, c.tgt, MaxSize)
-			got, err := Decode(c.dict, patch)
+			got, err := Decode(c.dict, withHeader(patch))
 			if err != nil || !bytes.Equal(got, c.tgt) {
 				t.Fatalf("round trip failed (err %v)", err)
 			}
@@ -104,14 +104,14 @@ func TestRoundTripRandomMutations(t *testing.T) {
 			}
 		}
 		greedy := encodeGreedy(dict, tgt, MaxSize)
-		if got, err := Decode(dict, greedy); err != nil || !bytes.Equal(got, tgt) {
+		if got, err := Decode(dict, withHeader(greedy)); err != nil || !bytes.Equal(got, tgt) {
 			t.Fatalf("#%d: greedy round trip failed (err %v)", i, err)
 		}
 		if i%10 != 0 {
 			continue // the optimal encoder is ~100x slower; check a tenth of the pairs
 		}
 		opt := encode(dict, tgt, MaxSize)
-		if got, err := Decode(dict, opt); err != nil || !bytes.Equal(got, tgt) {
+		if got, err := Decode(dict, withHeader(opt)); err != nil || !bytes.Equal(got, tgt) {
 			t.Fatalf("#%d: optimal round trip failed (err %v)", i, err)
 		}
 		if len(opt) > len(greedy) {
@@ -139,7 +139,7 @@ func TestSameLengthConfigSparseEdits(t *testing.T) {
 	}
 
 	patch := encode(dict, target, MaxSize)
-	got, err := Decode(dict, patch)
+	got, err := Decode(dict, withHeader(patch))
 	if err != nil || !bytes.Equal(got, target) {
 		t.Fatalf("round trip failed (err %v)", err)
 	}
@@ -182,7 +182,7 @@ func TestOptimalEncoderDirectly(t *testing.T) {
 			if opt == nil {
 				t.Fatal("encodeOptimal declined an input well under its size limit")
 			}
-			if got, err := Decode(c.dict, opt); err != nil || !bytes.Equal(got, c.tgt) {
+			if got, err := Decode(c.dict, withHeader(opt)); err != nil || !bytes.Equal(got, c.tgt) {
 				t.Fatalf("optimal round trip failed (err %v)", err)
 			}
 			if len(opt) > len(greedy) {
@@ -212,7 +212,7 @@ func TestEncodeFallsBackToGreedyWhenTooLarge(t *testing.T) {
 	if !bytes.Equal(patch, greedy) {
 		t.Error("Encode over the size limit should return greedy's patch")
 	}
-	if got, err := Decode(dict, patch); err != nil || !bytes.Equal(got, tgt) {
+	if got, err := Decode(dict, withHeader(patch)); err != nil || !bytes.Equal(got, tgt) {
 		t.Fatalf("round trip failed (err %v)", err)
 	}
 }
