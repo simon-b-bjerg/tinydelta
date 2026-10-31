@@ -13,7 +13,7 @@ deliberately updated. The method, corpus and tools are described in
 
 | file | what |
 |---|---|
-| `forest.svg`, `tradeoff.svg`, `pairs.svg`, `ratio_ecdf.svg`, `patch_share.svg` | the graphs |
+| `forest.svg`, `tradeoff.svg`, `pairs.svg`, `ratio_ecdf_firmware.svg`, `ratio_ecdf_device_tree.svg`, `patch_share_firmware.svg`, `patch_share_device_tree.svg` | the graphs |
 | `summary.md` | every number behind them, including patch sizes in bytes |
 | `results.csv` | one row per pair: every tool's patch size |
 | `decoders.json`, `decoder-size.md` | the decoder footprints and where each comes from; this run's Cortex-M0 measurement |

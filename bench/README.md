@@ -49,7 +49,7 @@ commits to `bench-results-preview`, replaced each time. The results:
 |---|---|
 | `forest.svg` | the headline: per kind of data and tool, tinydelta's patch size divided by the tool's (geometric mean, 10th-90th percentile), 1 and 5 commits apart |
 | `pairs.svg` | every pair: tinydelta against open-vcdiff, HPatchLite (4 KB), bsdiff and zstd, colour by tool, marker by kind of data |
-| `ratio_ecdf.svg`, `patch_share.svg` | the full distributions: the size ratio, and patch size as a share of the target |
+| `ratio_ecdf_<kind>.svg`, `patch_share_<kind>.svg` | the full distributions, one graph per kind of data (`firmware`, `device_tree`): the size ratio, and patch size as a share of the target |
 | `tradeoff.svg` | each tool's median patch size against its decoder's footprint on the device: code plus RAM buffers, stack excluded |
 | `summary.md` | the numbers behind the graphs, plus patch sizes in bytes |
 | `decoders.json`, `decoder-size.md` | the decoder costs behind the trade-off graph, with where each comes from, and this run's measurement of the decoders that build for Cortex-M0 |

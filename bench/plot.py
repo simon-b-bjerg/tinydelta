@@ -17,9 +17,10 @@ Writes to <output dir>:
     tradeoff.svg      each tool's typical patch size against its decoder's
                       footprint, code + RAM buffers, stack excluded
                       (from bench/decoders.json)
-    ratio_ecdf.svg    distribution of tinydelta's patch size divided by each
-                      other tool's, per kind of data
-    patch_share.svg   each tool's patch size as a share of the target
+    ratio_ecdf_<kind>.svg  distribution of tinydelta's patch size divided by
+                      each other tool's, one graph per kind of data
+    patch_share_<kind>.svg each tool's patch size as a share of the target,
+                      one graph per kind of data
 Each graph is also written as a PNG for slides. Every comparison uses one
 baseline, "tinydelta": per pair, the smaller of tinydelta's plain patch
 (the optimal encoder's, when measured) and its compression mode decoded
@@ -225,17 +226,29 @@ def summary(rows, tools_file, out):
 KEY_TOOLS = ["openvcdiff", "hpatchlite_4k", "bsdiff"]
 
 
+def slug(kind):
+    """A kind of data as part of a file name: "device tree" -> "device_tree"."""
+    return kind.replace(" ", "_")
+
+
+def titled(fig, title, subtitle):
+    """Title and reading line, placed in inches from the top so they hold
+    for any figure height; leaves the rest to the axes."""
+    height = fig.get_figheight()
+    fig.text(0.02, 1 - 0.15 / height, title, ha="left", va="top", fontsize=13, color=INK)
+    fig.text(0.02, 1 - 0.45 / height, subtitle, ha="left", va="top", fontsize=9, color=MUTED)
+    fig.tight_layout(rect=(0, 0, 1, 1 - 0.7 / height))
+
+
 def ratio_ecdf(rows, out):
-    """Every pair, per kind: for each ratio along the x axis, the share of
-    pairs at or below it. Where a line crosses 1 is the share of pairs
-    where tinydelta is smaller; the legend states it."""
-    kinds = kinds_of(rows)
+    """Every pair, one graph per kind: for each ratio along the x axis, the
+    share of pairs at or below it. Where a line crosses 1 is the share of
+    pairs where tinydelta is smaller; the legend states it."""
     tiny = tiny_key(rows)
     tools = [t for t in OTHERS if t[0] in KEY_TOOLS and t[0] in rows[0]]
-    fig, axes = plt.subplots(1, len(kinds), figsize=(5.6 * len(kinds), 4.8), squeeze=False, sharex=True,
-                             facecolor=SURFACE)
-    for ax, kind in zip(axes[0], kinds):
+    for kind in kinds_of(rows):
         sel = [r for r in rows if r["kind"] == kind]
+        fig, ax = plt.subplots(figsize=(7.2, 4.8), facecolor=SURFACE)
         style(ax)
         ax.axvline(1, color=MUTED, linewidth=1.2)
         for key, label, color, dash, _ in tools:
@@ -249,27 +262,23 @@ def ratio_ecdf(rows, out):
         ax.set_xscale("log")
         log_axis(ax.xaxis)
         ax.set_ylim(0, 100)
-        ax.set_title("%s (%d pairs)" % (kind, len(sel)), fontsize=11, color=INK, loc="left")
         ax.set_xlabel("tinydelta's patch size ÷ the tool's (log scale)", fontsize=9, color=MUTED)
         ax.set_ylabel("% of pairs at or below this ratio", fontsize=9, color=MUTED)
         ax.legend(frameon=False, fontsize=8, loc="upper left", labelcolor=INK)
-    height = fig.get_figheight()
-    fig.text(0.02, 1 - 0.15 / height, "How often, and by how much, tinydelta's patch is smaller",
-             ha="left", va="top", fontsize=13, color=INK)
-    fig.text(0.02, 1 - 0.45 / height, "Each line climbs through every pair, smallest ratio first. "
-             "Where it crosses 1: the share of pairs where tinydelta's patch is smaller.",
-             ha="left", va="top", fontsize=9, color=MUTED)
-    fig.tight_layout(rect=(0, 0, 1, 1 - 0.7 / height))
-    save(fig, out, "ratio_ecdf")
+        titled(fig, "%s: how often, and by how much, tinydelta is smaller (%d pairs)" % (kind, len(sel)),
+               "Each line climbs through every pair, smallest ratio first; its height at 1 is the share where tinydelta is smaller.")
+        save(fig, out, "ratio_ecdf_" + slug(kind))
 
 
 def patch_share(rows, out):
-    kinds = kinds_of(rows)
-    tools = [(k, l, c) for k, l, c in TINY_VARIANTS if k in rows[0]] + [(k, l, c) for k, l, c, _, _ in OTHERS if k in rows[0]]
-    fig, axes = plt.subplots(1, len(kinds), figsize=(5.6 * len(kinds), 1.2 + 0.5 * len(tools)),
-                             squeeze=False, facecolor=SURFACE)
-    for ax, kind in zip(axes[0], kinds):
+    """Each tool's patch size as a share of the target, one graph per kind."""
+    # The copy-distance limits are in the summary only: they differ from
+    # plain by about 1%, too little to see here.
+    tools = ([(k, l, c) for k, l, c in TINY_VARIANTS if k in rows[0] and not k.startswith("tinydelta_window")] +
+             [(k, l, c) for k, l, c, _, _ in OTHERS if k in rows[0]])
+    for kind in kinds_of(rows):
         sel = [r for r in rows if r["kind"] == kind]
+        fig, ax = plt.subplots(figsize=(8.4, 1.4 + 0.42 * len(tools)), facecolor=SURFACE)
         style(ax)
         data = [[100 * r[k] / max(r["target_bytes"], 1) for r in sel] for k, _, _ in tools]
         box = ax.boxplot(data, orientation="horizontal", widths=0.5, patch_artist=True, showfliers=True,
@@ -283,11 +292,14 @@ def patch_share(rows, out):
         ax.set_yticks(range(1, len(tools) + 1), [label for _, label, _ in tools], fontsize=9, color=INK)
         ax.invert_yaxis()
         ax.set_xscale("log")
-        log_axis(ax.xaxis, "%")
-        ax.set_title("%s: patch size as %% of target" % kind, fontsize=11, color=INK, loc="left")
+        # Decades only: the range spans five or more.
+        ax.xaxis.set_major_locator(ticker.LogLocator(base=10))
+        ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: "%g%%" % x))
+        ax.xaxis.set_minor_formatter(ticker.NullFormatter())
         ax.set_xlabel("patch size as % of target (log scale)", fontsize=9, color=MUTED)
-    fig.tight_layout()
-    save(fig, out, "patch_share")
+        titled(fig, "%s: patch size as a share of the target (%d pairs)" % (kind, len(sel)),
+               "Box: middle half of the pairs, thick line the median; whiskers to 1.5 box lengths, dots beyond.")
+        save(fig, out, "patch_share_" + slug(kind))
 
 
 NICE = [m * 10 ** e for e in range(-3, 3) for m in (1, 2, 5)]  # 1-2-5 axis ends
