@@ -178,7 +178,7 @@ func TestCDecoderMatchesGo(t *testing.T) {
 			name string
 			fn   func(dict, target []byte, maxLen int) []byte
 		}{{"optimal", encode}, {"greedy", encodeGreedy}} {
-			patch := enc.fn(p.dict, p.tgt, MaxSize)
+			patch := withHeader(enc.fn(p.dict, p.tgt, MaxSize))
 			label := p.name + "/" + enc.name
 			got, ok := cDecode(p.dict, patch, big)
 			if !ok || !bytes.Equal(got, p.tgt) {

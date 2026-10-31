@@ -22,7 +22,7 @@ func instDelta(op byte, length int, delta int64) []byte {
 func TestDecodeCopy(t *testing.T) {
 	dict := []byte("the quick brown fox")
 	patch := instDelta(opCopy, 5, 4) // cursor starts at 0; dict[4:9] = "quick"
-	got, err := Decode(dict, patch)
+	got, err := Decode(dict, withHeader(patch))
 	if err != nil || string(got) != "quick" {
 		t.Fatalf("Decode = %q, %v; want %q", got, err, "quick")
 	}
@@ -31,7 +31,7 @@ func TestDecodeCopy(t *testing.T) {
 func TestDecodeAdd(t *testing.T) {
 	dict := []byte("the quick brown fox")
 	patch := append(inst(opAdd, 3), "cat"...)
-	got, err := Decode(dict, patch)
+	got, err := Decode(dict, withHeader(patch))
 	if err != nil || string(got) != "cat" {
 		t.Fatalf("Decode = %q, %v; want %q", got, err, "cat")
 	}
@@ -43,7 +43,7 @@ func TestDecodeCopyThenAdd(t *testing.T) {
 	patch = append(patch, instDelta(opCopy, 3, 0)...) // dict[0:3] = "the"
 	patch = append(patch, inst(opAdd, 1)...)
 	patch = append(patch, '!')
-	got, err := Decode(dict, patch)
+	got, err := Decode(dict, withHeader(patch))
 	if err != nil || string(got) != "the!" {
 		t.Fatalf("Decode = %q, %v; want %q", got, err, "the!")
 	}
@@ -54,7 +54,7 @@ func TestDecodeSkip(t *testing.T) {
 	// starts at 0.
 	dict := []byte("the quick brown fox")
 	patch := inst(opSkip, 3) // dict[0:3] = "the"
-	got, err := Decode(dict, patch)
+	got, err := Decode(dict, withHeader(patch))
 	if err != nil || string(got) != "the" {
 		t.Fatalf("Decode = %q, %v; want %q", got, err, "the")
 	}
@@ -68,7 +68,7 @@ func TestDecodeSkipMidStream(t *testing.T) {
 	patch = append(patch, inst(opAdd, 4)...)
 	patch = append(patch, "ABCD"...)
 	patch = append(patch, inst(opSkip, 3)...) // cursor is now 4: dict[4:7] = "456"
-	got, err := Decode(dict, patch)
+	got, err := Decode(dict, withHeader(patch))
 	if err != nil || string(got) != "ABCD456" {
 		t.Fatalf("Decode = %q, %v; want %q", got, err, "ABCD456")
 	}
@@ -81,7 +81,7 @@ func TestDecodeCopyZeroLengthSetsPositionOnly(t *testing.T) {
 	var patch []byte
 	patch = append(patch, instDelta(opCopy, 0, 5)...) // cursor: 0 -> 5, no output
 	patch = append(patch, inst(opSkip, 3)...)         // dict[5:8] = "fgh"
-	got, err := Decode(dict, patch)
+	got, err := Decode(dict, withHeader(patch))
 	if err != nil || string(got) != "fgh" {
 		t.Fatalf("Decode = %q, %v; want %q", got, err, "fgh")
 	}
@@ -110,10 +110,28 @@ func TestDecodeRejectsMalformedInput(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if _, err := Decode(dict, c.patch); err == nil {
+			if _, err := Decode(dict, withHeader(c.patch)); err == nil {
 				t.Errorf("Decode(%s) succeeded, want an error", c.name)
 			}
 		})
+	}
+}
+
+// TestDecodeChecksHeader checks the version byte: a patch with no header
+// or another version fails, and a header alone is a valid, empty target.
+func TestDecodeChecksHeader(t *testing.T) {
+	dict := []byte("abc")
+	if _, err := Decode(dict, nil); err == nil || errors.Is(err, ErrUnsupportedVersion) {
+		t.Errorf("Decode(empty patch): err = %v, want a missing-header error", err)
+	}
+	for _, version := range []byte{0, FormatVersion + 1, 0xFF} {
+		patch := append([]byte{version}, inst(opSkip, 3)...)
+		if _, err := Decode(dict, patch); !errors.Is(err, ErrUnsupportedVersion) {
+			t.Errorf("Decode(version %d): err = %v, want ErrUnsupportedVersion", version, err)
+		}
+	}
+	if got, err := Decode(dict, []byte{FormatVersion}); err != nil || len(got) != 0 {
+		t.Errorf("Decode(header only) = %q, %v; want an empty target", got, err)
 	}
 }
 
@@ -125,7 +143,7 @@ func TestDecodeRejectsMalformedInput(t *testing.T) {
 func TestCopyNeverReadsPastDictIntoTarget(t *testing.T) {
 	dict := []byte("abc")
 	patch := instDelta(opCopy, 3, 1) // dict[1:4]: one byte past a 3-byte dictionary
-	if _, err := Decode(dict, patch); err == nil {
+	if _, err := Decode(dict, withHeader(patch)); err == nil {
 		t.Error("COPY reading past the dictionary succeeded, want an error")
 	}
 }
@@ -134,7 +152,7 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 	dict := []byte("the quick brown fox jumps over the lazy dog")
 	target := []byte("the slow brown fox jumps over one lazy dog!!")
 	patch := encode(dict, target, MaxSize)
-	got, err := Decode(dict, patch)
+	got, err := Decode(dict, withHeader(patch))
 	if err != nil || !bytes.Equal(got, target) {
 		t.Fatalf("round trip failed: err=%v got=%q", err, got)
 	}
@@ -147,7 +165,7 @@ func TestDecodeTargetCopy(t *testing.T) {
 	patch = append(patch, "abc"...)
 	// Output position is 3 here; addr=0 is delta -3.
 	patch = append(patch, instDelta(opTargetCopy, 2, -3)...) // copy target[0:2] = "ab"
-	got, err := Decode(dict, patch)
+	got, err := Decode(dict, withHeader(patch))
 	if err != nil || string(got) != "abcab" {
 		t.Fatalf("Decode = %q, %v; want %q", got, err, "abcab")
 	}
@@ -163,7 +181,7 @@ func TestDecodeTargetCopyOverlapRun(t *testing.T) {
 	patch = append(patch, inst(opAdd, 1)...)
 	patch = append(patch, 'z')
 	patch = append(patch, instDelta(opTargetCopy, 50, -1)...)
-	got, err := Decode(dict, patch)
+	got, err := Decode(dict, withHeader(patch))
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
@@ -178,7 +196,7 @@ func TestDecodeTargetCopyRejectsForwardReference(t *testing.T) {
 	// A COPY_TARGET with delta=0 at output position 0: nothing has been
 	// produced yet, so there is no byte 0 to copy.
 	patch := instDelta(opTargetCopy, 1, 0)
-	if _, err := Decode(dict, patch); err == nil {
+	if _, err := Decode(dict, withHeader(patch)); err == nil {
 		t.Error("COPY_TARGET at output position 0 with delta=0 succeeded, want an error")
 	}
 }
@@ -190,7 +208,7 @@ func TestDecodeTargetCopyRejectsForwardReference(t *testing.T) {
 func TestDecodeReaderStreams(t *testing.T) {
 	dict := []byte("the quick brown fox jumps over the lazy dog")
 	target := []byte("the quick brown fox leaps over one lazy dog")
-	patch := encode(dict, target, MaxSize)
+	patch := withHeader(encode(dict, target, MaxSize))
 
 	pr, pw := io.Pipe()
 	go func() {
@@ -238,7 +256,7 @@ func TestReadVarintFromDistinguishesCleanEOFFromTruncation(t *testing.T) {
 // to allocate the claimed length up front and crashing.
 func TestDecodeHugeAddLengthFailsCleanly(t *testing.T) {
 	patch := append(inst(opAdd, 1<<29), 'a', 'b')
-	if _, err := Decode(nil, patch); err == nil {
+	if _, err := Decode(nil, withHeader(patch)); err == nil {
 		t.Error("ADD claiming 2^29 bytes with 2 present succeeded, want an error")
 	}
 }
@@ -250,16 +268,16 @@ func TestDecodeHugeAddLengthFailsCleanly(t *testing.T) {
 func TestDecodeReaderLimit(t *testing.T) {
 	dict := []byte("0123456789")
 	patch := inst(opSkip, 10)
-	if got, err := DecodeReaderLimit(dict, bytes.NewReader(patch), 10); err != nil || string(got) != "0123456789" {
+	if got, err := DecodeReaderLimit(dict, bytes.NewReader(withHeader(patch)), 10); err != nil || string(got) != "0123456789" {
 		t.Fatalf("at the limit: got %q, err %v", got, err)
 	}
-	if _, err := DecodeReaderLimit(dict, bytes.NewReader(patch), 9); !errors.Is(err, ErrTooLarge) {
+	if _, err := DecodeReaderLimit(dict, bytes.NewReader(withHeader(patch)), 9); !errors.Is(err, ErrTooLarge) {
 		t.Errorf("one byte over the limit: err = %v, want ErrTooLarge", err)
 	}
 
 	bomb := append(inst(opAdd, 1), 'z')
 	bomb = append(bomb, instDelta(opTargetCopy, 1<<29, -1)...)
-	if _, err := DecodeReaderLimit(nil, bytes.NewReader(bomb), 4096); !errors.Is(err, ErrTooLarge) {
+	if _, err := DecodeReaderLimit(nil, bytes.NewReader(withHeader(bomb)), 4096); !errors.Is(err, ErrTooLarge) {
 		t.Errorf("COPY_TARGET run past the limit: err = %v, want ErrTooLarge", err)
 	}
 }

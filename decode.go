@@ -12,8 +12,13 @@ import (
 // a decoded target would exceed the caller's output limit.
 var ErrTooLarge = errors.New("tinydelta: size limit exceeded")
 
+// ErrUnsupportedVersion is returned for a patch whose header names a
+// format version other than FormatVersion: a patch made for a newer (or
+// older) decoder, or data that is not a tinydelta patch at all.
+var ErrUnsupportedVersion = errors.New("tinydelta: unsupported patch format version")
+
 // Decode applies patch against dict and returns the reconstructed target.
-// patch has no framing of its own (see the package doc); decoding runs
+// patch starts with its version byte (see the package doc); decoding runs
 // until patch is exhausted.
 func Decode(dict, patch []byte) ([]byte, error) {
 	return DecodeReaderLimit(dict, bytes.NewReader(patch), MaxSize)
@@ -51,6 +56,16 @@ func DecodeReaderLimit(dict []byte, r io.Reader, maxOutput int) (target []byte, 
 	}()
 
 	br := bufio.NewReader(r)
+	version, err := br.ReadByte()
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, errors.New("tinydelta: patch has no header")
+		}
+		return nil, fmt.Errorf("tinydelta: %w", err)
+	}
+	if version != FormatVersion {
+		return nil, fmt.Errorf("%w: patch is version %d, this decoder reads version %d", ErrUnsupportedVersion, version, FormatVersion)
+	}
 	cursor := uint64(0) // dictionary cursor; see format.go
 	for {
 		v, err := readVarintFrom(br)

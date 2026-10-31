@@ -15,7 +15,7 @@ func Encode(dict, target []byte) ([]byte, error) {
 	if err := checkSizes(dict, target); err != nil {
 		return nil, err
 	}
-	return encode(dict, target, MaxSize), nil
+	return withHeader(encode(dict, target, MaxSize)), nil
 }
 
 // EncodeOptions configures EncodeWith.
@@ -48,9 +48,9 @@ func EncodeWith(dict, target []byte, opts EncodeOptions) ([]byte, error) {
 		maxLen = opts.MaxInstructionLen
 	}
 	if opts.Greedy {
-		return encodeGreedy(dict, target, maxLen), nil
+		return withHeader(encodeGreedy(dict, target, maxLen)), nil
 	}
-	return encode(dict, target, maxLen), nil
+	return withHeader(encode(dict, target, maxLen)), nil
 }
 
 // EncodeGreedy produces a patch that reconstructs target from dict via
@@ -66,7 +66,7 @@ func EncodeGreedy(dict, target []byte) ([]byte, error) {
 	if err := checkSizes(dict, target); err != nil {
 		return nil, err
 	}
-	return encodeGreedy(dict, target, MaxSize), nil
+	return withHeader(encodeGreedy(dict, target, MaxSize)), nil
 }
 
 // checkSizes enforces MaxSize, which is what guarantees every field the
@@ -78,7 +78,8 @@ func checkSizes(dict, target []byte) error {
 	return nil
 }
 
-// encode is Encode without the size check, with no instruction producing
+// encode is Encode without the size check or the header (it returns the
+// instruction stream only), with no instruction producing
 // more than maxLen (at least 1) target bytes.
 func encode(dict, target []byte, maxLen int) []byte {
 	greedy := encodeGreedy(dict, target, maxLen)
@@ -88,7 +89,7 @@ func encode(dict, target []byte, maxLen int) []byte {
 	return greedy
 }
 
-// encodeGreedy is EncodeGreedy without the size check, with no
+// encodeGreedy is EncodeGreedy without the size check or the header, with no
 // instruction producing more than maxLen (at least 1) target bytes.
 func encodeGreedy(dict, target []byte, maxLen int) []byte {
 	dm := newMatcher(dict)

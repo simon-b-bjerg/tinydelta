@@ -38,7 +38,7 @@ Arguments may be any bytes-like objects. The wheel also installs the
 `tinydelta` command (`tinydelta encode old new patch`); `python -m
 tinydelta` runs it too.
 
-A patch has no header, checksum or length of its own, so send the
+A patch has a version byte but no checksum or length of its own, so send the
 dictionary's hash and the target's length and hash alongside it. See
 the [tinydelta repository](https://github.com/simon-b-bjerg/tinydelta)
 for the wire format, the C decoder for devices, and how to integrate it.

@@ -41,12 +41,12 @@ func TestRealConfigs(t *testing.T) {
 						t.Fatal(err)
 					}
 					patch := encode(src, tgt, MaxSize)
-					got, err := Decode(src, patch)
+					got, err := Decode(src, withHeader(patch))
 					if err != nil || !bytes.Equal(got, tgt) {
 						t.Fatalf("round trip failed (err %v)", err)
 					}
 					greedy := encodeGreedy(src, tgt, MaxSize)
-					if got, err := Decode(src, greedy); err != nil || !bytes.Equal(got, tgt) {
+					if got, err := Decode(src, withHeader(greedy)); err != nil || !bytes.Equal(got, tgt) {
 						t.Fatalf("greedy round trip failed (err %v)", err)
 					}
 					t.Logf("src %d B  tgt %d B  optimal %d B  greedy %d B",

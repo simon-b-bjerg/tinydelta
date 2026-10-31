@@ -8,7 +8,8 @@
  *     (1, 7 and 64 bytes), each with plain RAM callbacks and with
  *     tinydelta_cache on top of a simulated flash.
  *
- * All of them must agree: the same result (OK, MALFORMED or TOO_LARGE) and,
+ * All of them must agree: the same result (OK, MALFORMED, TOO_LARGE or
+ * VERSION) and,
  * on success, the same target bytes. The callbacks also police the
  * documented contract: sequential target writes, no reads outside the
  * patch or dictionary, no reads of target bytes not yet written, whole
@@ -72,9 +73,11 @@ static int64_t ref_zigzag(uint64_t z) {
 static tinydelta_result ref_decode(const uint8_t *dict, uint64_t dict_len,
                                    const uint8_t *patch, uint64_t patch_len,
                                    uint8_t *out, uint64_t out_cap, uint64_t *out_len) {
-    uint64_t patch_pos = 0, out_pos = 0;
+    uint64_t patch_pos = 1, out_pos = 0; /* past the version byte */
     int64_t cursor = 0;
 
+    if (patch_len < 1) return TINYDELTA_ERR_MALFORMED;
+    if (patch[0] != 1) return TINYDELTA_ERR_VERSION;
     while (patch_pos < patch_len) {
         uint64_t instruction, z;
         if (ref_varint(patch, patch_len, &patch_pos, &instruction)) return TINYDELTA_ERR_MALFORMED;

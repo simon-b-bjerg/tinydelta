@@ -7,10 +7,10 @@ import (
 )
 
 // instructionLens returns the len of every instruction in patch.
-func instructionLens(t *testing.T, patch []byte) []int {
+func instructionLens(t *testing.T, patch []byte) []int { // patch with header
 	t.Helper()
 	var lens []int
-	for i := 0; i < len(patch); {
+	for i := headerLen; i < len(patch); {
 		v, n := readVarint(patch[i:])
 		if n < 0 {
 			t.Fatalf("bad varint at %d", i)
@@ -58,7 +58,7 @@ func TestMaxInstructionLen(t *testing.T) {
 					}
 				}
 				if !greedy {
-					g := encodeGreedy(c.dict, c.tgt, limit)
+					g := withHeader(encodeGreedy(c.dict, c.tgt, limit))
 					if len(patch) > len(g) {
 						t.Fatalf("%s, limit %d: optimal patch (%d B) larger than greedy (%d B)", c.name, limit, len(patch), len(g))
 					}
@@ -72,7 +72,7 @@ func TestMaxInstructionLenUnlimited(t *testing.T) {
 	r := rand.New(rand.NewSource(8))
 	dict := textFile(r, fileSize)
 	tgt := splice(dict, 1000, 0, randomFile(r, 50))
-	want := encode(dict, tgt, MaxSize)
+	want := withHeader(encode(dict, tgt, MaxSize))
 	for _, limit := range []int{0, fileSize, MaxSize, MaxSize + 1} {
 		got, err := EncodeWith(dict, tgt, EncodeOptions{MaxInstructionLen: limit})
 		if err != nil || !bytes.Equal(got, want) {

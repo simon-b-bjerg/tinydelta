@@ -228,7 +228,7 @@ func TestCIODecoderMatchesGo(t *testing.T) {
 			name string
 			fn   func(dict, target []byte, maxLen int) []byte
 		}{{"optimal", encode}, {"greedy", encodeGreedy}} {
-			patch := enc.fn(p.dict, p.tgt, MaxSize)
+			patch := withHeader(enc.fn(p.dict, p.tgt, MaxSize))
 			for _, b := range bins {
 				for _, page := range pages {
 					label := fmt.Sprintf("%s/%s scratch=%d page=%d", p.name, enc.name, b.scratch, page)
@@ -248,7 +248,7 @@ func TestCIODecoderMatchesGo(t *testing.T) {
 
 	// Corrupted and truncated patches: same accept/reject (and output) as Go.
 	for _, p := range pairs[:6] {
-		patch := encode(p.dict, p.tgt, MaxSize)
+		patch := withHeader(encode(p.dict, p.tgt, MaxSize))
 		for k := 0; k < 6 && len(patch) > 0; k++ {
 			variants := [][]byte{patch[:r.Intn(len(patch))]}
 			m := append([]byte{}, patch...)
@@ -277,7 +277,7 @@ func TestCIODecoderCallbackFailures(t *testing.T) {
 	r := rand.New(rand.NewSource(22))
 	dict := textFile(r, 2048)
 	tgt := splice(splice(dict, 500, 10, []byte("changed!")), 1500, 0, bytes.Repeat([]byte{'q'}, 100))
-	patch := encode(dict, tgt, MaxSize)
+	patch := withHeader(encode(dict, tgt, MaxSize))
 	for _, b := range bins {
 		for _, page := range []int{0, 7} {
 			for n := 1; n <= 40; n++ {

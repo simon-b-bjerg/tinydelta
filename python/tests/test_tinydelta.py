@@ -58,8 +58,8 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(tinydelta.decode(b"", short), bytes(500))
 
     def test_empty(self):
-        self.assertEqual(tinydelta.encode(b"", b""), b"")
-        self.assertEqual(tinydelta.decode(b"", b""), b"")
+        self.assertEqual(tinydelta.encode(b"", b""), b"\x01")  # the version byte alone
+        self.assertEqual(tinydelta.decode(b"", b"\x01"), b"")
 
     def test_max_size(self):
         patch = tinydelta.encode(self.old, self.new)
@@ -71,7 +71,7 @@ class RoundTrip(unittest.TestCase):
 class Errors(unittest.TestCase):
     def test_malformed_patch(self):
         with self.assertRaises(tinydelta.Error) as caught:
-            tinydelta.decode(b"", b"\x0d\x61")  # ADD 3 with only 1 literal byte
+            tinydelta.decode(b"", b"\x01\x0d\x61")  # version 1, ADD 3 with only 1 literal byte
         self.assertNotIsInstance(caught.exception, tinydelta.TooLargeError)
         self.assertNotIn("tinydelta: ", str(caught.exception))
 

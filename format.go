@@ -1,7 +1,14 @@
-// Package tinydelta implements a minimal, custom binary delta format: no
-// RFC 3284 heritage, no file header or framing at all. A patch is a bare
-// stream of instructions; Decode is simply handed the dictionary and the
-// patch bytes and runs instructions until the patch is exhausted.
+// Package tinydelta implements a minimal, custom binary delta format with
+// no RFC 3284 heritage. A patch is a one-byte header, the format version
+// (FormatVersion), followed by a bare stream of instructions; Decode is
+// handed the dictionary and the patch bytes, checks the version and runs
+// instructions until the patch is exhausted. There is no other framing:
+// no lengths, no checksum.
+//
+// The version byte names the instruction set. A decoder rejects any
+// version it does not know (ErrUnsupportedVersion) instead of producing
+// a wrong target, so the instruction set can change in a later version
+// without old decoders silently misreading new patches.
 //
 // Each instruction starts with one little-endian base-128 varint (LEB128:
 // the opposite byte order from VCDIFF's big-endian varint) whose low 2
@@ -56,6 +63,21 @@
 //     correctly (e.g. a delta of -1 encodes an arbitrarily long run of
 //     one byte).
 package tinydelta
+
+// FormatVersion is the patch format version this package writes and
+// reads: the first byte of every patch.
+const FormatVersion = 1
+
+// headerLen is the size of the patch header: the version byte.
+const headerLen = 1
+
+// withHeader returns the patch made of the header and the instruction
+// stream instructions.
+func withHeader(instructions []byte) []byte {
+	patch := make([]byte, 0, headerLen+len(instructions))
+	patch = append(patch, FormatVersion)
+	return append(patch, instructions...)
+}
 
 const (
 	opCopy       = 0
