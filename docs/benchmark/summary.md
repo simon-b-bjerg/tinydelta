@@ -2,7 +2,7 @@
 
 Tools: tinydelta (tinydelta v0.0.0-20261031185817-4c80cd7ff7fe); openvcdiff (open-vcdiff 868f459a8d815125c2457f8c74b12493853100f9); xdelta3 (Xdelta version 3.0.11); bsdiff (bsdiff 4.3-23); detools (detools 0.53.0); hpatchlite (HPatchLite v1.0.2); zstd (Zstandard CLI (64-bit) v1.5.7)
 
-Ratio = tinydelta's patch size / the other tool's; below 1, tinydelta is smaller. Geometric mean is the right average for ratios; "smaller" is the share of pairs where tinydelta is smaller. tinydelta is, per pair, the smaller of its plain patch (the library default) and its compression mode decoded twice, as sent: what an integrator following the README ships, with a decoder that reads format versions 1 and 2. Both are listed on their own in the patch-size tables.
+Ratio = tinydelta's patch size / the other tool's; below 1, tinydelta is smaller. Geometric mean is the right average for ratios; "smaller" is the share of pairs where tinydelta is smaller. tinydelta is, per pair, the smaller of its plain patch (the library default) and its compression-mode patch, the one an update server would send. Both are listed on their own in the patch-size tables.
 
 ## firmware, 1 commit apart
 

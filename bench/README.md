@@ -23,7 +23,7 @@ results, so the inputs can be rebuilt and checked.
 
 | tool | settings |
 |---|---|
-| tinydelta | per pair, the smaller of the plain patch (`encode`, the library's default: optimal, falling back to greedy above roughly 100 KB, so greedy for these firmware images) and compression mode (`encode -for-compression`, then `encode` again against an empty dictionary), as the README tells integrators to choose. This is the tinydelta in every graph and comparison |
+| tinydelta | per pair, the smaller of the plain patch (`encode`, the library's default: optimal, falling back to greedy above roughly 100 KB, so greedy for these firmware images) and the compression-mode patch (`encode -for-compression`, then `encode` again against an empty dictionary), the one an update server would send. This is the tinydelta in every graph and comparison |
 | tinydelta variants | in the summary only: `encode -greedy`; compression mode with its second pass limited to `-max-distance 1024`; the plain patch limited to `-max-distance 256`, `1024` and `4096`, which the callback decoder decodes without `target_read` with a buffer of that size. Optimal at any size (`TestEncodeUnlimited`, the encoder's memory limit lifted) is available with `run.py --tools ...,tinydelta_optimal`, but is not run by default: it takes a few hundred MB and a minute or more per firmware pair |
 | open-vcdiff | `encode -target_matches`, its smallest setting |
 | open-vcdiff, zlib-compressed | open-vcdiff's patch compressed afterwards with zlib (DEFLATE) at level 9; the decoder would need zlib too, which the trade-off graph doesn't show |
