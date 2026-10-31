@@ -11,7 +11,7 @@ fixed commit range of a public repository ([`corpus.json`](corpus.json)):
 
 | kind | source | items | range |
 |---|---|---|---|
-| firmware | [MicroPython](https://github.com/micropython/micropython), stm32 port | NUCLEO_F091RC (Cortex-M0), PYBV11 (Cortex-M4) | commits touching firmware code between `v1.25.0` and `v1.26.0` |
+| firmware | [MicroPython](https://github.com/micropython/micropython), stm32 port | NUCLEO_F091RC (Cortex-M0), PYBV11 (Cortex-M4) | commits touching firmware code between `v1.25.0` and `v1.26.0`; built with the commit's date as build date and a fixed Python hash seed, so every build is byte-reproducible |
 | device tree | Linux device trees ([devicetree-rebasing](https://git.kernel.org/pub/scm/linux/kernel/git/devicetree/devicetree-rebasing.git)), compiled to `.dtb` | rk3588-rock-5b, imx8mp-evk, k3-am625-sk | commits touching the board's vendor directory or `include/` between `v7.0-dts` and `v7.3-dts`, every non-merge commit in topological order (the kernel's main line brings device tree changes in a few large merges) |
 
 Up to 25 distinct builds per item: a commit that leaves the output
@@ -24,7 +24,7 @@ results, so the inputs can be rebuilt and checked.
 | tool | settings |
 |---|---|
 | tinydelta | `encode`, as the library does it, which the comparisons use: optimal, falling back to greedy above roughly 100 KB, so greedy for these firmware images; also `encode -greedy`. Optimal at any size (`TestEncodeUnlimited`, the encoder's memory limit lifted) is available with `run.py --tools ...,tinydelta_optimal`, but is not run by default: it takes a few hundred MB and a minute or more per firmware pair |
-| tinydelta + zlib | the tinydelta patch at zlib level 9; zlib's framing makes very small patches larger |
+| tinydelta, compression mode | `encode -for-compression` (format version 2 where it compresses better), encoded again by tinydelta against an empty dictionary, also with `-max-distance 1024`: what a device decodes twice with the same decoder. Shown in the trade-off graph and the summary, not in the forest graph |
 | open-vcdiff | `encode -target_matches`, its smallest setting; also its output zlib-compressed at level 9, the pipeline tinydelta replaces |
 | xdelta3 | `-9 -S none` (VCDIFF, no secondary compression) |
 | bsdiff | bsdiff 4 (bzip2 inside) |
@@ -48,18 +48,20 @@ commits to `bench-results-preview`, replaced each time. The results:
 | file | what |
 |---|---|
 | `forest.svg` | the headline: per kind of data and tool, tinydelta's patch size divided by the tool's (geometric mean, 10th-90th percentile), 1 and 5 commits apart |
-| `pairs.svg` | every pair: tinydelta against open-vcdiff, HPatchLite (4 KB) and bsdiff |
-| `ratio_ecdf.svg`, `patch_share.svg` | the full distributions: the size ratio, and patch size as a share of the target |
+| `pairs.svg` | every pair: tinydelta against open-vcdiff, HPatchLite (4 KB), bsdiff and zstd, colour by tool, marker by kind of data |
+| `ratio_ecdf_<kind>.svg`, `patch_share_<kind>.svg` | the full distributions, one graph per kind of data (`firmware`, `device_tree`): the size ratio, and patch size as a share of the target |
 | `tradeoff.svg` | each tool's median patch size against its decoder's footprint on the device: code plus RAM buffers, stack excluded |
 | `summary.md` | the numbers behind the graphs, plus patch sizes in bytes |
 | `decoders.json`, `decoder-size.md` | the decoder costs behind the trade-off graph, with where each comes from, and this run's measurement of the decoders that build for Cortex-M0 |
 | `results.csv` | one row per pair, every tool's patch size |
 | `inputs/`, `corpus.json`, `results-tools.json` | the commit and SHA-256 of every build, the corpus and the tool versions |
 
-Every graph is also a PNG, for slides. Every comparison has one baseline:
-tinydelta's patch as it is sent, uncompressed. tinydelta + zlib is a row
-like any other tool, showing what compression would add; what it costs
-the decoder shows in the trade-off graph.
+Every graph is also a PNG, for slides. Every comparison has one baseline,
+"tinydelta": per pair, the smaller of the plain patch and compression
+mode decoded twice, as sent, which is what the README tells integrators
+to ship. Its footprint is the decoder that reads both format versions.
+The summary also lists both on their own, and how often compression mode
+wins.
 
 Decoder footprints ([`decoders.json`](decoders.json)) are code plus the
 RAM buffers a decoder needs (dictionaries, windows, caches); stack is

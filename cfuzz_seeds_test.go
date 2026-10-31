@@ -52,6 +52,13 @@ func TestWriteCFuzzSeeds(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if i%3 == 2 { // format version 2, from the cover encoder
+			limit := MaxSize
+			if opts.MaxInstructionLen > 0 {
+				limit = opts.MaxInstructionLen
+			}
+			patch = withVersion(FormatVersion2, encodeCovers(dict, target, limit))
+		}
 
 		// Header: output capacity (little-endian), dictionary length, page
 		// size byte, callback call to fail (0: none); see the input layout

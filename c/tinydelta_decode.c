@@ -14,7 +14,8 @@ tinydelta_result tinydelta_decode(const uint8_t *dict, uint32_t dict_len,
     if (dict_len > TINYDELTA_MAX_SIZE) return TINYDELTA_ERR_TOO_LARGE;
     if (out_cap > TINYDELTA_MAX_SIZE) out_cap = TINYDELTA_MAX_SIZE;
     if (patch_len < TINYDELTA_HEADER_LEN) return TINYDELTA_ERR_MALFORMED;
-    if (patch[0] != TINYDELTA_FORMAT_VERSION) return TINYDELTA_ERR_VERSION;
+    const int add_diff = patch[0] == TINYDELTA_FORMAT_VERSION_2;
+    if (patch[0] != TINYDELTA_FORMAT_VERSION && !add_diff) return TINYDELTA_ERR_VERSION;
 
     while (patch_pos < patch_len) {
         uint32_t instruction, length, delta, address, used;
@@ -59,6 +60,16 @@ tinydelta_result tinydelta_decode(const uint8_t *dict, uint32_t dict_len,
             break;
 
         case TINYDELTA_OP_COPY_TARGET:
+            if (add_diff) { /* ADD_DIFF: dictionary byte + patch byte */
+                if (!range_within(cursor, length, dict_len) ||
+                    !range_within(patch_pos, length, patch_len)) return TINYDELTA_ERR_MALFORMED;
+                for (uint32_t i = 0; i < length; i++) {
+                    out[out_pos + i] = (uint8_t)(dict[cursor + i] + patch[patch_pos + i]);
+                }
+                patch_pos += length;
+                cursor += length;
+                break;
+            }
             if (varint_parse(patch + patch_pos, patch_len - patch_pos, &delta, &used) != TINYDELTA_OK) {
                 return TINYDELTA_ERR_MALFORMED;
             }

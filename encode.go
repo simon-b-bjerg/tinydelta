@@ -1,6 +1,9 @@
 package tinydelta
 
-import "fmt"
+import (
+	"compress/flate"
+	"fmt"
+)
 
 // Encode produces the smallest patch it can find that reconstructs target
 // from dict via Decode, using an optimal parse (dynamic programming over
@@ -24,6 +27,32 @@ type EncodeOptions struct {
 	// of the optimizing one (see Encode).
 	Greedy bool
 
+	// ForCompression writes a format version 2 patch (FormatVersion2),
+	// made for patches that are compressed afterwards, e.g. with zlib or
+	// a small embedded compressor such as heatshrink or tinyuz. Regions
+	// that line up with the dictionary but have a few changed bytes
+	// (moved addresses and branch offsets in firmware) are written as
+	// differences from the dictionary, which compress far better than
+	// the new bytes themselves. Uncompressed, such a patch is usually
+	// larger than the default one. For small changes a version 1 patch
+	// often compresses better, so both are made, each is compressed with
+	// DEFLATE as a stand-in for whatever compressor follows, and the
+	// smaller one is returned: ForCompression may return a version 1
+	// patch. Greedy applies to that version 1 candidate.
+	ForCompression bool
+
+	// MaxTargetDistance, if positive, limits how far back from the
+	// current output position a COPY_TARGET may read: at most this many
+	// bytes. A decoder then only needs the last MaxTargetDistance bytes
+	// of the target it has produced, in a ring buffer for example,
+	// instead of being able to read all of it back. That is what makes a
+	// second pass practical on a device: a patch encoded again against an
+	// empty dictionary (see the README) decodes in one stream with a
+	// buffer of this size. 0 means no limit. Smaller limits give larger
+	// patches. Version 2 patches have no COPY_TARGET, so the limit only
+	// affects version 1.
+	MaxTargetDistance int
+
 	// MaxInstructionLen, if positive, caps the number of target bytes
 	// any single instruction may produce: longer ADD, SKIP, COPY and
 	// COPY_TARGET runs are split into several instructions. Use it when
@@ -43,14 +72,24 @@ func EncodeWith(dict, target []byte, opts EncodeOptions) ([]byte, error) {
 	if opts.MaxInstructionLen < 0 {
 		return nil, fmt.Errorf("tinydelta: negative MaxInstructionLen %d", opts.MaxInstructionLen)
 	}
+	if opts.MaxTargetDistance < 0 {
+		return nil, fmt.Errorf("tinydelta: negative MaxTargetDistance %d", opts.MaxTargetDistance)
+	}
+	maxDistance := MaxSize
+	if opts.MaxTargetDistance > 0 && opts.MaxTargetDistance < MaxSize {
+		maxDistance = opts.MaxTargetDistance
+	}
 	maxLen := MaxSize
 	if opts.MaxInstructionLen > 0 && opts.MaxInstructionLen < MaxSize {
 		maxLen = opts.MaxInstructionLen
 	}
-	if opts.Greedy {
-		return withHeader(encodeGreedy(dict, target, maxLen)), nil
+	if opts.ForCompression {
+		return encodeForCompression(dict, target, maxLen, maxDistance, opts.Greedy), nil
 	}
-	return withHeader(encode(dict, target, maxLen)), nil
+	if opts.Greedy {
+		return withHeader(encodeGreedyLimited(dict, target, maxLen, maxDistance)), nil
+	}
+	return withHeader(encodeLimited(dict, target, maxLen, maxDistance)), nil
 }
 
 // EncodeGreedy produces a patch that reconstructs target from dict via
@@ -82,8 +121,14 @@ func checkSizes(dict, target []byte) error {
 // instruction stream only), with no instruction producing
 // more than maxLen (at least 1) target bytes.
 func encode(dict, target []byte, maxLen int) []byte {
-	greedy := encodeGreedy(dict, target, maxLen)
-	if opt := encodeOptimal(dict, target, greedy, maxLen); opt != nil && len(opt) < len(greedy) {
+	return encodeLimited(dict, target, maxLen, MaxSize)
+}
+
+// encodeLimited is encode with no COPY_TARGET reading more than
+// maxDistance bytes back.
+func encodeLimited(dict, target []byte, maxLen, maxDistance int) []byte {
+	greedy := encodeGreedyLimited(dict, target, maxLen, maxDistance)
+	if opt := encodeOptimal(dict, target, greedy, maxLen, maxDistance); opt != nil && len(opt) < len(greedy) {
 		return opt
 	}
 	return greedy
@@ -92,8 +137,14 @@ func encode(dict, target []byte, maxLen int) []byte {
 // encodeGreedy is EncodeGreedy without the size check or the header, with no
 // instruction producing more than maxLen (at least 1) target bytes.
 func encodeGreedy(dict, target []byte, maxLen int) []byte {
+	return encodeGreedyLimited(dict, target, maxLen, MaxSize)
+}
+
+// encodeGreedyLimited is encodeGreedy with no COPY_TARGET reading more
+// than maxDistance bytes back.
+func encodeGreedyLimited(dict, target []byte, maxLen, maxDistance int) []byte {
 	dm := newMatcher(dict)
-	sm := newSelfMatcher(target)
+	sm := newSelfMatcher(target, maxDistance)
 	cursor := uint64(0)
 
 	var out []byte
@@ -203,4 +254,39 @@ func dictCandidate(cursor, addr uint64, length int) candidate {
 	delta := int64(addr) - int64(cursor)
 	cost := varintLen(uint64(length)<<2|opCopy) + varintLen(zigzagEncode(delta))
 	return candidate{kind: opCopy, length: length, delta: delta, cost: cost}
+}
+
+// encodeForCompression makes a version 1 and a version 2 patch and
+// returns whichever compresses smaller with DEFLATE (see
+// EncodeOptions.ForCompression).
+func encodeForCompression(dict, target []byte, maxLen, maxDistance int, greedy bool) []byte {
+	var v1 []byte
+	if greedy {
+		v1 = withHeader(encodeGreedyLimited(dict, target, maxLen, maxDistance))
+	} else {
+		v1 = withHeader(encodeLimited(dict, target, maxLen, maxDistance))
+	}
+	v2 := withVersion(FormatVersion2, encodeCovers(dict, target, maxLen))
+	if deflatedLen(v2) < deflatedLen(v1) {
+		return v2
+	}
+	return v1
+}
+
+// deflatedLen is the size of b compressed with DEFLATE at its best
+// compression level.
+func deflatedLen(b []byte) int {
+	var n countingWriter
+	w, _ := flate.NewWriter(&n, flate.BestCompression)
+	w.Write(b)
+	w.Close()
+	return int(n)
+}
+
+// countingWriter counts the bytes written to it and discards them.
+type countingWriter int
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	*c += countingWriter(len(p))
+	return len(p), nil
 }

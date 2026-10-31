@@ -15,10 +15,12 @@
  * This bound keeps every value in a patch within 32 bits. */
 #define TINYDELTA_MAX_SIZE 0x3FFFFFFFu
 
-/* The patch format version these decoders read: the first byte of every
- * patch. A patch with any other first byte is rejected with
+/* The patch format versions these decoders read: the first byte of every
+ * patch. Version 2 is made for compression (ADD_DIFF in place of
+ * COPY_TARGET). A patch with any other first byte is rejected with
  * TINYDELTA_ERR_VERSION. */
 #define TINYDELTA_FORMAT_VERSION 1u
+#define TINYDELTA_FORMAT_VERSION_2 2u
 
 typedef enum {
     TINYDELTA_OK            =  0,

@@ -13,7 +13,7 @@ import (
 var ErrTooLarge = errors.New("tinydelta: size limit exceeded")
 
 // ErrUnsupportedVersion is returned for a patch whose header names a
-// format version other than FormatVersion: a patch made for a newer (or
+// format version other than FormatVersion or FormatVersion2: a patch made for a newer (or
 // older) decoder, or data that is not a tinydelta patch at all.
 var ErrUnsupportedVersion = errors.New("tinydelta: unsupported patch format version")
 
@@ -63,8 +63,8 @@ func DecodeReaderLimit(dict []byte, r io.Reader, maxOutput int) (target []byte, 
 		}
 		return nil, fmt.Errorf("tinydelta: %w", err)
 	}
-	if version != FormatVersion {
-		return nil, fmt.Errorf("%w: patch is version %d, this decoder reads version %d", ErrUnsupportedVersion, version, FormatVersion)
+	if version != FormatVersion && version != FormatVersion2 {
+		return nil, fmt.Errorf("%w: patch is version %d, this decoder reads versions %d and %d", ErrUnsupportedVersion, version, FormatVersion, FormatVersion2)
 	}
 	cursor := uint64(0) // dictionary cursor; see format.go
 	for {
@@ -109,7 +109,21 @@ func DecodeReaderLimit(dict []byte, r io.Reader, maxOutput int) (target []byte, 
 			target = append(target, dict[cursor:cursor+length]...)
 			cursor += length
 
-		case opTargetCopy:
+		case opTargetCopy: // ADD_DIFF in version 2
+			if version == FormatVersion2 {
+				if cursor > uint64(len(dict)) || length > uint64(len(dict))-cursor {
+					return nil, fmt.Errorf("tinydelta: ADD_DIFF [%d,%d) exceeds dictionary length %d", cursor, cursor+length, len(dict))
+				}
+				start := len(target)
+				if target, err = appendFrom(target, br, length); err != nil {
+					return nil, fmt.Errorf("tinydelta: ADD_DIFF needs %d difference bytes: %w", length, err)
+				}
+				for i, old := range dict[cursor : cursor+length] {
+					target[start+i] += old
+				}
+				cursor += length
+				break
+			}
 			delta, err := readZigzagFrom(br)
 			if err != nil {
 				return nil, fmt.Errorf("tinydelta: COPY_TARGET delta: %w", err)
