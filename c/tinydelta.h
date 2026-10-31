@@ -20,6 +20,14 @@
  * TINYDELTA_ERR_VERSION. */
 #define TINYDELTA_FORMAT_VERSION 1u
 
+/* Format version 2 (patches made for compression, with ADD_DIFF in place
+ * of COPY_TARGET) is compiled in only when TINYDELTA_FORMAT_V2 is 1.
+ * Without it the decoders read version 1 only and are no larger. */
+#ifndef TINYDELTA_FORMAT_V2
+#define TINYDELTA_FORMAT_V2 0
+#endif
+#define TINYDELTA_FORMAT_VERSION_2 2u
+
 typedef enum {
     TINYDELTA_OK            =  0,
     TINYDELTA_ERR_MALFORMED = -1, /* corrupt or truncated patch, or one that
