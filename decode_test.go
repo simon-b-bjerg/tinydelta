@@ -124,7 +124,7 @@ func TestDecodeChecksHeader(t *testing.T) {
 	if _, err := Decode(dict, nil); err == nil || errors.Is(err, ErrUnsupportedVersion) {
 		t.Errorf("Decode(empty patch): err = %v, want a missing-header error", err)
 	}
-	for _, version := range []byte{0, FormatVersion + 1, 0xFF} {
+	for _, version := range []byte{0, FormatVersion2 + 1, 0xFF} {
 		patch := append([]byte{version}, inst(opSkip, 3)...)
 		if _, err := Decode(dict, patch); !errors.Is(err, ErrUnsupportedVersion) {
 			t.Errorf("Decode(version %d): err = %v, want ErrUnsupportedVersion", version, err)

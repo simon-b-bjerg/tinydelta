@@ -115,8 +115,7 @@ func cCommand(bin string, args ...string) *exec.Cmd {
 	return exec.Command(bin, args...)
 }
 
-// buildCDriver compiles cDriver with the memory decoder and returns the
-// binary's path.
+// buildCDriver compiles cDriver with the memory decoder and returns the binary's path.
 func buildCDriver(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -176,9 +175,13 @@ func TestCDecoderMatchesGo(t *testing.T) {
 		}
 		for _, enc := range []struct {
 			name string
-			fn   func(dict, target []byte, maxLen int) []byte
-		}{{"optimal", encode}, {"greedy", encodeGreedy}} {
-			patch := withHeader(enc.fn(p.dict, p.tgt, MaxSize))
+			fn   func(dict, target []byte) []byte
+		}{
+			{"optimal", func(d, t []byte) []byte { return withHeader(encode(d, t, MaxSize)) }},
+			{"greedy", func(d, t []byte) []byte { return withHeader(encodeGreedy(d, t, MaxSize)) }},
+			{"version 2", func(d, t []byte) []byte { return withVersion(FormatVersion2, encodeCovers(d, t, MaxSize)) }},
+		} {
+			patch := enc.fn(p.dict, p.tgt)
 			label := p.name + "/" + enc.name
 			got, ok := cDecode(p.dict, patch, big)
 			if !ok || !bytes.Equal(got, p.tgt) {

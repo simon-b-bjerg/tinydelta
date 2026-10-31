@@ -62,6 +62,7 @@ class Item:
         self.versions = json.load(open(self.index)) if os.path.exists(self.index) else []
         self.done_commits = {v["commit"] for v in self.versions}
         self.skipped = []
+        self.resume_at = 0  # index in the commit list to continue from (keep_only)
 
     def keep_only(self, commits):
         """Drops cached builds unless every one comes from this commit list,
@@ -79,6 +80,15 @@ class Item:
             self.versions, self.done_commits = [], set()
             if os.path.exists(self.index):
                 os.remove(self.index)
+        # Continue after the last cached build, never before it: commits
+        # before it were already examined in order (a build identical to
+        # the one before it is not recorded), and building them again
+        # would append older versions after newer ones.
+        self.resume_at = position[self.versions[-1]["commit"]] + 1 if self.versions else 0
+
+    def pending(self, index, commit):
+        """Whether the commit at index in the walk still needs building."""
+        return not self.full() and index >= self.resume_at and commit not in self.done_commits
 
     def full(self):
         return len(self.versions) >= self.max_versions
@@ -97,11 +107,11 @@ class Item:
         return True
 
 
-def run(cmd, cwd, log):
+def run(cmd, cwd, log, env=None):
     with open(log, "a") as f:
         f.write("\n$ %s\n" % " ".join(cmd))
         f.flush()
-        return subprocess.run(cmd, cwd=cwd, stdout=f, stderr=subprocess.STDOUT).returncode == 0
+        return subprocess.run(cmd, cwd=cwd, stdout=f, stderr=subprocess.STDOUT, env=env).returncode == 0
 
 
 def collect_micropython(cache, name, spec):
@@ -112,14 +122,19 @@ def collect_micropython(cache, name, spec):
     commits = commits_touching(src, spec["from"], spec["to"], MICROPYTHON_PATHS)
     for item, _ in items:
         item.keep_only(commits)
-    for commit in commits:
-        todo = [(item, it) for item, it in items if not item.full() and commit not in item.done_commits]
+    for index, commit in enumerate(commits):
+        todo = [(item, it) for item, it in items if item.pending(index, commit)]
         if not todo:
             if all(item.full() for item, _ in items):
                 break
             continue
         git(src, "checkout", "-q", "-f", commit)
-        if not run(["make", "-C", "mpy-cross", "-j", JOBS], src, log):
+        # Reproducible builds: the firmware embeds its build date (the
+        # commit's date instead), and the build scripts order some tables
+        # by Python's randomized string hashes (fixed seed instead).
+        env = dict(os.environ, PYTHONHASHSEED="0",
+                   SOURCE_DATE_EPOCH=git(src, "log", "-1", "--format=%ct", commit).strip())
+        if not run(["make", "-C", "mpy-cross", "-j", JOBS], src, log, env):
             for item, _ in todo:
                 item.skipped.append(commit)
             continue
@@ -128,7 +143,7 @@ def collect_micropython(cache, name, spec):
             board = ["BOARD=" + it["board"]]
             build = os.path.join(port, "build-" + it["board"])
             shutil.rmtree(build, ignore_errors=True)
-            ok = run(["make", "submodules"] + board, port, log) and run(["make", "-j", JOBS] + board, port, log)
+            ok = run(["make", "submodules"] + board, port, log, env) and run(["make", "-j", JOBS] + board, port, log, env)
             parts = sorted(f for f in os.listdir(build) if f.startswith("firmware") and f.endswith(".bin")) if ok else []
             # Boards with separate flash regions get firmware0.bin, firmware1.bin...;
             # the image compared is their concatenation, as flashed.
@@ -156,10 +171,10 @@ def collect_dtb(cache, name, spec):
         commits = commits_touching(src, spec["from"], spec["to"], [os.path.dirname(dts), "include"],
                                    first_parent=False)
         item.keep_only(commits)
-        for commit in commits:
+        for index, commit in enumerate(commits):
             if item.full():
                 break
-            if commit in item.done_commits:
+            if not item.pending(index, commit):
                 continue
             git(src, "checkout", "-q", "-f", commit)
             if not os.path.exists(os.path.join(src, dts)):

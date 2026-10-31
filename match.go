@@ -93,16 +93,18 @@ func directMatchLen(dict []byte, dictPos int, target []byte, p, limit int) int {
 // time a match is found — see COPY_TARGET's doc in format.go — so there
 // is no equivalent of matcher's dict-boundary cap here.
 type selfMatcher struct {
-	target []byte
-	head   map[uint32]int32
-	next   []int32 // next[p] = the previous position with target[p:p+4]'s key, or -1
+	target      []byte
+	maxDistance int // matches start at most this many bytes back
+	head        map[uint32]int32
+	next        []int32 // next[p] = the previous position with target[p:p+4]'s key, or -1
 }
 
-func newSelfMatcher(target []byte) *selfMatcher {
+func newSelfMatcher(target []byte, maxDistance int) *selfMatcher {
 	return &selfMatcher{
-		target: target,
-		head:   make(map[uint32]int32, len(target)),
-		next:   make([]int32, 0, len(target)),
+		target:      target,
+		maxDistance: maxDistance,
+		head:        make(map[uint32]int32, len(target)),
+		next:        make([]int32, 0, len(target)),
 	}
 }
 
@@ -125,7 +127,8 @@ func (m *selfMatcher) insert(p int) {
 }
 
 // bestMatch returns the longest match at p against any previously
-// inserted position, capped at limit bytes, and that position's address.
+// inserted position at most maxDistance back, capped at limit bytes, and
+// that position's address.
 func (m *selfMatcher) bestMatch(p, limit int) (addr, length int) {
 	if p+4 > len(m.target) || limit < 4 {
 		return 0, 0
@@ -134,7 +137,9 @@ func (m *selfMatcher) bestMatch(p, limit int) (addr, length int) {
 	if !ok {
 		return 0, 0
 	}
-	for probes := 0; c >= 0 && probes < maxChain; probes, c = probes+1, m.next[c] {
+	// The chain runs from the nearest position back, so the first one
+	// out of reach ends it.
+	for probes := 0; c >= 0 && probes < maxChain && p-int(c) <= m.maxDistance; probes, c = probes+1, m.next[c] {
 		n := matchLen(m.target, int(c), m.target, p, limit)
 		if n > length {
 			addr, length = int(c), n

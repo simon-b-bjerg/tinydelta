@@ -2,19 +2,11 @@
   "_comment": "What each tool's decoder costs on the device, for the trade-off graph (plot.py): footprint = code + buffers (+ the old file, if plus_old_file), stack excluded. code is .text in bytes, null where no microcontroller build exists (the point is then a lower bound). buffers is RAM the decoder needs besides its stack: dictionaries, windows, caches. stack is recorded but not counted. With plus_old_file, the decoder holds the whole old file in RAM; the graph adds the median old-file size of each kind of data. basis says where each number comes from: measured (bench/decoder-size.sh, Cortex-M0, -Os) or the tool's documentation.",
   "tinydelta": {
     "label": "tinydelta",
-    "code": 720,
+    "code": 852,
     "buffers": 0,
-    "stack": 200,
+    "stack": 215,
     "plus_old_file": false,
-    "basis": "measured: callback decoder, Cortex-M0, -Os: 720 B code with arm-none-eabi-gcc 13.2; no static RAM or buffers, ~200 B stack"
-  },
-  "tinydelta_zlib": {
-    "label": "tinydelta + zlib",
-    "code": null,
-    "buffers": 32768,
-    "stack": null,
-    "plus_old_file": false,
-    "basis": "tinydelta plus an inflate decoder (code not measured, so a lower bound) with a 32 KB window: the patches are compressed with zlib's default 15-bit window"
+    "basis": "measured: callback decoder, Cortex-M0, -Os: 852 B code with arm-none-eabi-gcc 13.2; no static RAM or buffers, ~215 B stack. A compression-mode patch is decoded twice, and the intermediate patch has to be stored, e.g. in external flash"
   },
   "hpatchlite_4k": {
     "label": "HPatchLite, 4 KB dict.",
@@ -56,13 +48,13 @@
     "plus_old_file": true,
     "basis": "zstd --patch-from uses the whole old file as its window, so the decoder needs at least the old file in memory"
   },
-  "openvcdiff": {
-    "label": "open-vcdiff",
-    "code": null,
-    "buffers": 0,
-    "stack": null,
-    "plus_old_file": true,
-    "basis": "open-vcdiff's decoder (C++) works on the whole dictionary in memory"
+  "openvcdiff_interleaved": {
+    "label": "tiny-vcdiff (VCDIFF, interleaved)",
+    "code": 3881,
+    "buffers": 3221,
+    "stack": 150,
+    "plus_old_file": false,
+    "basis": "measured on a 230 KB MicroPython image (README, decoder footprint notes): tiny-vcdiff linked into a small test program for Cortex-M0, -Os, --gc-sections: 3,881 B code, 3,221 B static RAM, ~150 B stack; it reads open-vcdiff's interleaved format, so its patch sizes are open-vcdiff's with -interleaved"
   },
   "xdelta3": {
     "label": "xdelta3",

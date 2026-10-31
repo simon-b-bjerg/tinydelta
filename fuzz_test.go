@@ -78,7 +78,9 @@ func applyEdits(dict, script []byte) []byte {
 //   - has no instruction longer than the limit (when one is set);
 //
 // and the optimizing encoder's patch must be no larger than the greedy
-// one's, which Encode and EncodeWith document.
+// one's, which Encode and EncodeWith document. The version 2 cover
+// encoder, and EncodeWith with ForCompression, must meet the first three
+// too.
 //
 // `go test` runs the seed corpus below plus any failing inputs saved under
 // testdata/fuzz/FuzzEncodeRoundTrip. To search for new failures:
@@ -146,6 +148,31 @@ func FuzzEncodeRoundTrip(f *testing.F) {
 		if sizes[1] > sizes[0] {
 			t.Fatalf("optimizing patch %d B is larger than greedy patch %d B", sizes[1], sizes[0])
 		}
+
+		// Format version 2: the cover encoder itself (ForCompression may
+		// pick the version 1 patch instead), and ForCompression.
+		limit := MaxSize
+		if maxLen > 0 {
+			limit = int(maxLen)
+		}
+		for _, patch := range [][]byte{
+			withVersion(FormatVersion2, encodeCovers(dict, target, limit)),
+			mustEncode(t, dict, target, EncodeOptions{ForCompression: true, MaxInstructionLen: int(maxLen)}),
+		} {
+			if got, err := Decode(dict, patch); err != nil || !bytes.Equal(got, target) {
+				t.Fatalf("version %d: round trip failed: %v", patch[0], err)
+			}
+			if len(target) >= 2 {
+				if _, err := DecodeReaderLimit(dict, bytes.NewReader(patch), len(target)-1); !errors.Is(err, ErrTooLarge) {
+					t.Fatalf("version %d: decode capped one byte short: got %v, want ErrTooLarge", patch[0], err)
+				}
+			}
+			for _, n := range instructionLens(t, patch) {
+				if n > limit {
+					t.Fatalf("version %d: instruction of %d B exceeds MaxInstructionLen %d", patch[0], n, maxLen)
+				}
+			}
+		}
 	})
 }
 
@@ -186,4 +213,14 @@ func TestDumpFuzzInput(t *testing.T) {
 	fmt.Printf("maxLen: %s\n\ndict (%d B):\n%s\nscript (%d B):\n%s\ntarget (%d B):\n%s",
 		lines[3], len(dict), hex.Dump(dict), len(script), hex.Dump(script),
 		len(applyEdits(dict, script)), hex.Dump(applyEdits(dict, script)))
+}
+
+// mustEncode is EncodeWith, failing the test on error.
+func mustEncode(t *testing.T, dict, target []byte, opts EncodeOptions) []byte {
+	t.Helper()
+	patch, err := EncodeWith(dict, target, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return patch
 }

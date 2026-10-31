@@ -33,13 +33,13 @@ no compression library.
 - **Small patches.** One version byte, then a stream of short
   instructions: no framing, lengths or checksum. An unchanged region
   typically costs one or two bytes. On 166 real firmware and device-tree
-  updates, smaller than open-vcdiff's in every one, typically a third of
-  the size ([Benchmark](#benchmark)).
+  updates, smaller than open-vcdiff's in every one, typically a fifth to
+  a third the size ([Benchmark](#benchmark)).
 - **Optimizing encoder.** Dynamic programming over exact instruction
   costs, never worse than the built-in greedy encoder, which is
   available when speed matters more.
-- **Tiny C decoder.** 392 bytes of code on Cortex-M0 when everything is
-  in RAM; 720 bytes when the data lives on external flash behind your
+- **Tiny C decoder.** 472 bytes of code on Cortex-M0 when everything is
+  in RAM; 852 bytes when the data lives on external flash behind your
   own read/write functions, plus an optional 300-byte page write cache.
 - **No dynamic allocation, no static RAM.** The C decoders never call
   `malloc` and have no global or static variables (0 bytes of `.data`
@@ -61,6 +61,9 @@ no compression library.
 firmware (two Cortex-M boards, ~300 KB) and of Linux device trees (three
 boards, ~63 KB), one and five commits apart, against seven other delta
 tools. Every patch was decoded again and checked against the target.
+tinydelta is what an integrator ships following this README: per update,
+the smaller of the plain patch and [compression mode](#compression-mode),
+with a decoder that reads both.
 
 ![tinydelta's patch size compared with other tools](docs/benchmark/forest.svg)
 
@@ -69,19 +72,19 @@ below 1, tinydelta's is smaller) and how often tinydelta's is smaller:
 
 | compared with | firmware (88 pairs) | device trees (78 pairs) |
 |---|---|---|
-| open-vcdiff | **0.37**, smaller in 100% | **0.33**, smaller in 100% |
-| xdelta3 | 0.53, smaller in 100% | 0.55, smaller in 100% |
-| HPatchLite, 4 KB dictionary | 0.97, smaller in 62% | 1.41, smaller in 29% |
-| bsdiff | 0.74, smaller in 62% | 0.96, smaller in 35% |
-| zstd `--patch-from` | 0.95, smaller in 58% | 1.21, smaller in 29% |
+| open-vcdiff | **0.31**, smaller in 100% | **0.20**, smaller in 100% |
+| xdelta3 | 0.26, smaller in 100% | 0.33, smaller in 100% |
+| HPatchLite, 4 KB dictionary | 0.54, smaller in 80% | 0.86, smaller in 37% |
+| bsdiff | 0.33, smaller in 62% | 0.58, smaller in 35% |
+| zstd `--patch-from` | 0.49, smaller in 94% | 0.74, smaller in 78% |
 
-tinydelta's patch is smaller than open-vcdiff's in every pair, typically a
-third of its size. Against the tools that compress their patches it
-depends on the size of the change: when tinydelta's patch is under 1 KB
-(82 pairs), it is the smaller one in 95% of them, typically half the size
-of HPatchLite's; at 1 KB and above (84 pairs), HPatchLite's is always
-smaller, typically by 2.4 times. Compression pays off once a change
-touches enough of the file.
+tinydelta's patch is smaller than open-vcdiff's in every pair, typically
+a fifth to a third of its size. Against the tools that compress their
+patches it depends on the size of the change: when tinydelta's patch is
+under 1 KB (85 pairs), it is the smaller one in 96% of them, typically
+less than half the size of HPatchLite's; at 1 KB and above (81 pairs),
+HPatchLite's is smaller in 79% of them, typically by 8%, and bsdiff's in
+all of them, by about 30%.
 
 What that compression costs on the device:
 
@@ -89,8 +92,8 @@ What that compression costs on the device:
 
 | decoder | code (Cortex-M0, `-Os`) | RAM besides stack | stack |
 |---|---:|---:|---:|
-| **tinydelta**, memory decoder | **392 B** | **0** | 64 B |
-| **tinydelta**, callback decoder | **720 B** | **0** | ~200 B |
+| **tinydelta**, memory decoder | **472 B** | **0** | 64 B |
+| **tinydelta**, callback decoder | **852 B** | **0** | ~215 B |
 | HPatchLite + tinyuz | ~2.2 KB | 4–32 KB dictionary | – |
 | detools + heatshrink | 1,948 B | 0 | ~1.6 KB |
 | tiny-vcdiff (open-vcdiff's format) | 3,881 B | 3,221 B | ~150 B |
@@ -98,10 +101,12 @@ What that compression costs on the device:
 
 What you give up:
 
-- **Larger patches for large changes.** Above about 1 KB of patch, tools
-  that compress (HPatchLite, bsdiff, zstd) produce smaller ones, for a
-  decoder several to thousands of times larger. Compressing tinydelta's
-  patch narrows the gap (see below).
+- **Somewhat larger patches for large changes.** Above about 1 KB of
+  patch, tools that compress (HPatchLite, bsdiff, zstd) often produce
+  smaller ones, for a decoder several to thousands of times larger.
+- **Two passes for large changes.** A compression-mode patch is decoded
+  twice, and the device stores the intermediate patch in between (see
+  [below](#compression-mode)).
 - **Speed was not compared.** The goal is a small decoder, not a fast one.
 - **Small patch reads.** The callback decoder reads the patch a few bytes
   at a time; on slow flash, wrap `patch_read` in a small buffer.
@@ -119,7 +124,10 @@ MicroPython's stm32 port (NUCLEO_F091RC and PYBV11) between `v1.25.0` and
 `v1.26.0`, and three boards' device trees (rk3588-rock-5b, imx8mp-evk,
 k3-am625-sk) between `v7.0-dts` and `v7.3-dts`. tinydelta uses the
 library's default encoding, as users get it: optimal, but greedy above
-roughly 100 KB, so greedy for the firmware. The other tools run at their
+roughly 100 KB, so greedy for the firmware. Each pair is encoded both
+plain and in compression mode (`encode -for-compression`, then again
+against an empty dictionary) and the smaller counts; both are listed on
+their own in the summary, with how often each wins. The other tools run at their
 smallest settings: open-vcdiff with `-target_matches`, xdelta3 `-9 -S
 none`, HPatchLite `hdiffi -c-tuz-4k` (and `-32k`), detools with
 heatshrink, zstd `-19 --patch-from`. Decoder code sizes are measured with
@@ -131,23 +139,10 @@ The method, the scripts and how to run them are in
 SHA-256), all numbers and every graph of this run are in
 [`docs/benchmark/`](docs/benchmark/), including the pair-by-pair view:
 
-![Every pair: tinydelta against open-vcdiff, bsdiff and HPatchLite](docs/benchmark/pairs.svg)
+![Every pair: tinydelta against open-vcdiff, HPatchLite, bsdiff and zstd](docs/benchmark/pairs.svg)
 
 </details>
 
-<details>
-<summary>About compression</summary>
-
-zlib at level 9 on tinydelta's patch makes it about 22% smaller (median)
-on these data, but larger on very small patches, where zlib's own framing
-costs more than it saves: it helps in 78% of the firmware pairs and 71%
-of the device-tree pairs. Measured earlier on a 230 KB MicroPython image,
-a 512-byte zlib window gave almost the same gain as the default 32 KB
-one, which matters if the device has to decompress; heatshrink gained
-less, about 0–15%. Whether that is worth a decompressor on the device
-depends on your link and flash budget.
-
-</details>
 
 <details>
 <summary>Decoder footprint notes</summary>
@@ -161,6 +156,75 @@ MicroPython image with each decoder linked into a small test program, with
 need more RAM). bsdiff: bzip2's own figures for 900 KB blocks; bspatch also
 holds the old and new file in memory. Every figure and its source is in
 [`bench/decoders.json`](bench/decoders.json).
+
+</details>
+
+## Compression mode
+
+For updates that change a lot, `encode -for-compression`
+(`EncodeOptions.ForCompression`) writes format version 2: where the new
+file still lines up with the old one but a few bytes changed (moved
+addresses, branch offsets), it stores the *difference* from the old
+bytes, so the same shift gives the same byte everywhere. That patch is
+no smaller by itself, but it compresses very well, and tinydelta can
+compress it: encoded again against an empty dictionary, its repeats
+become short copies.
+
+```text
+update server:  old + new ──v2──▶ inner ──v1──▶ outer     (sent)
+device:         outer ──v1──▶ inner ──v2──▶ new
+```
+
+On the same 166 updates, picking the smaller of the plain and the
+two-pass patch gives patches a third smaller typically, and 2.2× smaller
+on large changes (patches of 1 KB and up), than plain patches alone. The
+two-pass patch is the smaller in 58% of the updates; where the plain
+one wins, it is by a few bytes. The [benchmark](#benchmark) counts the
+smaller of the two.
+
+Each layer starts with its version byte, and the decoders read both
+versions; only the number of passes, one or two, comes from the update's metadata. The
+device needs room for the inner patch between the two passes.
+
+On the update server, make the plain patch and the two-pass one, and
+send the smaller:
+
+```sh
+tinydelta encode old.bin new.bin plain.td                    # 1 pass
+tinydelta encode -for-compression old.bin new.bin inner.td
+tinydelta encode /dev/null inner.td twice.td                 # 2 passes
+[ "$(wc -c < twice.td)" -lt "$(wc -c < plain.td)" ] && passes=2 || passes=1
+```
+
+<details>
+<summary>Decoding twice on the device</summary>
+
+Two calls of the same decoder; pass 1's result length is pass 2's patch
+length:
+
+```c
+uint32_t inner_len, new_len;
+tinydelta_io pass1 = {  /* outer patch, empty dictionary -> scratch area */
+    .patch_read = flash_read, .patch_ctx = &patch_area, .patch_len = patch_len,
+    .dict_len = 0,
+    .target_read = flash_read, .target_write = flash_write,
+    .target_ctx = &scratch_area, .target_cap = SCRATCH_AREA_SIZE,
+};
+tinydelta_result result = tinydelta_decode_io(&pass1, &inner_len);
+if (result == TINYDELTA_OK) {
+    tinydelta_io pass2 = {  /* inner patch, old firmware -> new firmware */
+        .patch_read = flash_read, .patch_ctx = &scratch_area, .patch_len = inner_len,
+        .dict_read = flash_read, .dict_ctx = &old_slot, .dict_len = old_len,
+        .target_read = flash_read, .target_write = flash_write,
+        .target_ctx = &new_slot, .target_cap = new_len_expected,
+    };
+    result = tinydelta_decode_io(&pass2, &new_len);
+}
+```
+
+The final hash of the new firmware covers both passes. `-max-distance N`
+(`MaxTargetDistance`) limits how far back a patch reads its own output,
+for a decoder that keeps only the last N bytes.
 
 </details>
 
@@ -192,6 +256,7 @@ The [benchmark](#benchmark) shows what that costs and buys.
 
 - [Highlights](#highlights)
 - [Benchmark](#benchmark)
+- [Compression mode](#compression-mode)
 - [Why another delta format?](#why-another-delta-format)
 - [Installation](#installation)
   - [Command-line tool](#command-line-tool)
@@ -281,7 +346,7 @@ from a release.
 ## Command-line usage
 
 ```text
-tinydelta encode [-greedy] [-max-len N] [-v] <dictionary> <target> [<patch>]
+tinydelta encode [-greedy] [-for-compression] [-max-len N] [-max-distance N] [-v] <dictionary> <target> [<patch>]
 tinydelta decode [-max-size N] [-v] <dictionary> <patch> [<target>]
 tinydelta version
 ```
@@ -298,7 +363,9 @@ An omitted output file, or `-`, means standard output, and a patch of
 `encode -greedy` trades a few percent of patch size for much faster
 encoding. `encode -max-len N` makes sure no single instruction produces
 more than N target bytes (see [below](#limiting-instruction-length)).
-`decode -max-size` rejects patches whose output would exceed
+`encode -for-compression` and `encode -max-distance N` are for patches
+that are compressed or encoded a second time (see
+[Compression mode](#compression-mode)). `decode -max-size` rejects patches whose output would exceed
 the given size. The exit status is 0 on success, 1 on failure and 2 on
 a usage error.
 
@@ -313,6 +380,9 @@ patch, err := tinydelta.EncodeGreedy(oldFile, newFile) // fast
 patch, err := tinydelta.EncodeWith(oldFile, newFile, tinydelta.EncodeOptions{
 	MaxInstructionLen: 1024, // no instruction produces more than 1024 bytes
 })
+patch, err := tinydelta.EncodeWith(oldFile, newFile, tinydelta.EncodeOptions{
+	ForCompression: true, // a patch to compress afterwards (format version 2)
+})
 
 newFile, err := tinydelta.Decode(oldFile, patch)
 newFile, err := tinydelta.DecodeReaderLimit(oldFile, r, maxSize) // from an io.Reader, capped
@@ -322,7 +392,7 @@ newFile, err := tinydelta.DecodeReaderLimit(oldFile, r, maxSize) // from an io.R
 |---|---|
 | `Encode` | Optimizing parse; roughly 100–300 ms for a few KB. Never larger than `EncodeGreedy`'s patch; falls back to greedy above roughly 100 KB to bound memory. |
 | `EncodeGreedy` | One pass with one byte of lookahead; well under a millisecond for a few KB, patches typically a few percent larger. |
-| `EncodeWith` | Either encoder, chosen with `EncodeOptions.Greedy`, with options such as `MaxInstructionLen`. |
+| `EncodeWith` | Either encoder, chosen with `EncodeOptions.Greedy`, with options such as `MaxInstructionLen`, `ForCompression` and `MaxTargetDistance` ([Compression mode](#compression-mode)). |
 | `Decode`, `DecodeReader` | Apply a patch from a byte slice or an `io.Reader`. |
 | `DecodeReaderLimit` | As `DecodeReader`, but fails with `ErrTooLarge` before the target would exceed a size you choose. |
 
@@ -367,8 +437,8 @@ even on Cortex-M0). Reproduce with [`scripts/c-size.sh`](scripts/c-size.sh).
 
 | part | Cortex-M0 | Cortex-M3 | Cortex-M4 | stack (Cortex-M0) |
 |---|---:|---:|---:|---:|
-| memory decoder | 392 B | 380 B | 382 B | 64 B |
-| callback decoder | 720 B | 704 B | 704 B | ~200 B\* |
+| memory decoder | 472 B | 450 B | 452 B | 72 B |
+| callback decoder | 852 B | 832 B | 834 B | ~215 B\* |
 | write cache | 300 B | 288 B | 288 B | +32 B |
 
 \* Deepest path, including the 64-byte internal buffer, excluding your
@@ -381,8 +451,8 @@ every 32-bit operation takes several 16-bit instructions.
 
 | part | MSP430 | MSP430X | MSP430X, `-mlarge` | stack (`-mlarge`) |
 |---|---:|---:|---:|---:|
-| memory decoder | 988 B | 956 B | 1,096 B | 112 B |
-| callback decoder | 1,856 B | 1,798 B | 1,814 B | ~245 B\* |
+| memory decoder | 1,170 B | 1,138 B | 1,282 B | 114 B |
+| callback decoder | 2,112 B | 2,054 B | 2,036 B | ~250 B\* |
 | write cache | 628 B | 602 B | 678 B | +40 B |
 
 ### Results
@@ -395,7 +465,7 @@ Every decoding function returns a `tinydelta_result`:
 | `TINYDELTA_ERR_MALFORMED` | corrupt or truncated patch, or one that doesn't fit the dictionary |
 | `TINYDELTA_ERR_TOO_LARGE` | the target would exceed its capacity, or the dictionary exceeds `TINYDELTA_MAX_SIZE` |
 | `TINYDELTA_ERR_IO` | one of your callbacks failed (callback decoder only) |
-| `TINYDELTA_ERR_VERSION` | the patch's version byte isn't `TINYDELTA_FORMAT_VERSION`: a patch for another decoder version, or not a tinydelta patch |
+| `TINYDELTA_ERR_VERSION` | the patch's version byte is neither 1 nor 2: a newer version, or not a tinydelta patch |
 
 On any error, whatever was already written to the target is incomplete
 and must not be used.
@@ -585,7 +655,7 @@ else before, between or after them. Decoding needs the **dictionary**
 (the old file) and produces the **target** (the new file).
 
 ```text
-patch = version (1 byte, currently 0x01) + instructions
+patch = version (1 byte: 0x01, or 0x02 for compression mode) + instructions
 ```
 
 A decoder rejects a patch whose version byte it doesn't implement, and
@@ -624,6 +694,13 @@ len    = v >> 2        // number of target bytes this instruction produces
 | 1 | `ADD` | `len` literal bytes | those bytes, as-is |
 | 2 | `SKIP` | — | `len` bytes from `dict[cursor]` |
 | 3 | `COPY_TARGET` | zigzag `delta` | `len` bytes from the target already produced, starting at `pos + delta` (must be `< pos`), copied byte by byte |
+
+Format version 2, made for patches that are compressed afterwards (see
+[Compression mode](#compression-mode)), is identical except for opcode 3:
+
+| opcode | name | followed by | produces |
+|---|---|---|---|
+| 3 | `ADD_DIFF` | `len` difference bytes | `dict[cursor + i] + byte i` (mod 256) for each of them; `[cursor, cursor + len)` must lie within the dictionary |
 
 ### State
 
@@ -666,12 +743,12 @@ patch:      01 2a 15 42 52 4f 57 4e 72 05 21       (11 bytes)
 
 ### Stability
 
-Format version 1 is fixed: a version-1 patch from any encoder decodes
-with any decoder that implements version 1, Go or C. A change to the
+Format versions 1 and 2 are fixed: a patch from any encoder decodes
+with any decoder that implements its version, Go or C. A change to the
 instruction set gets a new version byte, and decoders reject versions
 they don't implement. Encoders may still produce different, usually
 smaller, patches for the same input in later releases; they stay valid
-version-1 patches.
+patches of the same version.
 
 Release 1.0.0 wrote patches without the version byte. Those don't
 decode with later releases as they are; prepend the byte `0x01` to
