@@ -5,9 +5,10 @@ kept here so the README's numbers and graphs stay fixed until they are
 deliberately updated. The method, corpus and tools are described in
 [`bench/README.md`](../../bench/README.md).
 
-- **Run:** [Benchmark workflow run 41202776240](https://github.com/simon-b-bjerg/tinydelta/actions/runs/41202776240), 31 October 2026, every build made fresh and byte-reproducible (MicroPython built with the commit's date and a fixed Python hash seed). The graphs and `summary.md` were regenerated from its `results.csv` with the current `bench/plot.py`.
+- **Run:** [Benchmark workflow run 41231950570](https://github.com/simon-b-bjerg/tinydelta/actions/runs/41231950570), 31 October 2026, every build byte-reproducible (MicroPython built with the commit's date and a fixed Python hash seed).
 - **Corpus:** 166 pairs. Firmware: 88 pairs from 50 builds of MicroPython (stm32 port, NUCLEO_F091RC and PYBV11), consecutive commits between `v1.25.0` and `v1.26.0`. Device trees: 78 pairs from 48 `.dtb` builds of three boards, consecutive commits between `v7.0-dts` and `v7.3-dts`. Pairs are 1 and 5 builds apart.
 - **Compression mode:** `tinydelta_cz_twice*` columns: `encode -for-compression`, then a second tinydelta pass against an empty dictionary (also with `-max-distance 1024`).
+- **Copy distance limits:** `tinydelta_window_256`, `_1k`, `_4k` columns: the plain patch with `-max-distance 256`, `1024` and `4096`.
 - **open-vcdiff, zlib-compressed:** `openvcdiff_zlib`, open-vcdiff's patch compressed afterwards with zlib at level 9.
 - **tiny-vcdiff:** `openvcdiff_interleaved`, open-vcdiff's interleaved format, which tiny-vcdiff reads.
 - **tinydelta:** per pair, the smaller of the plain patch and compression mode decoded twice (computed by `bench/plot.py`; both are in `results.csv`). Plain is the library's default encoding (optimal, with greedy above roughly 100 KB, so greedy for the firmware images); optimal encoding at any size was not run.

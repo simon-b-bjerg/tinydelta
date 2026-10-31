@@ -1,6 +1,6 @@
 # tinydelta patch sizes
 
-Tools: tinydelta (tinydelta v0.0.0-20261031124901-8c2fe13563f7); openvcdiff (open-vcdiff 868f459a8d815125c2457f8c74b12493853100f9); xdelta3 (Xdelta version 3.0.11); bsdiff (bsdiff 4.3-23); detools (detools 0.53.0); hpatchlite (HPatchLite v1.0.2); zstd (Zstandard CLI (64-bit) v1.5.7)
+Tools: tinydelta (tinydelta v0.0.0-20261031185817-4c80cd7ff7fe); openvcdiff (open-vcdiff 868f459a8d815125c2457f8c74b12493853100f9); xdelta3 (Xdelta version 3.0.11); bsdiff (bsdiff 4.3-23); detools (detools 0.53.0); hpatchlite (HPatchLite v1.0.2); zstd (Zstandard CLI (64-bit) v1.5.7)
 
 Ratio = tinydelta's patch size / the other tool's; below 1, tinydelta is smaller. Geometric mean is the right average for ratios; "smaller" is the share of pairs where tinydelta is smaller. tinydelta is, per pair, the smaller of its plain patch (the library default) and its compression mode decoded twice, as sent: what an integrator following the README ships, with a decoder that reads format versions 1 and 2. Both are listed on their own in the patch-size tables.
 
@@ -30,6 +30,9 @@ Patch size as a share of the target (median, p10-p90):
 | tinydelta, plain (greedy) | 0.01% | 0.01% | 8.56% |
 | tinydelta, compression mode, decoded twice | 0.01% | 0.01% | 2.78% |
 | tinydelta, compression mode, decoded twice, 1 KB window | 0.01% | 0.01% | 3.09% |
+| tinydelta, plain, copies at most 256 B back | 0.01% | 0.01% | 8.71% |
+| tinydelta, plain, copies at most 1 KB back | 0.01% | 0.01% | 8.63% |
+| tinydelta, plain, copies at most 4 KB back | 0.01% | 0.01% | 8.57% |
 | open-vcdiff | 0.02% | 0.01% | 19.43% |
 | open-vcdiff, zlib-compressed | 0.02% | 0.01% | 12.11% |
 | xdelta3 | 0.04% | 0.02% | 11.40% |
@@ -48,6 +51,9 @@ Patch size in bytes (median, p10-p90), what goes over the air:
 | tinydelta, plain (greedy) | 21 | 20 | 27,546 |
 | tinydelta, compression mode, decoded twice | 23 | 22 | 9,433 |
 | tinydelta, compression mode, decoded twice, 1 KB window | 23 | 22 | 10,508 |
+| tinydelta, plain, copies at most 256 B back | 21 | 20 | 27,827 |
+| tinydelta, plain, copies at most 1 KB back | 21 | 20 | 27,658 |
+| tinydelta, plain, copies at most 4 KB back | 21 | 20 | 27,564 |
 | open-vcdiff | 44 | 42 | 65,838 |
 | open-vcdiff, zlib-compressed | 51 | 48 | 41,931 |
 | xdelta3 | 90 | 88 | 37,353 |
@@ -83,6 +89,9 @@ Patch size as a share of the target (median, p10-p90):
 | tinydelta, plain (greedy) | 0.70% | 0.01% | 8.69% |
 | tinydelta, compression mode, decoded twice | 0.47% | 0.01% | 3.98% |
 | tinydelta, compression mode, decoded twice, 1 KB window | 0.47% | 0.01% | 4.23% |
+| tinydelta, plain, copies at most 256 B back | 0.71% | 0.01% | 8.86% |
+| tinydelta, plain, copies at most 1 KB back | 0.71% | 0.01% | 8.78% |
+| tinydelta, plain, copies at most 4 KB back | 0.70% | 0.01% | 8.72% |
 | open-vcdiff | 1.43% | 0.02% | 20.73% |
 | open-vcdiff, zlib-compressed | 1.09% | 0.02% | 13.06% |
 | xdelta3 | 1.12% | 0.04% | 11.81% |
@@ -101,6 +110,9 @@ Patch size in bytes (median, p10-p90), what goes over the air:
 | tinydelta, plain (greedy) | 1,606 | 24 | 31,566 |
 | tinydelta, compression mode, decoded twice | 1,076 | 26 | 14,482 |
 | tinydelta, compression mode, decoded twice, 1 KB window | 1,082 | 26 | 15,412 |
+| tinydelta, plain, copies at most 256 B back | 1,626 | 24 | 32,181 |
+| tinydelta, plain, copies at most 1 KB back | 1,626 | 24 | 31,880 |
+| tinydelta, plain, copies at most 4 KB back | 1,612 | 24 | 31,656 |
 | open-vcdiff | 3,276 | 58 | 74,752 |
 | open-vcdiff, zlib-compressed | 2,490 | 62 | 46,939 |
 | xdelta3 | 2,563 | 93 | 42,815 |
@@ -136,6 +148,9 @@ Patch size as a share of the target (median, p10-p90):
 | tinydelta, plain (greedy) | 3.14% | 0.04% | 5.89% |
 | tinydelta, compression mode, decoded twice | 1.28% | 0.03% | 3.12% |
 | tinydelta, compression mode, decoded twice, 1 KB window | 1.33% | 0.03% | 3.20% |
+| tinydelta, plain, copies at most 256 B back | 3.18% | 0.04% | 6.58% |
+| tinydelta, plain, copies at most 1 KB back | 3.15% | 0.03% | 6.04% |
+| tinydelta, plain, copies at most 4 KB back | 3.15% | 0.03% | 5.96% |
 | open-vcdiff | 7.44% | 0.12% | 16.48% |
 | open-vcdiff, zlib-compressed | 3.71% | 0.10% | 6.69% |
 | xdelta3 | 4.29% | 0.12% | 7.24% |
@@ -154,6 +169,9 @@ Patch size in bytes (median, p10-p90), what goes over the air:
 | tinydelta, plain (greedy) | 2,424 | 28 | 4,992 |
 | tinydelta, compression mode, decoded twice | 1,174 | 27 | 1,996 |
 | tinydelta, compression mode, decoded twice, 1 KB window | 1,202 | 27 | 2,119 |
+| tinydelta, plain, copies at most 256 B back | 2,571 | 27 | 5,487 |
+| tinydelta, plain, copies at most 1 KB back | 2,477 | 26 | 5,198 |
+| tinydelta, plain, copies at most 4 KB back | 2,447 | 26 | 5,068 |
 | open-vcdiff | 6,572 | 79 | 15,464 |
 | open-vcdiff, zlib-compressed | 3,056 | 80 | 5,776 |
 | xdelta3 | 3,125 | 100 | 6,189 |
@@ -189,6 +207,9 @@ Patch size as a share of the target (median, p10-p90):
 | tinydelta, plain (greedy) | 4.07% | 0.03% | 5.42% |
 | tinydelta, compression mode, decoded twice | 1.82% | 0.03% | 3.29% |
 | tinydelta, compression mode, decoded twice, 1 KB window | 2.01% | 0.03% | 3.40% |
+| tinydelta, plain, copies at most 256 B back | 4.32% | 0.03% | 6.08% |
+| tinydelta, plain, copies at most 1 KB back | 4.16% | 0.02% | 5.64% |
+| tinydelta, plain, copies at most 4 KB back | 4.11% | 0.02% | 5.51% |
 | open-vcdiff | 11.03% | 0.08% | 16.23% |
 | open-vcdiff, zlib-compressed | 5.01% | 0.09% | 6.02% |
 | xdelta3 | 5.22% | 0.12% | 6.54% |
@@ -207,6 +228,9 @@ Patch size in bytes (median, p10-p90), what goes over the air:
 | tinydelta, plain (greedy) | 2,987 | 16 | 5,662 |
 | tinydelta, compression mode, decoded twice | 1,438 | 17 | 2,651 |
 | tinydelta, compression mode, decoded twice, 1 KB window | 1,495 | 17 | 2,842 |
+| tinydelta, plain, copies at most 256 B back | 3,013 | 16 | 6,365 |
+| tinydelta, plain, copies at most 1 KB back | 2,999 | 15 | 5,904 |
+| tinydelta, plain, copies at most 4 KB back | 2,991 | 15 | 5,775 |
 | open-vcdiff | 7,613 | 49 | 17,040 |
 | open-vcdiff, zlib-compressed | 3,518 | 54 | 6,305 |
 | xdelta3 | 3,664 | 86 | 6,759 |
