@@ -11,13 +11,4 @@ shift
 CLANG="${CLANG:-clang}"
 flags=(-std=c99 -g -fsanitize=fuzzer -Ic "$@")
 
-work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
-# Every decoder; the callback decoder
-# at three scratch-buffer sizes, renamed apart.
-for size in 1 7 64; do
-  "$CLANG" "${flags[@]}" -c c/tinydelta_io.c -DTINYDELTA_SCRATCH_SIZE="$size" \
-    -Dtinydelta_decode_io="fuzz_decode_io_scratch$size" -o "$work/io_$size.o"
-done
-"$CLANG" "${flags[@]}" c/fuzz/fuzz_decode.c c/tinydelta_decode.c c/tinydelta_cache.c \
-  "$work"/io_*.o -o "$out"
+"$CLANG" "${flags[@]}" c/fuzz/fuzz_decode.c c/tinydelta_decode.c c/tinydelta_io.c -o "$out"

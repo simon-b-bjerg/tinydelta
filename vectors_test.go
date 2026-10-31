@@ -115,13 +115,12 @@ func TestVectors(t *testing.T) {
 	}
 }
 
-// TestCVectors checks the C memory decoder, and the C callback decoder at
-// every scratch size, directly and through the page cache, against every
-// conformance vector.
+// TestCVectors checks the C memory decoder and the C callback decoder at
+// several buffer and page sizes against every conformance vector.
 func TestCVectors(t *testing.T) {
 	vectors := readVectors(t)
 	memory := buildCDriver(t)
-	ioDrivers := buildCIODrivers(t)
+	callback := buildCIODriver(t)
 	dir := t.TempDir()
 
 	check := func(v vector, decoder string, out []byte, code string, ok bool) {
@@ -155,11 +154,9 @@ func TestCVectors(t *testing.T) {
 			t.Fatalf("%s: C memory decoder: %v: %s", v.name, err, stdout)
 		}
 
-		for _, b := range ioDrivers {
-			for _, page := range []int{0, 1, 7, 256} {
-				out, code, ok := runCIO(t, b.path, page, v.dict, v.patch, v.capacity)
-				check(v, fmt.Sprintf("callback decoder, scratch %d, page %d", b.scratch, page), out, code, ok)
-			}
+		for _, c := range ioConfigs {
+			out, code, ok := runCIO(t, callback, c, true, v.dict, v.patch, v.capacity)
+			check(v, fmt.Sprintf("callback decoder, buffer %d, page %d", c.buffer, c.page), out, code, ok)
 		}
 	}
 }

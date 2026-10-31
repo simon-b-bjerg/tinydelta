@@ -39,8 +39,9 @@ no compression library.
   costs, never worse than the built-in greedy encoder, which is
   available when speed matters more.
 - **Tiny C decoder.** 472 bytes of code on Cortex-M0 when everything is
-  in RAM; 852 bytes when the data lives on external flash behind your
-  own read/write functions, plus an optional 300-byte page write cache.
+  in RAM; 876 bytes when the data lives on external flash behind your
+  own read/write functions, with one small buffer of yours (it can be a
+  local array) as flash page cache and recent history.
 - **No dynamic allocation, no static RAM.** The C decoders never call
   `malloc` and have no global or static variables (0 bytes of `.data`
   and `.bss`). All working state is on the stack, and the only other
@@ -93,11 +94,14 @@ What that compression costs on the device:
 | decoder | code (Cortex-M0, `-Os`) | RAM besides stack | stack |
 |---|---:|---:|---:|
 | **tinydelta**, memory decoder | **472 B** | **0** | 64 B |
-| **tinydelta**, callback decoder | **852 B** | **0** | ~215 B |
+| **tinydelta**, callback decoder | **876 B** | **256 B** buffer\* | ~175 B |
 | HPatchLite + tinyuz | ~2.2 KB | 4–32 KB dictionary | – |
 | detools + heatshrink | 1,948 B | 0 | ~1.6 KB |
 | tiny-vcdiff (open-vcdiff's format) | 3,881 B | 3,221 B | ~150 B |
 | bsdiff (bzip2) | – | 2.3–3.7 MB | – |
+
+\* One 256-byte flash page; any power of two works, and a small buffer
+can be a local array, on the stack.
 
 What you give up:
 
@@ -183,8 +187,9 @@ one wins, it is by a few bytes. The [benchmark](#benchmark) counts the
 smaller of the two.
 
 Each layer starts with its version byte, and the decoders read both
-versions; only the number of passes, one or two, comes from the update's metadata. The
-device needs room for the inner patch between the two passes.
+versions; only the number of passes, one or two, comes from the
+update's metadata. The device needs room for the inner patch between
+the two passes.
 
 On the update server, make the plain patch and the two-pass one, and
 send the smaller:
@@ -199,32 +204,36 @@ tinydelta encode /dev/null inner.td twice.td                 # 2 passes
 <details>
 <summary>Decoding twice on the device</summary>
 
-Two calls of the same decoder; pass 1's result length is pass 2's patch
-length:
+Two calls of the same decoder, sharing one buffer; pass 1's result
+length is pass 2's patch length:
 
 ```c
+uint8_t buffer[256];  /* one flash page; on the stack is fine */
 uint32_t inner_len, new_len;
-tinydelta_io pass1 = {  /* outer patch, empty dictionary -> scratch area */
+tinydelta_io pass1 = {  /* outer patch, empty dictionary -> inner area */
     .patch_read = flash_read, .patch_ctx = &patch_area, .patch_len = patch_len,
     .dict_len = 0,
-    .target_read = flash_read, .target_write = flash_write,
-    .target_ctx = &scratch_area, .target_cap = SCRATCH_AREA_SIZE,
+    .target_write = flash_write, .target_read = flash_read,
+    .target_ctx = &inner_area, .target_cap = INNER_AREA_SIZE,
+    .buffer = buffer, .buffer_size = sizeof buffer, .page_size = sizeof buffer,
 };
 tinydelta_result result = tinydelta_decode_io(&pass1, &inner_len);
 if (result == TINYDELTA_OK) {
     tinydelta_io pass2 = {  /* inner patch, old firmware -> new firmware */
-        .patch_read = flash_read, .patch_ctx = &scratch_area, .patch_len = inner_len,
+        .patch_read = flash_read, .patch_ctx = &inner_area, .patch_len = inner_len,
         .dict_read = flash_read, .dict_ctx = &old_slot, .dict_len = old_len,
-        .target_read = flash_read, .target_write = flash_write,
+        .target_write = flash_write, .target_read = flash_read,
         .target_ctx = &new_slot, .target_cap = new_len_expected,
+        .buffer = buffer, .buffer_size = sizeof buffer, .page_size = sizeof buffer,
     };
     result = tinydelta_decode_io(&pass2, &new_len);
 }
 ```
 
-The final hash of the new firmware covers both passes. `-max-distance N`
-(`MaxTargetDistance`) limits how far back a patch reads its own output,
-for a decoder that keeps only the last N bytes.
+The final hash of the new firmware covers both passes. Encode a pass
+with `-max-distance 256` (`MaxTargetDistance`) and it never reads its
+own output further back than the buffer holds: its `target_read` can be
+`NULL`.
 
 </details>
 
@@ -270,7 +279,6 @@ The [benchmark](#benchmark) shows what that costs and buys.
   - [Results](#results)
   - [Memory decoder](#memory-decoder)
   - [Callback decoder](#callback-decoder)
-  - [Write cache](#write-cache)
   - [Your own decoder](#your-own-decoder)
   - [On the device](#on-the-device)
 - [Wire format](#wire-format)
@@ -425,24 +433,21 @@ beyond `memcpy`.
 | part | files | use it when |
 |---|---|---|
 | **memory decoder** | `tinydelta.h`, `tinydelta_internal.h`, `tinydelta_decode.c` | dictionary, patch and output buffer are all in RAM |
-| **callback decoder** | `tinydelta.h`, `tinydelta_internal.h`, `tinydelta_io.h`, `tinydelta_io.c` | the data is elsewhere, e.g. external flash, reached through your own read/write functions |
-| **write cache** (optional) | `tinydelta_cache.h`, `tinydelta_cache.c` | with the callback decoder, to program flash a whole page at a time |
+| **callback decoder** | `tinydelta.h`, `tinydelta_internal.h`, `tinydelta_io.h`, `tinydelta_io.c` | the data is elsewhere, e.g. external flash, reached through your own read/write functions; one buffer of yours caches flash pages and the recent output |
 
 ### Code size and stack
 
-`arm-none-eabi-gcc` 13.2, `-Os -mthumb`, default
-`TINYDELTA_SCRATCH_SIZE` (64). Code size is `.text`; `memcpy` comes from
+`arm-none-eabi-gcc` 13.2, `-Os -mthumb`. Code size is `.text`; `memcpy` comes from
 your C library, and nothing else is pulled in (no software division
 even on Cortex-M0). Reproduce with [`scripts/c-size.sh`](scripts/c-size.sh).
 
 | part | Cortex-M0 | Cortex-M3 | Cortex-M4 | stack (Cortex-M0) |
 |---|---:|---:|---:|---:|
 | memory decoder | 472 B | 450 B | 452 B | 72 B |
-| callback decoder | 852 B | 832 B | 834 B | ~215 B\* |
-| write cache | 300 B | 288 B | 288 B | +32 B |
+| callback decoder | 876 B | 874 B | 876 B | ~175 B\* |
 
-\* Deepest path, including the 64-byte internal buffer, excluding your
-callbacks' own stack use.
+\* Deepest path, excluding your buffer and your callbacks' own stack
+use.
 
 On 16-bit MSP430 the code is roughly two and a half times larger, as
 every 32-bit operation takes several 16-bit instructions.
@@ -452,8 +457,7 @@ every 32-bit operation takes several 16-bit instructions.
 | part | MSP430 | MSP430X | MSP430X, `-mlarge` | stack (`-mlarge`) |
 |---|---:|---:|---:|---:|
 | memory decoder | 1,170 B | 1,138 B | 1,282 B | 114 B |
-| callback decoder | 2,112 B | 2,054 B | 2,036 B | ~250 B\* |
-| write cache | 628 B | 602 B | 678 B | +40 B |
+| callback decoder | 2,494 B | 2,436 B | 2,580 B | ~220 B\* |
 
 ### Results
 
@@ -462,7 +466,7 @@ Every decoding function returns a `tinydelta_result`:
 | value | meaning |
 |---|---|
 | `TINYDELTA_OK` | success |
-| `TINYDELTA_ERR_MALFORMED` | corrupt or truncated patch, or one that doesn't fit the dictionary |
+| `TINYDELTA_ERR_MALFORMED` | corrupt or truncated patch, or one that doesn't fit the dictionary; for the callback decoder also a buffer or page size that isn't a power of two, or a copy reaching back past the buffer with `target_read` `NULL` |
 | `TINYDELTA_ERR_TOO_LARGE` | the target would exceed its capacity, or the dictionary exceeds `TINYDELTA_MAX_SIZE` |
 | `TINYDELTA_ERR_IO` | one of your callbacks failed (callback decoder only) |
 | `TINYDELTA_ERR_VERSION` | the patch's version byte is neither 1 nor 2: a newer version, or not a tinydelta patch |
@@ -489,38 +493,38 @@ tinydelta_result tinydelta_decode_io(const tinydelta_io *io, uint32_t *target_le
 ```
 
 [`tinydelta_io`](c/tinydelta_io.h) holds your callbacks, a context
-pointer for each data source, and the sizes:
+pointer for each data source, the sizes, and one buffer of yours:
 
 | data | callbacks | access pattern |
 |---|---|---|
 | patch | `patch_read` | front to back, a few bytes at a time |
 | dictionary | `dict_read` | random offsets |
-| target | `target_write`, `target_read`, `target_flush` | writes are strictly sequential; reads are at random offsets and must return anything already written, even if still buffered; `target_flush` (optional, may be `NULL`) is called once at the end |
+| target | `target_write`, `target_read` | writes are whole pages, in order, at page-aligned offsets, plus a final partial page; reads (optional, may be `NULL`) only of bytes already written |
 
 Offsets are relative to the start of the patch, dictionary or target. A
 callback returns `TINYDELTA_CALLBACK_OK` on success; anything else stops
 decoding with `TINYDELTA_ERR_IO`.
 
-Data moves through an internal stack buffer of `TINYDELTA_SCRATCH_SIZE`
-bytes (default 64; define it when compiling `tinydelta_io.c` to change
-it). A larger buffer means fewer, larger callback calls. Runs of a
-repeated byte, and other short repeating patterns, are expanded inside
-the buffer and written in buffer-sized pieces rather than byte by byte.
+The buffer's size is a power of two, and the page size, the size of
+each `target_write`, is a power of two that divides it (equal is fine:
+one page of RAM). Target bytes are read straight into the buffer and
+written out a page at a time, so flash is only ever programmed in whole
+pages. A small buffer can be a local array, on the stack: the decoder
+keeps no state between calls.
 
-### Write cache
-
-[`tinydelta_cache`](c/tinydelta_cache.h) provides the three target
-callbacks on top of your raw flash read and program functions. Writes
-collect in a page buffer you provide, and flash is programmed one whole
-page at a time at increasing, page-aligned offsets, plus a final partial
-page. Reads come from flash for data already programmed and from the
-page buffer for the rest, including reads that span both.
+The buffer also keeps the last `buffer_size` bytes of the target, so
+`COPY_TARGET` reads from RAM instead of flash. A copy reaching further
+back reads flash through `target_read`. Encode with `-max-distance` set
+to the buffer size (`EncodeOptions.MaxTargetDistance`) and there are no
+such copies: `target_read` can be `NULL`, and a patch that does reach
+further back is rejected as malformed. The limit costs little: on the
+benchmark's firmware, about 1% with a 256-byte buffer and 0.3% with 4 KB.
 
 <details>
 <summary>Example: patch, dictionary and target in three regions of one SPI flash</summary>
 
 ```c
-#include "tinydelta_cache.h"
+#include "tinydelta_io.h"
 
 /* Your flash driver; addresses here are made up. */
 extern int spi_flash_read(uint32_t addr, uint8_t *buf, uint32_t len);
@@ -538,15 +542,14 @@ static int wr(void *base, uint32_t off, const uint8_t *buf, uint32_t len) {
 
 tinydelta_result apply_patch(uint32_t dict_len, uint32_t patch_len,
                              uint32_t target_cap, uint32_t *target_len) {
-    static uint8_t page[256];            /* one flash page */
-    tinydelta_cache cache;
+    uint8_t page[256];                   /* buffer and page: one flash page */
     tinydelta_io io = {
         .patch_read = rd, .patch_ctx = (void *)(uintptr_t)PATCH_BASE, .patch_len = patch_len,
         .dict_read  = rd, .dict_ctx  = (void *)(uintptr_t)DICT_BASE,  .dict_len  = dict_len,
-        .target_cap = target_cap,
+        .target_write = wr, .target_read = rd,  /* NULL for patches made with -max-distance 256 */
+        .target_ctx = (void *)(uintptr_t)TARGET_BASE, .target_cap = target_cap,
+        .buffer = page, .buffer_size = sizeof page, .page_size = sizeof page,
     };
-    tinydelta_cache_init(&cache, rd, wr, (void *)(uintptr_t)TARGET_BASE, page, sizeof page);
-    tinydelta_cache_attach(&cache, &io);
     return tinydelta_decode_io(&io, target_len);   /* TINYDELTA_OK on success */
 }
 ```
@@ -562,13 +565,6 @@ cursor), and [`tinydelta_decode.c`](c/tinydelta_decode.c) is 80 lines.
 So rather than fitting your device around the callback interface, you
 can rewrite the loop around what the device already has: a data cursor
 or stream object, a flash driver with its own buffering, a file system.
-
-A common case is external flash where small writes are expensive.
-Instead of putting the write cache on top of the callback decoder,
-make the decoder's scratch buffer the flash page buffer: produce target
-bytes straight into it and program the page when it is full. One
-buffer on the stack, no extra copy, and flash is only ever written a
-page at a time.
 
 What a custom decoder has to get right, since that's where the bugs
 are:
@@ -817,11 +813,13 @@ What is tested, and how:
 | Go unit tests (`decode_test.go`, `format_test.go`) | each instruction, varint and zigzag edge cases, the 32-bit varint limit, and that malformed patches (truncated, out of range, forward `COPY_TARGET`, huge `ADD`) fail cleanly instead of panicking |
 | Round trips (`interop_test.go`, `limit_test.go`) | both encoders on fixed 3 KB fixtures and random mutations decode back exactly; `MaxInstructionLen` is respected; the optimizing encoder is never worse than greedy |
 | `FuzzEncodeRoundTrip` (Go fuzzing) | derives a target from a fuzzed dictionary with a fuzzed edit script (overwrite, insert, delete, repeat, append); both encoders' patches must decode back to it, decode with an output cap of exactly the target length but fail one byte short, respect `MaxInstructionLen`, and the optimizing patch must not be larger than the greedy one |
-| `TestCDecoderMatchesGo`, `TestCIODecoderMatchesGo` | both C decoders against the Go decoder on valid, truncated and corrupted patches and too-small output buffers, at several scratch-buffer and flash-page sizes; the test driver polices the callback contract (sequential whole-page programming, no reads of unwritten data) |
-| `TestCIODecoderCallbackFailures` | a failing read, write or flush callback stops decoding with `TINYDELTA_ERR_IO` |
-| `TestVectors`, `TestCVectors` | the Go decoder, the C memory decoder and the C callback decoder (every scratch size, with and without the page cache) against every [conformance vector](#conformance-vectors) |
+| `TestCDecoderMatchesGo`, `TestCIODecoderMatchesGo` | the C decoders against the Go decoder on valid, truncated and corrupted patches and too-small output buffers, at several buffer and flash-page sizes; the test driver polices the callback contract (sequential whole-page programming, no reads of unwritten data) |
+| `TestCIODecoderCallbackFailures` | a failing read or write callback stops decoding with `TINYDELTA_ERR_IO` |
+| `TestCIODecoderWithoutTargetRead`, `TestCIODecoderBufferChecks` | the callback decoder decodes patches limited to its buffer without `target_read`, and rejects one that reaches further back, and a bad buffer or page size |
+| `TestTwoPass`, `TestCTwoPass` | [compression mode](#compression-mode) end to end: the outer patch decoded, then the inner one, with the Go decoder and both C decoders |
+| `TestVectors`, `TestCVectors` | the Go decoder, the C memory decoder and the C callback decoder (several buffer and page sizes) against every [conformance vector](#conformance-vectors) |
 | C fuzzing ([`c/fuzz/fuzz_decode.c`](c/fuzz/fuzz_decode.c)) | libFuzzer with AddressSanitizer and UndefinedBehaviorSanitizer: every input through an independent reference decoder and all C decoder configurations, which must agree exactly; any memory error, undefined behaviour or breach of the callback contract fails; injected callback failures must give `TINYDELTA_ERR_IO` |
-| `scripts/c-check.sh` | the C library builds with strict warnings as errors, at scratch sizes 1, 7, 64 and 256 |
+| `scripts/c-check.sh` | the C library builds with strict warnings as errors |
 | `scripts/c-analyze.sh` | static analysis of the C library with GCC's analyzer, the Clang Static Analyzer and clang-tidy (bug-finding checks, see [`c/.clang-tidy`](c/.clang-tidy)); any finding fails |
 | CodeQL | GitHub's code scanning, security and quality queries, over the Go code and the C library; results in the repository's Security tab |
 
