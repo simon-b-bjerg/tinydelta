@@ -1,32 +1,16 @@
-#include <stddef.h>
-
 #include "tinydelta_io.h"
 #include "tinydelta_internal.h"
 
-#if TINYDELTA_SCRATCH_SIZE < 1
-#error "TINYDELTA_SCRATCH_SIZE must be at least 1"
-#endif
-
-#define SCRATCH_SIZE ((uint32_t)TINYDELTA_SCRATCH_SIZE)
+/* ADD_DIFF reads its difference bytes through this stack buffer. */
+#define DIFF_CHUNK 16u
 
 typedef struct {
     const tinydelta_io *io;
+    uint32_t mask;      /* buffer_size - 1 */
     uint32_t patch_pos; /* next patch byte to read */
     uint32_t out_pos;   /* target bytes produced so far */
-    uint8_t scratch[TINYDELTA_SCRATCH_SIZE];
-#if TINYDELTA_SCRATCH_SIZE == 1
-    uint8_t diff_byte;  /* ADD_DIFF's patch byte when scratch can't be split */
-#endif
+    uint32_t written;   /* target bytes passed to target_write */
 } decoder;
-
-/* ADD_DIFF works on half a scratch buffer of dictionary bytes and half of
- * patch bytes at a time (one of each with a 1-byte scratch buffer). */
-#define DIFF_STEP (SCRATCH_SIZE > 1 ? SCRATCH_SIZE / 2 : 1u)
-#if TINYDELTA_SCRATCH_SIZE > 1
-#define DIFF_BYTES(d) ((d)->scratch + DIFF_STEP)
-#else
-#define DIFF_BYTES(d) (&(d)->diff_byte)
-#endif
 
 static uint32_t min_u32(uint32_t a, uint32_t b) {
     return a < b ? a : b;
@@ -49,114 +33,114 @@ static tinydelta_result read_varint(decoder *d, uint32_t *value) {
     return result;
 }
 
-/* Writes the first length scratch bytes to the target. */
-static tinydelta_result write_scratch(decoder *d, uint32_t length) {
-    if (d->io->target_write(d->io->target_ctx, d->out_pos, d->scratch, length) != TINYDELTA_CALLBACK_OK) {
+/* Where the next target byte goes in the buffer, and how many of up to
+ * length bytes fit there before the current page ends. Pages never wrap
+ * around the end of the buffer: page_size divides buffer_size. */
+static uint8_t *write_position(const decoder *d) {
+    return d->io->buffer + (d->out_pos & d->mask);
+}
+
+static uint32_t page_room(const decoder *d, uint32_t length) {
+    return min_u32(length, d->io->page_size - (d->out_pos & (d->io->page_size - 1u)));
+}
+
+/* Writes the bytes produced since the last write: always within one page,
+ * so contiguous in the buffer. */
+static tinydelta_result write_page(decoder *d) {
+    uint32_t length = d->out_pos - d->written;
+
+    if (length == 0) return TINYDELTA_OK;
+    if (d->io->target_write(d->io->target_ctx, d->written, d->io->buffer + (d->written & d->mask), length) !=
+        TINYDELTA_CALLBACK_OK) {
         return TINYDELTA_ERR_IO;
     }
-    d->out_pos += length;
+    d->written = d->out_pos;
     return TINYDELTA_OK;
 }
 
-/* Copies length bytes from offset in a read callback's data (dictionary or
- * patch) to the target, a scratch buffer at a time. With add_diff (format
- * version 2's ADD_DIFF), each byte also gets the next patch byte added,
- * DIFF_STEP bytes of each at a time. */
-static tinydelta_result copy_to_target(decoder *d, tinydelta_read_fn read, void *ctx,
-                                       uint32_t offset, uint32_t length, int add_diff) {
-    uint32_t step = add_diff ? DIFF_STEP : SCRATCH_SIZE;
+/* Accounts for length bytes just placed at the write position (never
+ * more than page_room allows) and writes the page out once it is full. */
+static tinydelta_result produced(decoder *d, uint32_t length) {
+    d->out_pos += length;
+    return (d->out_pos & (d->io->page_size - 1u)) == 0 ? write_page(d) : TINYDELTA_OK;
+}
 
+/* Reads length bytes from offset in a read callback's data (dictionary,
+ * patch or, for a far COPY_TARGET, the target already written) straight
+ * into the buffer. With add_diff (format version 2's ADD_DIFF), each byte
+ * also gets the next patch byte added, DIFF_CHUNK bytes at a time. */
+static tinydelta_result read_to_target(decoder *d, tinydelta_read_fn read, void *ctx,
+                                       uint32_t offset, uint32_t length, int add_diff) {
+    uint8_t diff[DIFF_CHUNK];
     while (length > 0) {
-        uint32_t chunk = min_u32(length, step);
+        uint32_t chunk = page_room(d, length);
+        uint8_t *out = write_position(d);
         tinydelta_result result;
 
-        if (read(ctx, offset, d->scratch, chunk) != TINYDELTA_CALLBACK_OK) return TINYDELTA_ERR_IO;
+        if (add_diff) chunk = min_u32(chunk, DIFF_CHUNK);
+        if (read(ctx, offset, out, chunk) != TINYDELTA_CALLBACK_OK) return TINYDELTA_ERR_IO;
         if (add_diff) {
-            uint8_t *diff = DIFF_BYTES(d);
-
             if (d->io->patch_read(d->io->patch_ctx, d->patch_pos, diff, chunk) != TINYDELTA_CALLBACK_OK) {
                 return TINYDELTA_ERR_IO;
             }
+            for (uint32_t i = 0; i < chunk; i++) out[i] = (uint8_t)(out[i] + diff[i]);
             d->patch_pos += chunk;
-            for (uint32_t i = 0; i < chunk; i++) d->scratch[i] = (uint8_t)(d->scratch[i] + diff[i]);
         }
-        result = write_scratch(d, chunk);
+        result = produced(d, chunk);
         if (result != TINYDELTA_OK) return result;
-
         offset += chunk;
         length -= chunk;
     }
     return TINYDELTA_OK;
 }
 
-/* COPY_TARGET: length bytes from address, an earlier target position.
- * When the copy is longer than its distance back, its source overlaps the
- * bytes being written, so it is only ever read where already produced. */
-static tinydelta_result copy_from_target(decoder *d, uint32_t address, uint32_t length) {
-    const tinydelta_io *io = d->io;
-    uint32_t distance = d->out_pos - address;
-    tinydelta_result result;
 
-    if (distance < SCRATCH_SIZE && length > distance) {
-        /* A short repeating pattern (e.g. a run of one byte): read one
-         * period, repeat it to fill as many whole periods as fit, and
-         * write that block until done. Every block starts at a period
-         * boundary. (Built up by repetition rather than computed with a
-         * division, which Cortex-M0 would do in software.) */
-        uint32_t block = distance;
+/* COPY_TARGET within the buffer: byte by byte, so a source overlapping
+ * the bytes being written (a short repeating run) works. */
+static tinydelta_result copy_in_buffer(decoder *d, uint32_t distance, uint32_t length) {
+    uint8_t *buffer = d->io->buffer;
 
-        if (io->target_read(io->target_ctx, address, d->scratch, distance) != TINYDELTA_CALLBACK_OK) {
-            return TINYDELTA_ERR_IO;
-        }
-        while (block + distance <= SCRATCH_SIZE) {
-            for (uint32_t i = 0; i < distance; i++) {
-                d->scratch[block + i] = d->scratch[i];
-            }
-            block += distance;
-        }
-        while (length > 0) {
-            uint32_t chunk = min_u32(length, block);
-            result = write_scratch(d, chunk);
-            if (result != TINYDELTA_OK) return result;
-            length -= chunk;
-        }
-        return TINYDELTA_OK;
-    }
-
-    /* Otherwise, chunks of at most `distance` bytes always lie entirely
-     * before the write position. */
     while (length > 0) {
-        uint32_t chunk = min_u32(min_u32(length, distance), SCRATCH_SIZE);
+        uint32_t chunk = page_room(d, length);
+        tinydelta_result result;
 
-        if (io->target_read(io->target_ctx, address, d->scratch, chunk) != TINYDELTA_CALLBACK_OK) {
-            return TINYDELTA_ERR_IO;
+        for (uint32_t i = 0; i < chunk; i++) {
+            uint32_t at = d->out_pos + i;
+            buffer[at & d->mask] = buffer[(at - distance) & d->mask];
         }
-        result = write_scratch(d, chunk);
+        result = produced(d, chunk);
         if (result != TINYDELTA_OK) return result;
-
-        address += chunk;
         length -= chunk;
     }
     return TINYDELTA_OK;
+}
+
+/* Powers of two, page_size at most buffer_size (so it divides it). */
+static int buffer_valid(const tinydelta_io *io) {
+    return io->buffer != 0 && io->page_size != 0 && (io->page_size & (io->page_size - 1u)) == 0 &&
+           io->buffer_size >= io->page_size && (io->buffer_size & (io->buffer_size - 1u)) == 0;
 }
 
 tinydelta_result tinydelta_decode_io(const tinydelta_io *io, uint32_t *target_len) {
     decoder d;
     uint32_t cursor = 0; /* dictionary read position */
     uint32_t target_cap = min_u32(io->target_cap, TINYDELTA_MAX_SIZE);
+    uint8_t version;
     tinydelta_result result;
-    int add_diff;
 
     d.io = io;
+    d.mask = io->buffer_size - 1u;
     d.patch_pos = TINYDELTA_HEADER_LEN;
     d.out_pos = 0;
+    d.written = 0;
+    if (!buffer_valid(io)) return TINYDELTA_ERR_MALFORMED;
     if (io->dict_len > TINYDELTA_MAX_SIZE) return TINYDELTA_ERR_TOO_LARGE;
     if (io->patch_len < TINYDELTA_HEADER_LEN) return TINYDELTA_ERR_MALFORMED;
-    if (io->patch_read(io->patch_ctx, 0, d.scratch, TINYDELTA_HEADER_LEN) != TINYDELTA_CALLBACK_OK) {
+    if (io->patch_read(io->patch_ctx, 0, &version, TINYDELTA_HEADER_LEN) != TINYDELTA_CALLBACK_OK) {
         return TINYDELTA_ERR_IO;
     }
-    add_diff = d.scratch[0] == TINYDELTA_FORMAT_VERSION_2;
-    if (d.scratch[0] != TINYDELTA_FORMAT_VERSION && !add_diff) return TINYDELTA_ERR_VERSION;
+    const int is_v2 = version == TINYDELTA_FORMAT_VERSION_2;
+    if (version != TINYDELTA_FORMAT_VERSION && !is_v2) return TINYDELTA_ERR_VERSION;
 
     while (d.patch_pos < io->patch_len) {
         uint32_t instruction, length, delta, address;
@@ -174,14 +158,14 @@ tinydelta_result tinydelta_decode_io(const tinydelta_io *io, uint32_t *target_le
             address = cursor + zigzag_decode(delta);
             if (!range_within(address, length, io->dict_len)) return TINYDELTA_ERR_MALFORMED;
 
-            result = copy_to_target(&d, io->dict_read, io->dict_ctx, address, length, 0);
+            result = read_to_target(&d, io->dict_read, io->dict_ctx, address, length, 0);
             cursor = address + length;
             break;
 
         case TINYDELTA_OP_ADD:
             if (!range_within(d.patch_pos, length, io->patch_len)) return TINYDELTA_ERR_MALFORMED;
 
-            result = copy_to_target(&d, io->patch_read, io->patch_ctx, d.patch_pos, length, 0);
+            result = read_to_target(&d, io->patch_read, io->patch_ctx, d.patch_pos, length, 0);
             d.patch_pos += length;
             cursor += length;
             break;
@@ -189,15 +173,15 @@ tinydelta_result tinydelta_decode_io(const tinydelta_io *io, uint32_t *target_le
         case TINYDELTA_OP_SKIP:
             if (!range_within(cursor, length, io->dict_len)) return TINYDELTA_ERR_MALFORMED;
 
-            result = copy_to_target(&d, io->dict_read, io->dict_ctx, cursor, length, 0);
+            result = read_to_target(&d, io->dict_read, io->dict_ctx, cursor, length, 0);
             cursor += length;
             break;
 
         case TINYDELTA_OP_COPY_TARGET:
-            if (add_diff) { /* ADD_DIFF: dictionary byte at the cursor + patch byte */
+            if (is_v2) { /* ADD_DIFF: dictionary byte at the cursor + patch byte */
                 if (!range_within(cursor, length, io->dict_len) ||
                     !range_within(d.patch_pos, length, io->patch_len)) return TINYDELTA_ERR_MALFORMED;
-                result = copy_to_target(&d, io->dict_read, io->dict_ctx, cursor, length, 1);
+                result = read_to_target(&d, io->dict_read, io->dict_ctx, cursor, length, 1);
                 cursor += length;
                 break;
             }
@@ -206,16 +190,23 @@ tinydelta_result tinydelta_decode_io(const tinydelta_io *io, uint32_t *target_le
             address = d.out_pos + zigzag_decode(delta);
             if (address >= d.out_pos) return TINYDELTA_ERR_MALFORMED; /* must be earlier output */
 
-            result = copy_from_target(&d, address, length);
+            if (d.out_pos - address <= io->buffer_size) {
+                result = copy_in_buffer(&d, d.out_pos - address, length);
+            } else if (io->target_read == 0) {
+                return TINYDELTA_ERR_MALFORMED; /* reaches back further than the buffer */
+            } else {
+                /* The source is more than a buffer back, so it lies before
+                 * the current page: already written, the whole way. */
+                result = read_to_target(&d, io->target_read, io->target_ctx, address, length, 0);
+            }
             cursor += length;
             break;
         }
         if (result != TINYDELTA_OK) return result;
     }
 
-    if (io->target_flush != NULL && io->target_flush(io->target_ctx) != TINYDELTA_CALLBACK_OK) {
-        return TINYDELTA_ERR_IO;
-    }
+    result = write_page(&d); /* the last, partial page */
+    if (result != TINYDELTA_OK) return result;
     *target_len = d.out_pos;
     return TINYDELTA_OK;
 }

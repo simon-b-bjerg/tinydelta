@@ -23,9 +23,9 @@ Writes to <output dir>:
                       one graph per kind of data
 Each graph is also written as a PNG for slides. Every comparison uses one
 baseline, "tinydelta": per pair, the smaller of tinydelta's plain patch
-(the optimal encoder's, when measured) and its compression mode decoded
-twice, as the README tells integrators to choose. Both are listed on
-their own in the patch-size tables.
+(the optimal encoder's, when measured) and its compression-mode patch,
+the one an update server would send. Both are listed on their own in
+the patch-size tables.
 Needs matplotlib.
 """
 
@@ -43,12 +43,24 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib import ticker  # noqa: E402
 from matplotlib.transforms import Bbox  # noqa: E402
 
+plt.rcParams.update({
+    # Text stays text in the SVGs, so browsers draw it hinted and sharp.
+    # Layout is measured with DejaVu Sans, which ships with matplotlib, so
+    # it is the same on every machine; a viewer without it falls back to
+    # Arial or Helvetica, which are narrower, so nothing collides.
+    "svg.fonttype": "none",
+    "font.family": "sans-serif",
+    "font.sans-serif": ["DejaVu Sans", "Arial", "Helvetica"],
+    # The same input gives byte-identical SVGs.
+    "svg.hashsalt": "tinydelta",
+})
+
 # The other tools in a fixed order: categorical slots 1-8 (validated with
 # the dataviz palette checks), a line style each, and whether the patch is
 # compressed (which groups the distribution graph's rows).
 OTHERS = [
     ("openvcdiff", "open-vcdiff", "#2a78d6", "-", False),
-    ("openvcdiff_zlib", "open-vcdiff + zlib", "#eb6834", "--", True),
+    ("openvcdiff_zlib", "open-vcdiff, zlib-compressed", "#eb6834", "--", True),
     ("xdelta3", "xdelta3", "#1baf7a", "-.", False),
     ("bsdiff", "bsdiff", "#eda100", ":", True),
     ("detools", "detools (heatshrink)", "#e87ba4", "-", True),
@@ -70,6 +82,9 @@ TINY_VARIANTS = [
     ("tinydelta_greedy", "tinydelta, plain (greedy)", "#8a8983"),
     (CZ, "tinydelta, compression mode, decoded twice", "#8a8983"),
     ("tinydelta_cz_twice_1k", "tinydelta, compression mode, decoded twice, 1 KB window", "#8a8983"),
+    ("tinydelta_window_256", "tinydelta, plain, copies at most 256 B back", "#8a8983"),
+    ("tinydelta_window_1k", "tinydelta, plain, copies at most 1 KB back", "#8a8983"),
+    ("tinydelta_window_4k", "tinydelta, plain, copies at most 4 KB back", "#8a8983"),
 ]
 
 
@@ -149,7 +164,7 @@ def style(ax):
 
 def save(fig, out, name):
     """Writes a figure as SVG, for the repository, and PNG, for slides."""
-    fig.savefig(os.path.join(out, name + ".svg"), facecolor=SURFACE)
+    fig.savefig(os.path.join(out, name + ".svg"), facecolor=SURFACE, metadata={"Date": None})
     fig.savefig(os.path.join(out, name + ".png"), facecolor=SURFACE, dpi=200)
     plt.close(fig)
 
@@ -169,10 +184,9 @@ def summary(rows, tools_file, out):
     tiny = tiny_key(rows)
     plain = "the optimal encoder at any size" if plain_key(rows) == "tinydelta_optimal" else "the library default"
     if tiny == BEST:
-        what = ("tinydelta is, per pair, the smaller of its plain patch (%s) and its compression mode "
-                "decoded twice, as sent: what an integrator following the README ships, with a decoder "
-                "that reads format versions 1 and 2. Both are listed on their own in the patch-size "
-                "tables." % plain)
+        what = ("tinydelta is, per pair, the smaller of its plain patch (%s) and its compression-mode "
+                "patch, the one an update server would send. Both are listed on their own in the "
+                "patch-size tables." % plain)
     else:
         what = "tinydelta is %s, as it is sent." % plain
     lines += [
@@ -220,9 +234,9 @@ def summary(rows, tools_file, out):
         f.write("\n".join(lines))
 
 
-# The comparisons the distribution and pair graphs show: what compression
-# would add, the format tinydelta replaces, the closest embedded
-# alternative, and the strongest on size. The rest is in the forest graph.
+# The comparisons the distribution graphs show: the VCDIFF reference, the
+# closest embedded alternative, and the strongest on size. The rest is in
+# the forest graph.
 KEY_TOOLS = ["openvcdiff", "hpatchlite_4k", "bsdiff"]
 
 
@@ -264,7 +278,7 @@ def ratio_ecdf(rows, out):
         ax.set_ylim(0, 100)
         ax.set_xlabel("tinydelta's patch size ÷ the tool's (log scale)", fontsize=9, color=MUTED)
         ax.set_ylabel("% of pairs at or below this ratio", fontsize=9, color=MUTED)
-        ax.legend(frameon=False, fontsize=8, loc="upper left", labelcolor=INK)
+        ax.legend(frameon=False, fontsize=9, loc="upper left", labelcolor=INK)
         titled(fig, "%s: how often, and by how much, tinydelta is smaller (%d pairs)" % (kind, len(sel)),
                "Each line climbs through every pair, smallest ratio first; its height at 1 is the share where tinydelta is smaller.")
         save(fig, out, "ratio_ecdf_" + slug(kind))
@@ -328,12 +342,20 @@ def forest_range(rows, tools, kinds, steps):
     return lo, hi
 
 
+# The forest graph's tools, in the README table's order: what a reader
+# would otherwise use. The rest (HPatchLite's 32 KB dictionary, detools,
+# open-vcdiff's patch zlib-compressed) is in the summary and the other
+# graphs.
+FOREST_TOOLS = ["openvcdiff", "xdelta3", "hpatchlite_4k", "bsdiff", "zstd"]
+
+
 def forest(rows, out):
     kinds = kinds_of(rows)
     steps = sorted({r["step"] for r in rows})
-    tools = [t for t in OTHERS if t[0] in rows[0]]
+    others = {t[0]: t for t in OTHERS}
+    tools = [others[k] for k in FOREST_TOOLS if k in rows[0]]
     FOREST_MIN, FOREST_MAX = forest_range(rows, tools, kinds, steps)
-    fig, axes = plt.subplots(len(kinds), 1, figsize=(7.2, 0.9 + 0.42 * len(tools) * len(kinds) + 0.6 * len(kinds)),
+    fig, axes = plt.subplots(len(kinds), 1, figsize=(8.4, 1.6 + 0.48 * len(tools) * len(kinds) + 0.6 * len(kinds)),
                              squeeze=False, sharex=True, facecolor=SURFACE)
     offsets = {step: (i - (len(steps) - 1) / 2) * 0.22 for i, step in enumerate(steps)}
     for (ax,), kind in zip(axes, kinds):
@@ -362,7 +384,7 @@ def forest(rows, out):
                 mean = geomean(rs)
                 if mean < FOREST_MIN:  # off the axis: marked at its edge, with the value
                     ax.annotate("mean %.2g" % mean, (FOREST_MIN, y), xytext=(8, 0), textcoords="offset points",
-                                ha="left", va="center", fontsize=8, color=color,
+                                ha="left", va="center", fontsize=9, color=color,
                                 bbox=dict(boxstyle="round,pad=0.2", facecolor=SURFACE, edgecolor=color, linewidth=0.8))
                     continue
                 ax.plot([mean], [y], marker="o", markersize=7, color=color,
@@ -378,10 +400,10 @@ def forest(rows, out):
     handles = [plt.Line2D([], [], marker="o", linestyle="", markersize=7, color=MUTED,
                           markerfacecolor=MUTED if step == steps[0] else SURFACE, markeredgewidth=2,
                           label="%d commit%s apart" % (step, "" if step == 1 else "s")) for step in steps]
-    axes[0][0].legend(handles=handles, frameon=False, fontsize=8, loc="lower right", labelcolor=INK,
+    axes[0][0].legend(handles=handles, frameon=False, fontsize=9, loc="lower right", labelcolor=INK,
                       bbox_to_anchor=(1.0, 1.0), ncol=len(steps))
     axes[-1][0].set_xlabel("tinydelta's patch size ÷ the tool's (log scale)   ← tinydelta smaller · larger →\n"
-                           "dot: geometric mean · line: 10th-90th percentile, arrowhead where it runs past the axis",
+                           "dot: geometric mean · line: 10th-90th percentile · arrowhead: it runs past the axis",
                            fontsize=9, color=MUTED, labelpad=8)
     # Title and reading line, placed in inches from the top so they hold
     # for any figure height.
@@ -395,7 +417,7 @@ def forest(rows, out):
 
 
 KIND_MARKERS = ["o", "^", "s", "D"]
-# The pair graph's tools: the format tinydelta replaces, the closest
+# The pair graph's tools: the VCDIFF reference, the closest
 # embedded alternative, and the strongest compressors on size.
 PAIR_TOOLS = ["openvcdiff", "hpatchlite_4k", "bsdiff", "zstd"]
 
@@ -430,17 +452,17 @@ def pair_scatter(rows, out, name):
     ax.set_xlabel("the other tool's patch (bytes, log scale)", fontsize=9, color=MUTED)
     ax.set_ylabel("tinydelta's patch (bytes, log scale)", fontsize=9, color=MUTED)
     ax.text(0.97, 0.05, "below the line:\ntinydelta smaller", transform=ax.transAxes, ha="right",
-            fontsize=8, color=MUTED)
+            fontsize=9, color=MUTED)
     # Two legends: colour for the tool, marker for the kind of data.
     tool_handles = [plt.Line2D([], [], marker="o", linestyle="", markersize=6, color=color, label=label)
                     for _, label, color, _, _ in tools]
     kind_handles = [plt.Line2D([], [], marker=marker, linestyle="", markersize=6, color=MUTED, label=kind)
                     for kind, marker in zip(kinds, KIND_MARKERS)]
-    first = ax.legend(handles=tool_handles, frameon=False, fontsize=8, loc="upper left", labelcolor=INK,
-                      title="tool", title_fontsize=8, alignment="left")
+    first = ax.legend(handles=tool_handles, frameon=False, fontsize=9, loc="upper left", labelcolor=INK,
+                      title="tool", title_fontsize=9, alignment="left")
     ax.add_artist(first)
-    ax.legend(handles=kind_handles, frameon=False, fontsize=8, loc="lower right", labelcolor=INK,
-              bbox_to_anchor=(1.0, 0.12), title="data", title_fontsize=8, alignment="left")
+    ax.legend(handles=kind_handles, frameon=False, fontsize=9, loc="lower right", labelcolor=INK,
+              bbox_to_anchor=(1.0, 0.12), title="data", title_fontsize=9, alignment="left")
     height = fig.get_figheight()
     fig.text(0.02, 1 - 0.15 / height, "tinydelta against other tools, every pair",
              ha="left", va="top", fontsize=13, color=INK)
@@ -466,24 +488,36 @@ def place_labels(fig, ax, points):
     box = ax.get_window_extent(renderer)
     dots = [ax.transData.transform((x, y)) for x, y, _ in points]
     placed = []
+    lines = []  # points along the leader lines drawn so far
     offsets = [(dx * (1 + (reach > 1)), dy * reach, ha, va) for reach in (1, 3, 5, 8, 12)
                for dx, dy, ha, va in [(8, 4, "left", "bottom"), (8, -4, "left", "top"),
                                       (-8, 4, "right", "bottom"), (-8, -4, "right", "top"),
                                       (0, 3, "center", "bottom"), (0, -3, "center", "top")]]
-    for (x, y, label), dot in zip(points, dots):
+    # A point with another close by gets its label set off with a leader
+    # line, so the line, not proximity, says which point it is. Those
+    # labels can go almost anywhere, so they are placed last.
+    def crowded_at(dot):
+        return any(d is not dot and gap(Bbox([d, d]), dot) < 20 for d in dots)
+    order = sorted(zip(points, dots), key=lambda pd: crowded_at(pd[1]))
+    for (x, y, label), dot in order:
         best = None
-        # A point with another close by gets its label set off with a
-        # leader line, so the line, not proximity, says which point it is.
-        crowded = any(d is not dot and gap(Bbox([d, d]), dot) < 20 for d in dots)
+        crowded = crowded_at(dot)
         for dx, dy, ha, va in (offsets[6:] if crowded else offsets):
             text = ax.annotate(label, (x, y), xytext=(dx, dy), textcoords="offset points",
-                               ha=ha, va=va, fontsize=8, color=INK)
+                               ha=ha, va=va, fontsize=9, color=INK)
             extent = text.get_window_extent(renderer).expanded(1.05, 1.15)
-            cost = 3 * sum(extent.overlaps(other) for other in placed)
-            cost += sum(1 for d in dots if d is not dot and extent.contains(*d))
-            # A label nearer another point than its own reads as that point's.
+            cost = 10 * sum(extent.overlaps(other) for other in placed)
+            cost += 4 * sum(1 for d in dots if d is not dot and extent.contains(*d))
+            # A label nearer another point than its own reads as that point's,
+            # leader line or not: the worst place of all.
             own = gap(extent, dot)
-            cost += 2 * any(gap(extent, d) < own for d in dots if d is not dot)
+            cost += 8 * any(gap(extent, d) < own for d in dots if d is not dot)
+            # A leader line running through another label is hard to follow.
+            corner = (extent.x0 if ha == "left" else extent.x1 if ha == "right" else (extent.x0 + extent.x1) / 2,
+                      extent.y0 if va == "bottom" else extent.y1)
+            line = [(dot[0] + (corner[0] - dot[0]) * t / 10, dot[1] + (corner[1] - dot[1]) * t / 10) for t in range(1, 10)]
+            cost += 3 * sum(any(other.expanded(1.1, 2.0).contains(*q) for q in line) for other in placed)
+            cost += 3 * any(extent.expanded(1.1, 2.0).contains(*q) for q in lines)
             cost += 0 if (extent.x0 >= box.x0 and extent.x1 <= box.x1 and extent.y0 >= box.y0
                           and extent.y1 <= box.y1) else 5
             if best is None or cost < best[0]:
@@ -496,9 +530,14 @@ def place_labels(fig, ax, points):
                 break
         cost, text, extent = best
         if crowded or abs(text.xyann[0]) > 8 or abs(text.xyann[1]) > 4:  # not right beside its point: a leader line
+            ha, va = text.get_ha(), text.get_va()
+            corner = (extent.x0 if ha == "left" else extent.x1 if ha == "right" else (extent.x0 + extent.x1) / 2,
+                      extent.y0 if va == "bottom" else extent.y1)
+            lines += [(dot[0] + (corner[0] - dot[0]) * t / 10, dot[1] + (corner[1] - dot[1]) * t / 10)
+                      for t in range(1, 10)]
             text.remove()
             ax.annotate(label, (x, y), xytext=text.xyann, textcoords="offset points", ha=text.get_ha(),
-                        va=text.get_va(), fontsize=8, color=INK,
+                        va=text.get_va(), fontsize=9, color=INK,
                         arrowprops=dict(arrowstyle="-", color=MUTED, linewidth=0.6, shrinkA=0, shrinkB=4))
         placed.append(extent)
 
@@ -521,8 +560,10 @@ def tradeoff(rows, out):
     # (it is close to the 4 KB one); it is in the summary.
     tools = [k for k in decoders if column[k] in rows[0] and k != "hpatchlite_32k"]
     kinds = kinds_of(rows)
-    fig, axes = plt.subplots(1, len(kinds), figsize=(5.6 * len(kinds), 4.9), squeeze=False, facecolor=SURFACE)
-    for ax, kind in zip(axes[0], kinds):
+    # One panel per row: at most ~830 px wide, the width of GitHub's README
+    # column, so it is never shrunk there.
+    fig, axes = plt.subplots(len(kinds), 1, figsize=(7.2, 0.8 + 4.2 * len(kinds)), squeeze=False, facecolor=SURFACE)
+    for ax, kind in zip(axes[:, 0], kinds):
         sel = [r for r in rows if r["kind"] == kind]
         old = statistics.median(r["dict_bytes"] for r in sel)
         style(ax)
@@ -537,7 +578,7 @@ def tradeoff(rows, out):
             points.append((footprint, share, d["label"] + (" (at least)" if lower_bound else "")))
         ax.set_xscale("log")
         ax.set_yscale("log")
-        ax.margins(x=0.12, y=0.22)
+        ax.margins(x=0.22, y=0.22)
         place_labels(fig, ax, points)
         ax.xaxis.set_major_locator(ticker.LogLocator(base=10))
         ax.xaxis.set_major_formatter(ticker.FuncFormatter(
@@ -551,7 +592,7 @@ def tradeoff(rows, out):
     fig.text(0.02, 1 - 0.15 / height, "Patch size against what the decoder costs on the device",
              ha="left", va="top", fontsize=13, color=INK)
     fig.text(0.02, 1 - 0.45 / height, "Lower left is better. Arrows are lower bounds: code size unknown, "
-             "or the decoder holds the whole old file in RAM.", ha="left", va="top", fontsize=9, color=MUTED)
+             "or the whole old file in RAM.", ha="left", va="top", fontsize=9, color=MUTED)
     fig.tight_layout(rect=(0, 0, 1, 1 - 0.7 / height))
     save(fig, out, "tradeoff")
 

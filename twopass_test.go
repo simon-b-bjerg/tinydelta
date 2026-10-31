@@ -96,10 +96,12 @@ func TestTwoPass(t *testing.T) {
 }
 
 // TestCTwoPass runs the same chains through the C memory and callback
-// decoders, each decoding twice, as a device does.
+// decoders, each decoding twice, as a device does. The callback decoder
+// runs with a 1-byte buffer (every far copy through target_read) and with
+// a 1 KB one, where the outer patch limited to 1 KB needs no target_read.
 func TestCTwoPass(t *testing.T) {
 	memory := buildCDriver(t)
-	callbacks := buildCIODrivers(t)
+	callback := buildCIODriver(t)
 	dir := t.TempDir()
 	memoryDecode := func(dict, patch []byte) ([]byte, error) {
 		d, p, o := filepath.Join(dir, "d"), filepath.Join(dir, "p"), filepath.Join(dir, "o")
@@ -124,16 +126,14 @@ func TestCTwoPass(t *testing.T) {
 		if got, err := memoryDecode(c.dict, inner); err != nil || !bytes.Equal(got, c.target) {
 			t.Fatalf("%s: memory decoder, second pass: %v", c.name, err)
 		}
-		for i, b := range callbacks {
-			// Straight to RAM and through the write cache, alternately,
-			// to keep the run short in the MSP430 simulator.
-			page := 64 * (i % 2)
-			label := fmt.Sprintf("%s: callback decoder (scratch %d, page %d)", c.name, b.scratch, page)
-			inner, code, ok := runCIO(t, b.path, page, nil, c.outer, cCapacity)
+		for _, cfg := range []ioConfig{{1, 1}, {1024, 256}} {
+			label := fmt.Sprintf("%s: callback decoder (buffer %d, page %d)", c.name, cfg.buffer, cfg.page)
+			read := cfg.buffer < 1024 || c.outerName != "1 KB distance"
+			inner, code, ok := runCIO(t, callback, cfg, read, nil, c.outer, cCapacity)
 			if !ok || !bytes.Equal(inner, c.inner) {
 				t.Fatalf("%s, first pass: code %s", label, code)
 			}
-			if got, code, ok := runCIO(t, b.path, page, c.dict, inner, cCapacity); !ok || !bytes.Equal(got, c.target) {
+			if got, code, ok := runCIO(t, callback, cfg, true, c.dict, inner, cCapacity); !ok || !bytes.Equal(got, c.target) {
 				t.Fatalf("%s, second pass: code %s", label, code)
 			}
 		}

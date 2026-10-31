@@ -2,11 +2,11 @@
   "_comment": "What each tool's decoder costs on the device, for the trade-off graph (plot.py): footprint = code + buffers (+ the old file, if plus_old_file), stack excluded. code is .text in bytes, null where no microcontroller build exists (the point is then a lower bound). buffers is RAM the decoder needs besides its stack: dictionaries, windows, caches. stack is recorded but not counted. With plus_old_file, the decoder holds the whole old file in RAM; the graph adds the median old-file size of each kind of data. basis says where each number comes from: measured (bench/decoder-size.sh, Cortex-M0, -Os) or the tool's documentation.",
   "tinydelta": {
     "label": "tinydelta",
-    "code": 852,
-    "buffers": 0,
-    "stack": 215,
+    "code": 876,
+    "buffers": 256,
+    "stack": 175,
     "plus_old_file": false,
-    "basis": "measured: callback decoder, Cortex-M0, -Os: 852 B code with arm-none-eabi-gcc 13.2; no static RAM or buffers, ~215 B stack. A compression-mode patch is decoded twice, and the intermediate patch has to be stored, e.g. in external flash"
+    "basis": "measured: callback decoder, Cortex-M0, -Os: 876 B code with arm-none-eabi-gcc 13.2, ~175 B stack; plus its buffer, counted as one 256-byte flash page (any power of two works; a small one can be on the stack). A compression-mode patch is decoded twice, and the intermediate patch has to be stored, e.g. in external flash"
   },
   "hpatchlite_4k": {
     "label": "HPatchLite, 4 KB dict.",
