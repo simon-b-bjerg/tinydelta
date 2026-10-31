@@ -189,7 +189,45 @@ On the device there are three levels, each a superset of the one before:
 again by tinydelta against an empty dictionary, which finds the repeated
 difference patterns. The device decodes that outer patch (empty
 dictionary) into a scratch area, then the result against the old
-firmware. With `MaxTargetDistance` (CLI: `-max-distance N`) the outer
+firmware.
+
+On the update server, make both and send the smaller, with the number
+of passes in the update's metadata:
+
+```sh
+tinydelta encode old.bin new.bin plain.td                      # one pass
+tinydelta encode -for-compression old.bin new.bin inner.td
+tinydelta encode /dev/null inner.td twice.td                   # two passes
+
+if [ "$(wc -c < twice.td)" -lt "$(wc -c < plain.td)" ]; then
+  patch=twice.td passes=2
+else
+  patch=plain.td passes=1
+fi
+```
+
+On the device, two passes are two calls of the same decoder; pass 1's
+result length is pass 2's patch length:
+
+```c
+uint32_t inner_len, new_len;
+tinydelta_io pass1 = {  /* outer patch, empty dictionary -> scratch area */
+    .patch_read = flash_read, .patch_ctx = &patch_area, .patch_len = patch_len,
+    .dict_len = 0,
+    .target_read = flash_read, .target_write = flash_write,
+    .target_ctx = &scratch_area, .target_cap = SCRATCH_AREA_SIZE,
+};
+tinydelta_result result = tinydelta_decode_io(&pass1, &inner_len);
+if (result == TINYDELTA_OK) {
+    tinydelta_io pass2 = {  /* intermediate patch, old firmware -> new firmware */
+        .patch_read = flash_read, .patch_ctx = &scratch_area, .patch_len = inner_len,
+        .dict_read = flash_read, .dict_ctx = &old_slot, .dict_len = old_len,
+        .target_read = flash_read, .target_write = flash_write,
+        .target_ctx = &new_slot, .target_cap = new_len_expected,
+    };
+    result = tinydelta_decode_io(&pass2, &new_len);
+}
+``` With `MaxTargetDistance` (CLI: `-max-distance N`) the outer
 patch never reads more than N bytes back, so a decoder could keep only
 the last N bytes of the intermediate patch instead of all of it.
 
