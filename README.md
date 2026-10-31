@@ -512,7 +512,10 @@ each `target_write`, is a power of two that divides it (equal is fine:
 one page of RAM). Target bytes are read straight into the buffer and
 written out a page at a time, so flash is only ever programmed in whole
 pages. A small buffer can be a local array, on the stack: the decoder
-keeps no state between calls.
+keeps no state between calls. On flash whose pages aren't a power of two
+(264 or 528 bytes on some DataFlash parts), use a power of two it can
+program at matching offsets, such as 256 bytes; check the datasheet for
+partial-page programming.
 
 The buffer also keeps the last `buffer_size` bytes of the target, so
 `COPY_TARGET` reads from RAM instead of flash. A copy reaching further
@@ -749,9 +752,9 @@ they don't implement. Encoders may still produce different, usually
 smaller, patches for the same input in later releases; they stay valid
 patches of the same version.
 
-Release 1.0.0 wrote patches without the version byte. Those don't
-decode with later releases as they are; prepend the byte `0x01` to
-convert one. The Go API
+Releases 1.0.0 and 1.1.0-rc.1 wrote patches without the version byte.
+Those don't decode with later releases as they are; prepend the byte
+`0x01` to convert one. The Go API
 follows [semantic versioning](https://semver.org).
 
 ### Conformance vectors
@@ -937,6 +940,8 @@ round-trips every pair of `*.cfg` files in each subdirectory of
 </details>
 
 ### Releases
+
+What changed in each release is in [`CHANGELOG.md`](CHANGELOG.md).
 
 The [release workflow](.github/workflows/release.yml) tests the tagged
 code, builds static Linux and Windows binaries for amd64 and arm64 plus
