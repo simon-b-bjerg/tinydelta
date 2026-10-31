@@ -62,9 +62,9 @@ no compression library.
 firmware (two Cortex-M boards, ~300 KB) and of Linux device trees (three
 boards, ~63 KB), one and five commits apart, against six other delta
 tools. Every patch was decoded again and checked against the target.
-tinydelta is what an integrator ships following this README: per update,
-the smaller of the plain patch and [compression mode](#compression-mode),
-with a decoder that reads both.
+For each update, tinydelta's figure is the smaller of its plain patch
+and its [compression-mode](#compression-mode) patch, the one an update
+server would send.
 
 ![tinydelta's patch size compared with other tools](docs/benchmark/forest.svg)
 

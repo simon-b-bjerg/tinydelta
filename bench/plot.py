@@ -23,9 +23,9 @@ Writes to <output dir>:
                       one graph per kind of data
 Each graph is also written as a PNG for slides. Every comparison uses one
 baseline, "tinydelta": per pair, the smaller of tinydelta's plain patch
-(the optimal encoder's, when measured) and its compression mode decoded
-twice, as the README tells integrators to choose. Both are listed on
-their own in the patch-size tables.
+(the optimal encoder's, when measured) and its compression-mode patch,
+the one an update server would send. Both are listed on their own in
+the patch-size tables.
 Needs matplotlib.
 """
 
@@ -42,6 +42,18 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib import ticker  # noqa: E402
 from matplotlib.transforms import Bbox  # noqa: E402
+
+plt.rcParams.update({
+    # Text stays text in the SVGs, so browsers draw it hinted and sharp.
+    # Layout is measured with DejaVu Sans, which ships with matplotlib, so
+    # it is the same on every machine; a viewer without it falls back to
+    # Arial or Helvetica, which are narrower, so nothing collides.
+    "svg.fonttype": "none",
+    "font.family": "sans-serif",
+    "font.sans-serif": ["DejaVu Sans", "Arial", "Helvetica"],
+    # The same input gives byte-identical SVGs.
+    "svg.hashsalt": "tinydelta",
+})
 
 # The other tools in a fixed order: categorical slots 1-8 (validated with
 # the dataviz palette checks), a line style each, and whether the patch is
@@ -152,7 +164,7 @@ def style(ax):
 
 def save(fig, out, name):
     """Writes a figure as SVG, for the repository, and PNG, for slides."""
-    fig.savefig(os.path.join(out, name + ".svg"), facecolor=SURFACE)
+    fig.savefig(os.path.join(out, name + ".svg"), facecolor=SURFACE, metadata={"Date": None})
     fig.savefig(os.path.join(out, name + ".png"), facecolor=SURFACE, dpi=200)
     plt.close(fig)
 
@@ -172,10 +184,9 @@ def summary(rows, tools_file, out):
     tiny = tiny_key(rows)
     plain = "the optimal encoder at any size" if plain_key(rows) == "tinydelta_optimal" else "the library default"
     if tiny == BEST:
-        what = ("tinydelta is, per pair, the smaller of its plain patch (%s) and its compression mode "
-                "decoded twice, as sent: what an integrator following the README ships, with a decoder "
-                "that reads format versions 1 and 2. Both are listed on their own in the patch-size "
-                "tables." % plain)
+        what = ("tinydelta is, per pair, the smaller of its plain patch (%s) and its compression-mode "
+                "patch, the one an update server would send. Both are listed on their own in the "
+                "patch-size tables." % plain)
     else:
         what = "tinydelta is %s, as it is sent." % plain
     lines += [
@@ -383,8 +394,9 @@ def forest(rows, out):
                           label="%d commit%s apart" % (step, "" if step == 1 else "s")) for step in steps]
     axes[0][0].legend(handles=handles, frameon=False, fontsize=9, loc="lower right", labelcolor=INK,
                       bbox_to_anchor=(1.0, 1.0), ncol=len(steps))
-    axes[-1][0].set_xlabel("tinydelta's patch size ÷ the tool's (log scale)   ← tinydelta smaller · larger →\n"
-                           "dot: geometric mean · line: 10th-90th percentile, arrowhead where it runs past the axis",
+    axes[-1][0].set_xlabel("tinydelta's patch size ÷ the tool's (log scale)\n← tinydelta smaller · larger →\n"
+                           "dot: geometric mean · line: 10th-90th percentile\n"
+                           "arrowhead: the line runs past the axis",
                            fontsize=9, color=MUTED, labelpad=8)
     # Title and reading line, placed in inches from the top so they hold
     # for any figure height.
@@ -469,15 +481,20 @@ def place_labels(fig, ax, points):
     box = ax.get_window_extent(renderer)
     dots = [ax.transData.transform((x, y)) for x, y, _ in points]
     placed = []
+    lines = []  # points along the leader lines drawn so far
     offsets = [(dx * (1 + (reach > 1)), dy * reach, ha, va) for reach in (1, 3, 5, 8, 12)
                for dx, dy, ha, va in [(8, 4, "left", "bottom"), (8, -4, "left", "top"),
                                       (-8, 4, "right", "bottom"), (-8, -4, "right", "top"),
                                       (0, 3, "center", "bottom"), (0, -3, "center", "top")]]
-    for (x, y, label), dot in zip(points, dots):
+    # A point with another close by gets its label set off with a leader
+    # line, so the line, not proximity, says which point it is. Those
+    # labels can go almost anywhere, so they are placed last.
+    def crowded_at(dot):
+        return any(d is not dot and gap(Bbox([d, d]), dot) < 20 for d in dots)
+    order = sorted(zip(points, dots), key=lambda pd: crowded_at(pd[1]))
+    for (x, y, label), dot in order:
         best = None
-        # A point with another close by gets its label set off with a
-        # leader line, so the line, not proximity, says which point it is.
-        crowded = any(d is not dot and gap(Bbox([d, d]), dot) < 20 for d in dots)
+        crowded = crowded_at(dot)
         for dx, dy, ha, va in (offsets[6:] if crowded else offsets):
             text = ax.annotate(label, (x, y), xytext=(dx, dy), textcoords="offset points",
                                ha=ha, va=va, fontsize=9, color=INK)
@@ -488,6 +505,12 @@ def place_labels(fig, ax, points):
             # leader line or not: the worst place of all.
             own = gap(extent, dot)
             cost += 8 * any(gap(extent, d) < own for d in dots if d is not dot)
+            # A leader line running through another label is hard to follow.
+            corner = (extent.x0 if ha == "left" else extent.x1 if ha == "right" else (extent.x0 + extent.x1) / 2,
+                      extent.y0 if va == "bottom" else extent.y1)
+            line = [(dot[0] + (corner[0] - dot[0]) * t / 10, dot[1] + (corner[1] - dot[1]) * t / 10) for t in range(1, 10)]
+            cost += 3 * sum(any(other.expanded(1.1, 2.0).contains(*q) for q in line) for other in placed)
+            cost += 3 * any(extent.expanded(1.1, 2.0).contains(*q) for q in lines)
             cost += 0 if (extent.x0 >= box.x0 and extent.x1 <= box.x1 and extent.y0 >= box.y0
                           and extent.y1 <= box.y1) else 5
             if best is None or cost < best[0]:
@@ -500,6 +523,11 @@ def place_labels(fig, ax, points):
                 break
         cost, text, extent = best
         if crowded or abs(text.xyann[0]) > 8 or abs(text.xyann[1]) > 4:  # not right beside its point: a leader line
+            ha, va = text.get_ha(), text.get_va()
+            corner = (extent.x0 if ha == "left" else extent.x1 if ha == "right" else (extent.x0 + extent.x1) / 2,
+                      extent.y0 if va == "bottom" else extent.y1)
+            lines += [(dot[0] + (corner[0] - dot[0]) * t / 10, dot[1] + (corner[1] - dot[1]) * t / 10)
+                      for t in range(1, 10)]
             text.remove()
             ax.annotate(label, (x, y), xytext=text.xyann, textcoords="offset points", ha=text.get_ha(),
                         va=text.get_va(), fontsize=9, color=INK,
@@ -543,7 +571,7 @@ def tradeoff(rows, out):
             points.append((footprint, share, d["label"] + (" (at least)" if lower_bound else "")))
         ax.set_xscale("log")
         ax.set_yscale("log")
-        ax.margins(x=0.12, y=0.22)
+        ax.margins(x=0.22, y=0.22)
         place_labels(fig, ax, points)
         ax.xaxis.set_major_locator(ticker.LogLocator(base=10))
         ax.xaxis.set_major_formatter(ticker.FuncFormatter(
