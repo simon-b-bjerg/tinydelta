@@ -166,48 +166,40 @@ holds the old and new file in memory. Every figure and its source is in
 
 ## Compression mode
 
-For updates that change a lot, tinydelta can make patches that are meant
-to shrink further on their way to the device.
-`EncodeOptions.ForCompression` (CLI: `encode -for-compression`) writes
-format version 2 when it compresses better: regions that still line up
-with the old file but have a few changed bytes (moved addresses, branch
-offsets) are written as differences from the old bytes, so the same
-shift gives the same difference byte wherever it occurs. Uncompressed,
-such a patch is no smaller; compressed, it is. For small changes the
-plain version 1 patch usually compresses better, and that is what you
-get then.
+For updates that change a lot, `encode -for-compression`
+(`EncodeOptions.ForCompression`) writes format version 2: where the new
+file still lines up with the old one but a few bytes changed (moved
+addresses, branch offsets), it stores the *difference* from the old
+bytes, so the same shift gives the same byte everywhere. That patch is
+no smaller by itself, but it compresses very well, and tinydelta can
+compress it: encoded again against an empty dictionary, its repeats
+become short copies.
 
-On the device there are three levels, each a superset of the one before:
-
-| level | decoder | what the device needs |
-|---|---|---|
-| plain | as above | nothing more |
-| compression mode, decoded twice | `TINYDELTA_FORMAT_V2=1`: +132 B on Cortex-M0 | room for an intermediate patch |
-| compression mode + a small decompressor | the same, plus e.g. tinyuz or heatshrink | the decompressor's code and window |
-
-"Decoded twice" needs no other code: the version 2 patch is encoded
-again by tinydelta against an empty dictionary, which finds the repeated
-difference patterns. The device decodes that outer patch (empty
-dictionary) into a scratch area, then the result against the old
-firmware.
-
-On the update server, make both and send the smaller, with the number
-of passes in the update's metadata:
-
-```sh
-tinydelta encode old.bin new.bin plain.td                      # one pass
-tinydelta encode -for-compression old.bin new.bin inner.td
-tinydelta encode /dev/null inner.td twice.td                   # two passes
-
-if [ "$(wc -c < twice.td)" -lt "$(wc -c < plain.td)" ]; then
-  patch=twice.td passes=2
-else
-  patch=plain.td passes=1
-fi
+```text
+update server:  old + new ──v2──▶ inner ──v1──▶ outer     (sent)
+device:         outer ──v1──▶ inner ──v2──▶ new
 ```
 
-On the device, two passes are two calls of the same decoder; pass 1's
-result length is pass 2's patch length:
+Each layer starts with its version byte, so a decoder built with
+`TINYDELTA_FORMAT_V2=1` (+132 B on Cortex-M0) reads both; only the
+number of passes, one or two, comes from the update's metadata. The
+device needs room for the inner patch between the two passes.
+
+On the update server, make the plain patch and the two-pass one, and
+send the smaller:
+
+```sh
+tinydelta encode old.bin new.bin plain.td                    # 1 pass
+tinydelta encode -for-compression old.bin new.bin inner.td
+tinydelta encode /dev/null inner.td twice.td                 # 2 passes
+[ "$(wc -c < twice.td)" -lt "$(wc -c < plain.td)" ] && passes=2 || passes=1
+```
+
+<details>
+<summary>Decoding twice on the device</summary>
+
+Two calls of the same decoder; pass 1's result length is pass 2's patch
+length:
 
 ```c
 uint32_t inner_len, new_len;
@@ -219,7 +211,7 @@ tinydelta_io pass1 = {  /* outer patch, empty dictionary -> scratch area */
 };
 tinydelta_result result = tinydelta_decode_io(&pass1, &inner_len);
 if (result == TINYDELTA_OK) {
-    tinydelta_io pass2 = {  /* intermediate patch, old firmware -> new firmware */
+    tinydelta_io pass2 = {  /* inner patch, old firmware -> new firmware */
         .patch_read = flash_read, .patch_ctx = &scratch_area, .patch_len = inner_len,
         .dict_read = flash_read, .dict_ctx = &old_slot, .dict_len = old_len,
         .target_read = flash_read, .target_write = flash_write,
@@ -227,9 +219,17 @@ if (result == TINYDELTA_OK) {
     };
     result = tinydelta_decode_io(&pass2, &new_len);
 }
-``` With `MaxTargetDistance` (CLI: `-max-distance N`) the outer
-patch never reads more than N bytes back, so a decoder could keep only
-the last N bytes of the intermediate patch instead of all of it.
+```
+
+The final hash of the new firmware covers both passes. `-max-distance N`
+(`MaxTargetDistance`) limits how far back a patch reads its own output,
+for a decoder that keeps only the last N bytes.
+
+With a real decompressor on the device (tinyuz, heatshrink, a small
+inflate), compress the inner patch with it instead of the second pass:
+smaller still, for the decompressor's code and window.
+
+</details>
 
 ## Why another delta format?
 
