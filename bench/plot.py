@@ -70,6 +70,9 @@ TINY_VARIANTS = [
     ("tinydelta_greedy", "tinydelta, plain (greedy)", "#8a8983"),
     (CZ, "tinydelta, compression mode, decoded twice", "#8a8983"),
     ("tinydelta_cz_twice_1k", "tinydelta, compression mode, decoded twice, 1 KB window", "#8a8983"),
+    ("tinydelta_window_256", "tinydelta, plain, copies at most 256 B back", "#8a8983"),
+    ("tinydelta_window_1k", "tinydelta, plain, copies at most 1 KB back", "#8a8983"),
+    ("tinydelta_window_4k", "tinydelta, plain, copies at most 4 KB back", "#8a8983"),
 ]
 
 

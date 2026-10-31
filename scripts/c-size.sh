@@ -12,7 +12,7 @@ text() { arm-none-eabi-size "$1" | awk 'NR == 2 { print $1 }'; }
 echo "| part | Cortex-M0 | Cortex-M3 | Cortex-M4 |"
 echo "|---|---|---|---|"
 # name:file:extra flags.
-for part in decode:tinydelta_decode: io:tinydelta_io: cache:tinydelta_cache:; do
+for part in decode:tinydelta_decode: io:tinydelta_io:; do
   IFS=: read -r name file extra <<< "$part"
   row="| $file.c |"
   for cpu in cortex-m0 cortex-m3 cortex-m4; do
@@ -28,5 +28,5 @@ echo
 echo "Stack, Cortex-M0, per function (-fstack-usage), per part:"
 echo
 echo '```'
-cat "$out"/{decode,io,cache}_cortex-m0.su | awk -F'\t' '{ split($1, f, ":"); printf "%-28s %4d B\n", f[4], $2 }'
+cat "$out"/{decode,io}_cortex-m0.su | awk -F'\t' '{ split($1, f, ":"); printf "%-28s %4d B\n", f[4], $2 }'
 echo '```'

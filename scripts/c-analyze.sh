@@ -10,26 +10,26 @@ set -euo pipefail
 cd "$(dirname "$0")/../c"
 CLANG="${CLANG:-clang}"
 CLANG_TIDY="${CLANG_TIDY:-clang-tidy}"
-FILES=(tinydelta_decode.c tinydelta_io.c tinydelta_cache.c)
+FILES=(tinydelta_decode.c tinydelta_io.c)
 log="$(mktemp)"
 trap 'rm -f "$log"' EXIT
 FLAGS=(-std=c99 -I.)
 
-  for f in "${FILES[@]}"; do
-    gcc "${FLAGS[@]}" -O2 -fanalyzer -Wall -Wextra -Werror -c "$f" -o /dev/null
-  done
-  echo "gcc -fanalyzer: no findings"
+for f in "${FILES[@]}"; do
+  gcc "${FLAGS[@]}" -O2 -fanalyzer -Wall -Wextra -Werror -c "$f" -o /dev/null
+done
+echo "gcc -fanalyzer: no findings"
 
-  for f in "${FILES[@]}"; do
-    "$CLANG" "${FLAGS[@]}" --analyze -Xanalyzer -analyzer-werror \
-      -Xanalyzer -analyzer-output=text -o /dev/null "$f"
-  done
-  echo "clang --analyze: no findings"
+for f in "${FILES[@]}"; do
+  "$CLANG" "${FLAGS[@]}" --analyze -Xanalyzer -analyzer-werror \
+    -Xanalyzer -analyzer-output=text -o /dev/null "$f"
+done
+echo "clang --analyze: no findings"
 
-  # Findings go to stdout; stderr only counts suppressed system-header
-  # warnings, so it is shown only if clang-tidy fails.
-  if ! "$CLANG_TIDY" --quiet "${FILES[@]}" -- "${FLAGS[@]}" 2>"$log"; then
-    cat "$log" >&2
-    exit 1
-  fi
-  echo "clang-tidy: no findings"
+# Findings go to stdout; stderr only counts suppressed system-header
+# warnings, so it is shown only if clang-tidy fails.
+if ! "$CLANG_TIDY" --quiet "${FILES[@]}" -- "${FLAGS[@]}" 2>"$log"; then
+  cat "$log" >&2
+  exit 1
+fi
+echo "clang-tidy: no findings"
