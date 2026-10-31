@@ -5,13 +5,8 @@ kept here so the README's numbers and graphs stay fixed until they are
 deliberately updated. The method, corpus and tools are described in
 [`bench/README.md`](../../bench/README.md).
 
-- **Run:** [Benchmark workflow run 41135528748](https://github.com/simon-b-bjerg/tinydelta/actions/runs/41135528748), 30 October 2026; graphs and `summary.md` regenerated from its `results.csv` with the final `bench/plot.py`.
+- **Run:** [Benchmark workflow run 41187634585](https://github.com/simon-b-bjerg/tinydelta/actions/runs/41187634585), 31 October 2026, on the pull request that added the benchmark; the files here are that run's results, unchanged.
 - **Corpus:** 166 pairs. Firmware: 88 pairs from 50 builds of MicroPython (stm32 port, NUCLEO_F091RC and PYBV11), consecutive commits between `v1.25.0` and `v1.26.0`. Device trees: 78 pairs from 48 `.dtb` builds of three boards, consecutive commits between `v7.0-dts` and `v7.3-dts`. Pairs are 1 and 5 builds apart.
-- **Before the version byte:** this run predates the one-byte format
-  version at the start of every patch (#14). Every tinydelta patch here
-  is 1 byte smaller than the same patch today, and `decoders.json` has
-  the callback decoder at 670 B rather than today's 720 B. Neither
-  changes any conclusion; the next run picks both up.
 - **tinydelta:** the library's default encoding (optimal, with greedy above roughly 100 KB, so greedy for the firmware images); optimal encoding at any size was not run.
 
 | file | what |

@@ -70,10 +70,10 @@ below 1, tinydelta's is smaller) and how often tinydelta's is smaller:
 | compared with | firmware (88 pairs) | device trees (78 pairs) |
 |---|---|---|
 | open-vcdiff | **0.37**, smaller in 100% | **0.33**, smaller in 100% |
-| xdelta3 | 0.52, smaller in 100% | 0.53, smaller in 100% |
-| HPatchLite, 4 KB dictionary | 0.96, smaller in 62% | 1.38, smaller in 29% |
-| bsdiff | 0.73, smaller in 62% | 0.94, smaller in 35% |
-| zstd `--patch-from` | 0.94, smaller in 58% | 1.19, smaller in 29% |
+| xdelta3 | 0.53, smaller in 100% | 0.55, smaller in 100% |
+| HPatchLite, 4 KB dictionary | 0.97, smaller in 62% | 1.41, smaller in 29% |
+| bsdiff | 0.74, smaller in 62% | 0.96, smaller in 35% |
+| zstd `--patch-from` | 0.95, smaller in 58% | 1.21, smaller in 29% |
 
 tinydelta's patch is smaller than open-vcdiff's in every pair, typically a
 third of its size. Against the tools that compress their patches it
@@ -138,7 +138,7 @@ SHA-256), all numbers and every graph of this run are in
 <details>
 <summary>About compression</summary>
 
-zlib at level 9 on tinydelta's patch makes it about 20% smaller (median)
+zlib at level 9 on tinydelta's patch makes it about 22% smaller (median)
 on these data, but larger on very small patches, where zlib's own framing
 costs more than it saves: it helps in 78% of the firmware pairs and 71%
 of the device-tree pairs. Measured earlier on a 230 KB MicroPython image,
@@ -153,9 +153,7 @@ depends on your link and flash budget.
 <summary>Decoder footprint notes</summary>
 
 tinydelta's figures are from [`scripts/c-size.sh`](scripts/c-size.sh)
-(`arm-none-eabi-gcc` 13.2). The graphs come from a run just before
-patches got their version byte, so they show the callback decoder at
-670 B and every tinydelta patch 1 byte smaller than today. HPatchLite: 662 B of patch code by its own documentation plus
+(`arm-none-eabi-gcc` 13.2). HPatchLite: 662 B of patch code by its own documentation plus
 1,567 B for the tinyuz decompressor, measured; its dictionary is set when
 the patch is created. detools and tiny-vcdiff: measured on a 230 KB
 MicroPython image with each decoder linked into a small test program, with
