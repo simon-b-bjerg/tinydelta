@@ -2,31 +2,32 @@
 
 Tools: tinydelta (tinydelta v0.0.0-20261031124901-8c2fe13563f7); openvcdiff (open-vcdiff 868f459a8d815125c2457f8c74b12493853100f9); xdelta3 (Xdelta version 3.0.11); bsdiff (bsdiff 4.3-23); detools (detools 0.53.0); hpatchlite (HPatchLite v1.0.2); zstd (Zstandard CLI (64-bit) v1.5.7)
 
-Ratio = tinydelta's patch size / the other tool's; below 1, tinydelta is smaller. Geometric mean is the right average for ratios; "smaller" is the share of pairs where tinydelta is smaller. tinydelta is the library default, as it is sent; its compression mode, decoded twice, is compared like any other tool.
+Ratio = tinydelta's patch size / the other tool's; below 1, tinydelta is smaller. Geometric mean is the right average for ratios; "smaller" is the share of pairs where tinydelta is smaller. tinydelta is, per pair, the smaller of its plain patch (the library default) and its compression mode decoded twice, as sent: what an integrator following the README ships, with a decoder that reads format versions 1 and 2. Both are listed on their own in the patch-size tables.
 
 ## firmware, 1 commit apart
 
 48 pairs from micropython/stm32-NUCLEO_F091RC, micropython/stm32-PYBV11; median target 296,652 bytes.
 
+Compression mode is the smaller in 27% of these pairs.
+
 | tinydelta vs | geo. mean | median | p10-p90 | tinydelta smaller |
 |---|---:|---:|---:|---:|
-| tinydelta, compression mode, decoded twice | 1.17 | 0.91 | 0.91-2.75 | 73% |
-| tinydelta, compression mode, decoded twice, 1 KB window | 1.15 | 0.91 | 0.91-2.57 | 73% |
-| open-vcdiff | 0.44 | 0.47 | 0.39-0.48 | 100% |
-| open-vcdiff + zlib | 0.45 | 0.42 | 0.36-0.67 | 100% |
-| xdelta3 | 0.31 | 0.23 | 0.22-0.73 | 100% |
-| bsdiff | 0.27 | 0.12 | 0.11-4.34 | 77% |
-| detools (heatshrink) | 0.02 | 0.01 | 0.00-2.30 | 83% |
-| HPatchLite, 4 KB dict. | 0.55 | 0.35 | 0.29-2.89 | 77% |
-| HPatchLite, 32 KB dict. | 0.56 | 0.35 | 0.29-3.02 | 77% |
-| zstd --patch-from | 0.52 | 0.36 | 0.30-1.92 | 75% |
+| open-vcdiff | 0.36 | 0.46 | 0.14-0.48 | 100% |
+| open-vcdiff + zlib | 0.36 | 0.40 | 0.22-0.42 | 100% |
+| xdelta3 | 0.25 | 0.23 | 0.22-0.28 | 100% |
+| bsdiff | 0.22 | 0.12 | 0.11-1.58 | 77% |
+| detools (heatshrink) | 0.01 | 0.01 | 0.00-0.78 | 100% |
+| HPatchLite, 4 KB dict. | 0.44 | 0.35 | 0.29-1.01 | 88% |
+| HPatchLite, 32 KB dict. | 0.45 | 0.35 | 0.29-1.06 | 77% |
+| zstd --patch-from | 0.42 | 0.36 | 0.30-0.73 | 98% |
 
 Patch size as a share of the target (median, p10-p90):
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta (library default) | 0.01% | 0.01% | 8.56% |
-| tinydelta (greedy) | 0.01% | 0.01% | 8.56% |
+| tinydelta | 0.01% | 0.01% | 2.78% |
+| tinydelta, plain | 0.01% | 0.01% | 8.56% |
+| tinydelta, plain (greedy) | 0.01% | 0.01% | 8.56% |
 | tinydelta, compression mode, decoded twice | 0.01% | 0.01% | 2.78% |
 | tinydelta, compression mode, decoded twice, 1 KB window | 0.01% | 0.01% | 3.09% |
 | open-vcdiff | 0.02% | 0.01% | 19.43% |
@@ -42,8 +43,9 @@ Patch size in bytes (median, p10-p90), what goes over the air:
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta (library default) | 21 | 20 | 27,546 |
-| tinydelta (greedy) | 21 | 20 | 27,546 |
+| tinydelta | 21 | 20 | 9,433 |
+| tinydelta, plain | 21 | 20 | 27,546 |
+| tinydelta, plain (greedy) | 21 | 20 | 27,546 |
 | tinydelta, compression mode, decoded twice | 23 | 22 | 9,433 |
 | tinydelta, compression mode, decoded twice, 1 KB window | 23 | 22 | 10,508 |
 | open-vcdiff | 44 | 42 | 65,838 |
@@ -59,25 +61,26 @@ Patch size in bytes (median, p10-p90), what goes over the air:
 
 40 pairs from micropython/stm32-NUCLEO_F091RC, micropython/stm32-PYBV11; median target 296,652 bytes.
 
+Compression mode is the smaller in 60% of these pairs.
+
 | tinydelta vs | geo. mean | median | p10-p90 | tinydelta smaller |
 |---|---:|---:|---:|---:|
-| tinydelta, compression mode, decoded twice | 1.57 | 1.49 | 0.92-3.07 | 40% |
-| tinydelta, compression mode, decoded twice, 1 KB window | 1.51 | 1.48 | 0.92-2.75 | 40% |
-| open-vcdiff | 0.43 | 0.44 | 0.40-0.47 | 100% |
-| open-vcdiff + zlib | 0.53 | 0.59 | 0.38-0.75 | 100% |
-| xdelta3 | 0.47 | 0.63 | 0.25-0.76 | 100% |
-| bsdiff | 0.86 | 1.72 | 0.13-4.80 | 45% |
-| detools (heatshrink) | 0.15 | 0.38 | 0.01-2.36 | 52% |
-| HPatchLite, 4 KB dict. | 1.12 | 1.44 | 0.36-3.06 | 45% |
-| HPatchLite, 32 KB dict. | 1.14 | 1.56 | 0.36-3.22 | 45% |
-| zstd --patch-from | 0.96 | 1.58 | 0.37-1.96 | 40% |
+| open-vcdiff | 0.27 | 0.33 | 0.14-0.47 | 100% |
+| open-vcdiff + zlib | 0.33 | 0.36 | 0.22-0.43 | 100% |
+| xdelta3 | 0.29 | 0.26 | 0.24-0.42 | 100% |
+| bsdiff | 0.53 | 1.15 | 0.13-1.58 | 45% |
+| detools (heatshrink) | 0.09 | 0.26 | 0.01-0.83 | 100% |
+| HPatchLite, 4 KB dict. | 0.69 | 0.96 | 0.36-1.10 | 70% |
+| HPatchLite, 32 KB dict. | 0.70 | 1.01 | 0.36-1.13 | 45% |
+| zstd --patch-from | 0.59 | 0.64 | 0.37-0.97 | 90% |
 
 Patch size as a share of the target (median, p10-p90):
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta (library default) | 0.70% | 0.01% | 8.69% |
-| tinydelta (greedy) | 0.70% | 0.01% | 8.69% |
+| tinydelta | 0.47% | 0.01% | 3.98% |
+| tinydelta, plain | 0.70% | 0.01% | 8.69% |
+| tinydelta, plain (greedy) | 0.70% | 0.01% | 8.69% |
 | tinydelta, compression mode, decoded twice | 0.47% | 0.01% | 3.98% |
 | tinydelta, compression mode, decoded twice, 1 KB window | 0.47% | 0.01% | 4.23% |
 | open-vcdiff | 1.43% | 0.02% | 20.73% |
@@ -93,8 +96,9 @@ Patch size in bytes (median, p10-p90), what goes over the air:
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta (library default) | 1,606 | 24 | 31,566 |
-| tinydelta (greedy) | 1,606 | 24 | 31,566 |
+| tinydelta | 1,076 | 24 | 14,482 |
+| tinydelta, plain | 1,606 | 24 | 31,566 |
+| tinydelta, plain (greedy) | 1,606 | 24 | 31,566 |
 | tinydelta, compression mode, decoded twice | 1,076 | 26 | 14,482 |
 | tinydelta, compression mode, decoded twice, 1 KB window | 1,082 | 26 | 15,412 |
 | open-vcdiff | 3,276 | 58 | 74,752 |
@@ -110,25 +114,26 @@ Patch size in bytes (median, p10-p90), what goes over the air:
 
 45 pairs from dtb/imx8mp-evk, dtb/k3-am625-sk, dtb/rk3588-rock-5b; median target 62,802 bytes.
 
+Compression mode is the smaller in 71% of these pairs.
+
 | tinydelta vs | geo. mean | median | p10-p90 | tinydelta smaller |
 |---|---:|---:|---:|---:|
-| tinydelta, compression mode, decoded twice | 1.56 | 1.63 | 0.92-2.84 | 29% |
-| tinydelta, compression mode, decoded twice, 1 KB window | 1.52 | 1.62 | 0.92-2.58 | 29% |
-| open-vcdiff | 0.34 | 0.33 | 0.28-0.39 | 100% |
-| open-vcdiff + zlib | 0.59 | 0.81 | 0.30-0.87 | 100% |
-| xdelta3 | 0.54 | 0.77 | 0.25-0.82 | 100% |
-| bsdiff | 0.86 | 1.90 | 0.14-3.49 | 42% |
-| detools (heatshrink) | 0.30 | 1.15 | 0.02-1.68 | 42% |
-| HPatchLite, 4 KB dict. | 1.31 | 1.91 | 0.49-2.96 | 38% |
-| HPatchLite, 32 KB dict. | 1.34 | 2.00 | 0.49-3.10 | 38% |
-| zstd --patch-from | 1.19 | 1.70 | 0.56-2.04 | 38% |
+| open-vcdiff | 0.21 | 0.23 | 0.11-0.34 | 100% |
+| open-vcdiff + zlib | 0.37 | 0.35 | 0.28-0.50 | 100% |
+| xdelta3 | 0.34 | 0.35 | 0.25-0.48 | 100% |
+| bsdiff | 0.54 | 1.11 | 0.14-1.27 | 42% |
+| detools (heatshrink) | 0.18 | 0.55 | 0.02-0.82 | 100% |
+| HPatchLite, 4 KB dict. | 0.82 | 1.04 | 0.48-1.19 | 47% |
+| HPatchLite, 32 KB dict. | 0.84 | 1.07 | 0.48-1.24 | 42% |
+| zstd --patch-from | 0.74 | 0.75 | 0.54-1.03 | 87% |
 
 Patch size as a share of the target (median, p10-p90):
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta (library default) | 3.14% | 0.03% | 5.89% |
-| tinydelta (greedy) | 3.14% | 0.04% | 5.89% |
+| tinydelta | 1.28% | 0.03% | 3.12% |
+| tinydelta, plain | 3.14% | 0.03% | 5.89% |
+| tinydelta, plain (greedy) | 3.14% | 0.04% | 5.89% |
 | tinydelta, compression mode, decoded twice | 1.28% | 0.03% | 3.12% |
 | tinydelta, compression mode, decoded twice, 1 KB window | 1.33% | 0.03% | 3.20% |
 | open-vcdiff | 7.44% | 0.12% | 16.48% |
@@ -144,8 +149,9 @@ Patch size in bytes (median, p10-p90), what goes over the air:
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta (library default) | 2,424 | 25 | 4,992 |
-| tinydelta (greedy) | 2,424 | 28 | 4,992 |
+| tinydelta | 1,174 | 25 | 1,996 |
+| tinydelta, plain | 2,424 | 25 | 4,992 |
+| tinydelta, plain (greedy) | 2,424 | 28 | 4,992 |
 | tinydelta, compression mode, decoded twice | 1,174 | 27 | 1,996 |
 | tinydelta, compression mode, decoded twice, 1 KB window | 1,202 | 27 | 2,119 |
 | open-vcdiff | 6,572 | 79 | 15,464 |
@@ -161,25 +167,26 @@ Patch size in bytes (median, p10-p90), what goes over the air:
 
 33 pairs from dtb/imx8mp-evk, dtb/k3-am625-sk, dtb/rk3588-rock-5b; median target 62,802 bytes.
 
+Compression mode is the smaller in 82% of these pairs.
+
 | tinydelta vs | geo. mean | median | p10-p90 | tinydelta smaller |
 |---|---:|---:|---:|---:|
-| tinydelta, compression mode, decoded twice | 1.63 | 1.71 | 0.89-2.77 | 18% |
-| tinydelta, compression mode, decoded twice, 1 KB window | 1.57 | 1.70 | 0.89-2.50 | 18% |
-| open-vcdiff | 0.33 | 0.33 | 0.27-0.41 | 100% |
-| open-vcdiff + zlib | 0.65 | 0.84 | 0.27-0.90 | 100% |
-| xdelta3 | 0.55 | 0.80 | 0.17-0.84 | 100% |
-| bsdiff | 1.11 | 2.08 | 0.08-3.29 | 24% |
-| detools (heatshrink) | 0.47 | 1.18 | 0.02-1.64 | 24% |
-| HPatchLite, 4 KB dict. | 1.55 | 2.10 | 0.37-2.87 | 18% |
-| HPatchLite, 32 KB dict. | 1.59 | 2.17 | 0.37-2.97 | 18% |
-| zstd --patch-from | 1.24 | 1.74 | 0.39-1.96 | 18% |
+| open-vcdiff | 0.19 | 0.19 | 0.12-0.30 | 100% |
+| open-vcdiff + zlib | 0.38 | 0.43 | 0.27-0.59 | 100% |
+| xdelta3 | 0.32 | 0.40 | 0.17-0.57 | 100% |
+| bsdiff | 0.65 | 1.13 | 0.08-1.24 | 24% |
+| detools (heatshrink) | 0.28 | 0.62 | 0.02-0.80 | 100% |
+| HPatchLite, 4 KB dict. | 0.91 | 1.07 | 0.37-1.20 | 24% |
+| HPatchLite, 32 KB dict. | 0.93 | 1.11 | 0.37-1.24 | 24% |
+| zstd --patch-from | 0.73 | 0.88 | 0.39-1.15 | 67% |
 
 Patch size as a share of the target (median, p10-p90):
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta (library default) | 4.07% | 0.02% | 5.42% |
-| tinydelta (greedy) | 4.07% | 0.03% | 5.42% |
+| tinydelta | 1.82% | 0.02% | 3.29% |
+| tinydelta, plain | 4.07% | 0.02% | 5.42% |
+| tinydelta, plain (greedy) | 4.07% | 0.03% | 5.42% |
 | tinydelta, compression mode, decoded twice | 1.82% | 0.03% | 3.29% |
 | tinydelta, compression mode, decoded twice, 1 KB window | 2.01% | 0.03% | 3.40% |
 | open-vcdiff | 11.03% | 0.08% | 16.23% |
@@ -195,8 +202,9 @@ Patch size in bytes (median, p10-p90), what goes over the air:
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta (library default) | 2,987 | 15 | 5,662 |
-| tinydelta (greedy) | 2,987 | 16 | 5,662 |
+| tinydelta | 1,438 | 15 | 2,651 |
+| tinydelta, plain | 2,987 | 15 | 5,662 |
+| tinydelta, plain (greedy) | 2,987 | 16 | 5,662 |
 | tinydelta, compression mode, decoded twice | 1,438 | 17 | 2,651 |
 | tinydelta, compression mode, decoded twice, 1 KB window | 1,495 | 17 | 2,842 |
 | open-vcdiff | 7,613 | 49 | 17,040 |

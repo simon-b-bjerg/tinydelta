@@ -12,8 +12,8 @@ Writes to <output dir>:
     forest.svg        the headline: per kind of data and tool, the geometric
                       mean of tinydelta's patch size divided by the tool's,
                       with its 10th-90th percentile range, for each step
-    pairs.svg         every pair: tinydelta's patch size against open-vcdiff's,
-                      HPatchLite's (4 KB) and bsdiff's
+    pairs.svg         every pair: tinydelta's patch size against HPatchLite's
+                      (4 KB)
     tradeoff.svg      each tool's typical patch size against its decoder's
                       footprint, code + RAM buffers, stack excluded
                       (from bench/decoders.json)
@@ -21,8 +21,10 @@ Writes to <output dir>:
                       other tool's, per kind of data
     patch_share.svg   each tool's patch size as a share of the target
 Each graph is also written as a PNG for slides. Every comparison uses one
-baseline: tinydelta's patch as it is sent, uncompressed (the optimal
-encoder's, when measured).
+baseline, "tinydelta": per pair, the smaller of tinydelta's plain patch
+(the optimal encoder's, when measured) and its compression mode decoded
+twice, as the README tells integrators to choose. Both are listed on
+their own in the patch-size tables.
 Needs matplotlib.
 """
 
@@ -40,12 +42,10 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib import ticker  # noqa: E402
 from matplotlib.transforms import Bbox  # noqa: E402
 
-# The other tools in a fixed order: tinydelta's compressed variants (grays) and categorical slots 1-8 (validated with the dataviz palette
-# checks), a line style each, and whether the patch is compressed (which
-# groups the distribution graph's rows).
+# The other tools in a fixed order: categorical slots 1-8 (validated with
+# the dataviz palette checks), a line style each, and whether the patch is
+# compressed (which groups the distribution graph's rows).
 OTHERS = [
-    ("tinydelta_cz_twice", "tinydelta, compression mode, decoded twice", "#6b6a64", "-", True),
-    ("tinydelta_cz_twice_1k", "tinydelta, compression mode, decoded twice, 1 KB window", "#6b6a64", "--", True),
     ("openvcdiff", "open-vcdiff", "#2a78d6", "-", False),
     ("openvcdiff_zlib", "open-vcdiff + zlib", "#eb6834", "--", True),
     ("xdelta3", "xdelta3", "#1baf7a", "-.", False),
@@ -56,12 +56,19 @@ OTHERS = [
     ("zstd", "zstd --patch-from", "#e34948", ":", True),
 ]
 SURFACE, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#6b6a64", "#e4e3de"
-# tinydelta's variants, best first: optimal at any size is "tinydelta" in
-# the comparisons when present; the others appear in the patch-size tables.
+# The one tinydelta every comparison uses: per pair, the smaller of the
+# plain patch and compression mode decoded twice (a column load() adds).
+BEST = "tinydelta_best"
+CZ = "tinydelta_cz_twice"
+# tinydelta's variants, the comparison's first; the others appear in the
+# patch-size tables.
 TINY_VARIANTS = [
-    ("tinydelta_optimal", "tinydelta (optimal)", INK),
-    ("tinydelta", "tinydelta (library default)", INK),
-    ("tinydelta_greedy", "tinydelta (greedy)", "#8a8983"),
+    (BEST, "tinydelta", INK),
+    ("tinydelta_optimal", "tinydelta, plain (optimal)", "#8a8983"),
+    ("tinydelta", "tinydelta, plain", "#8a8983"),
+    ("tinydelta_greedy", "tinydelta, plain (greedy)", "#8a8983"),
+    (CZ, "tinydelta, compression mode, decoded twice", "#8a8983"),
+    ("tinydelta_cz_twice_1k", "tinydelta, compression mode, decoded twice, 1 KB window", "#8a8983"),
 ]
 
 
@@ -72,6 +79,10 @@ def load(path):
         for k, v in r.items():
             if k not in ("corpus", "kind", "item", "from", "to"):
                 r[k] = int(v)
+    if rows and CZ in rows[0]:
+        plain = plain_key(rows)
+        for r in rows:
+            r[BEST] = min(r[plain], r[CZ])
     return rows
 
 
@@ -94,10 +105,16 @@ def kinds_of(rows):
     return [k for k in KIND_ORDER if k in kinds] + sorted(kinds - set(KIND_ORDER))
 
 
-def tiny_key(rows):
-    """The tinydelta column the comparisons use: optimal at any size if
-    measured, else the library's default."""
+def plain_key(rows):
+    """tinydelta's plain patch: optimal at any size if measured, else the
+    library's default."""
     return "tinydelta_optimal" if "tinydelta_optimal" in rows[0] else "tinydelta"
+
+
+def tiny_key(rows):
+    """The tinydelta column the comparisons use: the smaller of plain and
+    compression mode when both are measured, else plain."""
+    return BEST if BEST in rows[0] else plain_key(rows)
 
 
 def ratios(rows, other, tiny):
@@ -149,12 +166,18 @@ def summary(rows, tools_file, out):
         versions = json.load(open(tools_file))
         lines += ["Tools: " + "; ".join("%s (%s)" % (k, v) for k, v in versions.items()), ""]
     tiny = tiny_key(rows)
+    plain = "the optimal encoder at any size" if plain_key(rows) == "tinydelta_optimal" else "the library default"
+    if tiny == BEST:
+        what = ("tinydelta is, per pair, the smaller of its plain patch (%s) and its compression mode "
+                "decoded twice, as sent: what an integrator following the README ships, with a decoder "
+                "that reads format versions 1 and 2. Both are listed on their own in the patch-size "
+                "tables." % plain)
+    else:
+        what = "tinydelta is %s, as it is sent." % plain
     lines += [
         "Ratio = tinydelta's patch size / the other tool's; below 1, tinydelta is smaller. "
         "Geometric mean is the right average for ratios; \"smaller\" is the share of pairs where "
-        "tinydelta is smaller. tinydelta is %s, as it is sent; its compression mode, decoded twice, "
-        "is compared like any other tool." % (
-            "the optimal encoder at any size" if tiny == "tinydelta_optimal" else "the library default"),
+        "tinydelta is smaller. " + what,
         "",
     ]
     for kind in kinds:
@@ -164,7 +187,11 @@ def summary(rows, tools_file, out):
             lines += ["## %s, %d commit%s apart" % (kind, step, "" if step == 1 else "s"), "",
                       "%d pairs from %s; median target %s bytes." % (
                           len(sel), ", ".join(items), "{:,}".format(int(statistics.median(r["target_bytes"] for r in sel)))),
-                      "",
+                      ""]
+            if tiny == BEST:
+                lines += ["Compression mode is the smaller in %d%% of these pairs." % round(
+                    100 * sum(r[CZ] < r[plain_key(rows)] for r in sel) / len(sel)), ""]
+            lines += [
                       "| tinydelta vs | geo. mean | median | p10-p90 | tinydelta smaller |",
                       "|---|---:|---:|---:|---:|"]
             for key, label, _, _, _ in OTHERS:
@@ -269,9 +296,7 @@ FOREST_MIN, FOREST_MAX = 0.1, 10  # the forest graph's axis; lines beyond end in
 def forest(rows, out):
     kinds = kinds_of(rows)
     steps = sorted({r["step"] for r in rows})
-    # tinydelta's own compressed variants are compared with the others in
-    # the trade-off graph and the summary, not here.
-    tools = [t for t in OTHERS if t[0] in rows[0] and not t[0].startswith("tinydelta_cz")]
+    tools = [t for t in OTHERS if t[0] in rows[0]]
     fig, axes = plt.subplots(len(kinds), 1, figsize=(7.2, 0.9 + 0.42 * len(tools) * len(kinds) + 0.6 * len(kinds)),
                              squeeze=False, sharex=True, facecolor=SURFACE)
     offsets = {step: (i - (len(steps) - 1) / 2) * 0.22 for i, step in enumerate(steps)}
@@ -482,11 +507,8 @@ def main():
         sys.exit("plot: no rows in %s" % results)
     summary(rows, os.path.splitext(results)[0] + "-tools.json", out)
     forest(rows, out)
-    # tinydelta against the closest embedded alternative, plain and in
-    # compression mode decoded twice.
+    # tinydelta against the closest embedded alternative.
     pair_scatter(rows, out, "pairs", tiny_key(rows), "tinydelta", "hpatchlite_4k")
-    pair_scatter(rows, out, "pairs_compression", "tinydelta_cz_twice", "tinydelta, compression mode, decoded twice",
-                 "hpatchlite_4k")
     tradeoff(rows, out)
     ratio_ecdf(rows, out)
     patch_share(rows, out)

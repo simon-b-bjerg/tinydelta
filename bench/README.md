@@ -48,7 +48,7 @@ commits to `bench-results-preview`, replaced each time. The results:
 | file | what |
 |---|---|
 | `forest.svg` | the headline: per kind of data and tool, tinydelta's patch size divided by the tool's (geometric mean, 10th-90th percentile), 1 and 5 commits apart |
-| `pairs.svg`, `pairs_compression.svg` | every pair: tinydelta against HPatchLite (4 KB), plain and in compression mode decoded twice |
+| `pairs.svg` | every pair: tinydelta against HPatchLite (4 KB) |
 | `ratio_ecdf.svg`, `patch_share.svg` | the full distributions: the size ratio, and patch size as a share of the target |
 | `tradeoff.svg` | each tool's median patch size against its decoder's footprint on the device: code plus RAM buffers, stack excluded |
 | `summary.md` | the numbers behind the graphs, plus patch sizes in bytes |
@@ -56,9 +56,12 @@ commits to `bench-results-preview`, replaced each time. The results:
 | `results.csv` | one row per pair, every tool's patch size |
 | `inputs/`, `corpus.json`, `results-tools.json` | the commit and SHA-256 of every build, the corpus and the tool versions |
 
-Every graph is also a PNG, for slides. Every comparison has one baseline:
-tinydelta's patch as it is sent. Compression mode, decoded twice, is in
-the trade-off graph and the summary.
+Every graph is also a PNG, for slides. Every comparison has one baseline,
+"tinydelta": per pair, the smaller of the plain patch and compression
+mode decoded twice, as sent, which is what the README tells integrators
+to ship. Its footprint is the decoder that reads both format versions.
+The summary also lists both on their own, and how often compression mode
+wins.
 
 Decoder footprints ([`decoders.json`](decoders.json)) are code plus the
 RAM buffers a decoder needs (dictionaries, windows, caches); stack is
