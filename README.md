@@ -142,7 +142,7 @@ The method, the scripts and how to run them are in
 SHA-256), all numbers and every graph of this run are in
 [`docs/benchmark/`](docs/benchmark/), including the pair-by-pair view:
 
-![Every pair: tinydelta against HPatchLite](docs/benchmark/pairs.svg)
+![Every pair: tinydelta against open-vcdiff, HPatchLite, bsdiff and zstd](docs/benchmark/pairs.svg)
 
 </details>
 

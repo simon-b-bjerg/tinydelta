@@ -12,8 +12,8 @@ Writes to <output dir>:
     forest.svg        the headline: per kind of data and tool, the geometric
                       mean of tinydelta's patch size divided by the tool's,
                       with its 10th-90th percentile range, for each step
-    pairs.svg         every pair: tinydelta's patch size against HPatchLite's
-                      (4 KB)
+    pairs.svg         every pair: tinydelta's patch size against open-vcdiff's,
+                      HPatchLite's (4 KB), bsdiff's and zstd's
     tradeoff.svg      each tool's typical patch size against its decoder's
                       footprint, code + RAM buffers, stack excluded
                       (from bench/decoders.json)
@@ -290,13 +290,32 @@ def patch_share(rows, out):
     save(fig, out, "patch_share")
 
 
-FOREST_MIN, FOREST_MAX = 0.1, 10  # the forest graph's axis; lines beyond end in an arrowhead
+NICE = [m * 10 ** e for e in range(-3, 3) for m in (1, 2, 5)]  # 1-2-5 axis ends
+
+
+def forest_range(rows, tools, kinds, steps):
+    """The forest graph's axis: 1-2-5 values just wide enough for every
+    geometric mean and 90th percentile, and for 1 (the 10th percentile
+    may run off the left, ending in an arrowhead)."""
+    tiny = tiny_key(rows)
+    lows, highs = [1.0], [1.0]
+    for key, *_ in tools:
+        for kind in kinds:
+            for step in steps:
+                rs = ratios([r for r in rows if r["kind"] == kind and r["step"] == step], key, tiny)
+                if rs:
+                    lows.append(geomean(rs))
+                    highs.append(percentile(rs, 90))
+    lo = max([v for v in NICE if v <= min(lows) / 1.15] or NICE[:1])
+    hi = min([v for v in NICE if v >= max(highs) * 1.15] or NICE[-1:])
+    return lo, hi
 
 
 def forest(rows, out):
     kinds = kinds_of(rows)
     steps = sorted({r["step"] for r in rows})
     tools = [t for t in OTHERS if t[0] in rows[0]]
+    FOREST_MIN, FOREST_MAX = forest_range(rows, tools, kinds, steps)
     fig, axes = plt.subplots(len(kinds), 1, figsize=(7.2, 0.9 + 0.42 * len(tools) * len(kinds) + 0.6 * len(kinds)),
                              squeeze=False, sharex=True, facecolor=SURFACE)
     offsets = {step: (i - (len(steps) - 1) / 2) * 0.22 for i, step in enumerate(steps)}
@@ -353,25 +372,29 @@ def forest(rows, out):
 
 
 KIND_MARKERS = ["o", "^", "s", "D"]
-KIND_COLORS = ["#2a78d6", "#eda100", "#1baf7a", "#e87ba4"]  # categorical slots, validated
+# The pair graph's tools: the format tinydelta replaces, the closest
+# embedded alternative, and the strongest compressors on size.
+PAIR_TOOLS = ["openvcdiff", "hpatchlite_4k", "bsdiff", "zstd"]
 
 
-def pair_scatter(rows, out, name, mine, mine_label, other):
-    """Every pair as one dot: the other tool's patch size across,
-    tinydelta's (column mine) up. One panel; the kinds of data by marker."""
-    labels = {k: (l, c) for k, l, c, _, _ in OTHERS}
-    if mine not in rows[0] or other not in rows[0]:
+def pair_scatter(rows, out, name):
+    """Every pair, once per tool: that tool's patch size across,
+    tinydelta's up. Colour is the tool, marker the kind of data."""
+    tiny = tiny_key(rows)
+    tools = [t for t in OTHERS if t[0] in PAIR_TOOLS and t[0] in rows[0]]
+    if not tools:
         return
-    label = labels[other][0]
-    fig, ax = plt.subplots(figsize=(5.2, 5.0), facecolor=SURFACE)
+    kinds = kinds_of(rows)
+    fig, ax = plt.subplots(figsize=(6.0, 5.8), facecolor=SURFACE)
     style(ax)
-    sizes = [r[k] for r in rows for k in (other, mine)]
+    sizes = [r[k] for r in rows for k in [tiny] + [t[0] for t in tools]]
     lo, hi = max(1, min(sizes)) / 1.5, max(sizes) * 1.5
     ax.plot([lo, hi], [lo, hi], color=MUTED, linewidth=1)
-    for kind, marker, color in zip(kinds_of(rows), KIND_MARKERS, KIND_COLORS):
-        sel = [r for r in rows if r["kind"] == kind]
-        ax.scatter([r[other] for r in sel], [r[mine] for r in sel], s=24, marker=marker, color=color,
-                   alpha=0.75, edgecolors=SURFACE, linewidths=0.6, label=kind)
+    for key, label, color, _, _ in tools:
+        for kind, marker in zip(kinds, KIND_MARKERS):
+            sel = [r for r in rows if r["kind"] == kind]
+            ax.scatter([r[key] for r in sel], [r[tiny] for r in sel], s=22, marker=marker, color=color,
+                       alpha=0.7, edgecolors=SURFACE, linewidths=0.5)
     ax.set_xscale("log")
     ax.set_yscale("log")
     for axis in (ax.xaxis, ax.yaxis):  # decades only: the range spans several
@@ -381,13 +404,26 @@ def pair_scatter(rows, out, name, mine, mine_label, other):
     ax.set_xlim(lo, hi)
     ax.set_ylim(lo, hi)
     ax.set_aspect("equal")
-    ax.set_title("%s\nvs %s, every pair" % (mine_label, label), fontsize=11, color=INK, loc="left")
-    ax.set_xlabel("%s patch (bytes, log scale)" % label, fontsize=9, color=MUTED)
-    ax.set_ylabel("%s patch (bytes, log scale)" % mine_label, fontsize=9, color=MUTED)
-    ax.text(0.97, 0.05, "below the line:\n%s smaller" % mine_label, transform=ax.transAxes, ha="right",
+    ax.set_xlabel("the other tool's patch (bytes, log scale)", fontsize=9, color=MUTED)
+    ax.set_ylabel("tinydelta's patch (bytes, log scale)", fontsize=9, color=MUTED)
+    ax.text(0.97, 0.05, "below the line:\ntinydelta smaller", transform=ax.transAxes, ha="right",
             fontsize=8, color=MUTED)
-    ax.legend(frameon=False, fontsize=8, loc="upper left", labelcolor=INK)
-    fig.tight_layout()
+    # Two legends: colour for the tool, marker for the kind of data.
+    tool_handles = [plt.Line2D([], [], marker="o", linestyle="", markersize=6, color=color, label=label)
+                    for _, label, color, _, _ in tools]
+    kind_handles = [plt.Line2D([], [], marker=marker, linestyle="", markersize=6, color=MUTED, label=kind)
+                    for kind, marker in zip(kinds, KIND_MARKERS)]
+    first = ax.legend(handles=tool_handles, frameon=False, fontsize=8, loc="upper left", labelcolor=INK,
+                      title="tool", title_fontsize=8, alignment="left")
+    ax.add_artist(first)
+    ax.legend(handles=kind_handles, frameon=False, fontsize=8, loc="lower right", labelcolor=INK,
+              bbox_to_anchor=(1.0, 0.12), title="data", title_fontsize=8, alignment="left")
+    height = fig.get_figheight()
+    fig.text(0.02, 1 - 0.15 / height, "tinydelta against other tools, every pair",
+             ha="left", va="top", fontsize=13, color=INK)
+    fig.text(0.02, 1 - 0.45 / height, "Each pair once per tool; below the line, tinydelta's patch is smaller.",
+             ha="left", va="top", fontsize=9, color=MUTED)
+    fig.tight_layout(rect=(0, 0, 1, 1 - 0.7 / height))
     save(fig, out, name)
 
 
@@ -508,7 +544,7 @@ def main():
     summary(rows, os.path.splitext(results)[0] + "-tools.json", out)
     forest(rows, out)
     # tinydelta against the closest embedded alternative.
-    pair_scatter(rows, out, "pairs", tiny_key(rows), "tinydelta", "hpatchlite_4k")
+    pair_scatter(rows, out, "pairs")
     tradeoff(rows, out)
     ratio_ecdf(rows, out)
     patch_share(rows, out)
