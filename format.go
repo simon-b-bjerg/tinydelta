@@ -79,6 +79,11 @@
 //     offsets) becomes mostly zeros and the same few difference values,
 //     which a compressor reduces to very little. Repeats within the
 //     target, COPY_TARGET's job in version 1, are left to that compressor.
+//
+// Either version's instruction stream may also be sent range-coded, as a
+// coded patch (first byte 0x81 or 0x82; see coded.go and
+// EncodeOptions.DecoderRAM): the same instructions, decoded in one pass
+// from fewer bytes, in exchange for RAM in the decoder.
 package tinydelta
 
 // FormatVersion is the format version Encode, EncodeGreedy and
