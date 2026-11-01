@@ -43,12 +43,13 @@ no compression library.
   costs, never worse than the built-in greedy encoder, which is
   available when speed matters more.
 - **Tiny C decoder.** 500 bytes of code on Cortex-M0 when everything is
-  in RAM; 884 bytes when the data lives on external flash behind your
+  in RAM; 876 bytes when the data lives on external flash behind your
   own read/write functions, with one small buffer of yours (it can be a
   local array) as flash page cache and recent history. Optionally, it
   reads [coded patches](#coded-patches) too, about 40% smaller firmware
-  patches for roughly 0.9 KB more code and 0.5–1.3 KB of short-lived
-  RAM, a trade the encoder tunes to the device.
+  patches for about 0.9 KB more code on Cortex-M0 (1–1.6 KB on MSP430)
+  and 0.5–1.3 KB of short-lived RAM, a trade the encoder tunes to the
+  device.
 - **No dynamic allocation, no static RAM.** The C decoders never call
   `malloc` and have no global or static variables (0 bytes of `.data`
   and `.bss`). All working state is on the stack, and the only other
@@ -112,7 +113,7 @@ What that compression costs on the device:
 | decoder | code (Cortex-M0, `-Os`) | RAM besides stack | stack |
 |---|---:|---:|---:|
 | **tinydelta**, memory decoder | **500 B** | **0** | ~110 B |
-| **tinydelta**, callback decoder | **884 B** | **256 B** buffer\* | ~180 B |
+| **tinydelta**, callback decoder | **876 B** | **256 B** buffer\* | ~185 B |
 | HPatchLite + tinyuz | ~2.2 KB | 4–32 KB dictionary | – |
 | detools + heatshrink | 1,948 B | 640 B state† | ~0.5 KB |
 | tiny-vcdiff (open-vcdiff's format) | 3,881 B | 3,221 B | ~150 B |
@@ -544,14 +545,14 @@ even on Cortex-M0). Reproduce with [`scripts/c-size.sh`](scripts/c-size.sh).
 | part | Cortex-M0 | Cortex-M3 | Cortex-M4 | stack (Cortex-M0) |
 |---|---:|---:|---:|---:|
 | memory decoder | 500 B | 470 B | 470 B | ~110 B |
-| callback decoder | 884 B | 876 B | 876 B | ~180 B\* |
+| callback decoder | 876 B | 838 B | 836 B | ~185 B\* |
 | memory decoder + coder | 1,404 B | 1,332 B | 1,332 B | ~290 B |
-| callback decoder + coder | 1,756 B | 1,708 B | 1,708 B | ~305 B\* |
+| callback decoder + coder | 1,728 B | 1,688 B | 1,688 B | ~305 B\* |
 
 \* Deepest path, excluding your buffer and your callbacks' own stack
 use. With the coder (`TINYDELTA_CODER = 1`), each decoder grows by
-about 250 B and links `tinydelta_coder.c`, 624 B on Cortex-M0, 192 B of
-which are its constant state tables; its probability tables are in the
+about 230–280 B and links `tinydelta_coder.c`, 624 B on Cortex-M0, 192 B
+of which are its constant state tables; its probability tables are in the
 buffer you pass in ([Coded patches](#coded-patches)).
 
 On 16-bit MSP430 the code is roughly two and a half times larger, as
@@ -561,8 +562,10 @@ every 32-bit operation takes several 16-bit instructions.
 
 | part | MSP430 | MSP430X | MSP430X, `-mlarge` | stack (`-mlarge`) |
 |---|---:|---:|---:|---:|
-| memory decoder | 1,216 B | 1,186 B | 1,274 B | 142 B |
-| callback decoder | 2,580 B | 2,522 B | 2,614 B | ~230 B\* |
+| memory decoder | 1,104 B | 1,080 B | 1,200 B | ~145 B |
+| callback decoder | 2,390 B | 2,340 B | 2,530 B | ~230 B\* |
+| memory decoder + coder | 2,610 B | 2,544 B | 2,812 B | ~290 B |
+| callback decoder + coder | 3,354 B | 3,262 B | 3,552 B | ~335 B\* |
 
 ### Results
 

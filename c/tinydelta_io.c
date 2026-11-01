@@ -136,8 +136,9 @@ static tinydelta_result_t produced(io_decoder_t *p_decoder, uint32_t length) {
     return write_page(p_decoder);
 }
 
-/* Reads length bytes from offset in a read callback's data straight into
- * the ring, a page at a time. With b_add_diff (ADD_DIFF), each byte also
+/* Produces length bytes into the ring, a page at a time: read from offset
+ * in a read callback's data, or with read NULL the next instruction-stream
+ * bytes (ADD's literals). With b_add_diff (ADD_DIFF), each byte read also
  * gets the next instruction-stream byte added. */
 static tinydelta_result_t read_to_target(io_decoder_t *p_decoder, tinydelta_read_fn_t read, void *p_ctx, uint32_t offset, uint32_t length, bool b_add_diff) {
     while (length > 0u) {
@@ -145,18 +146,18 @@ static tinydelta_result_t read_to_target(io_decoder_t *p_decoder, tinydelta_read
         uint8_t *p_output = write_position(p_decoder);
         tinydelta_result_t result;
 
-        if (read(p_ctx, offset, p_output, chunk) != TINYDELTA_CALLBACK_OK) {
+        if ((read != NULL) && (read(p_ctx, offset, p_output, chunk) != TINYDELTA_CALLBACK_OK)) {
             return TINYDELTA_ERR_IO;
         }
-        for (uint32_t index = 0u; b_add_diff && (index < chunk); index++) {
-            uint8_t diff;
+        for (uint32_t index = 0u; ((read == NULL) || b_add_diff) && (index < chunk); index++) {
+            uint8_t byte;
 
-            result = io_byte(p_decoder, TINYDELTA_FIELD_DIFF, &diff);
+            result = io_byte(p_decoder, (read == NULL) ? TINYDELTA_FIELD_LITERAL : TINYDELTA_FIELD_DIFF, &byte);
             if (result != TINYDELTA_OK) {
                 return result;
             }
             /* Cast: the sum wraps modulo 256, as the format defines. */
-            p_output[index] = (uint8_t)(p_output[index] + diff);
+            p_output[index] = (read == NULL) ? byte : (uint8_t)(p_output[index] + byte);
         }
         result = produced(p_decoder, chunk);
         if (result != TINYDELTA_OK) {
@@ -190,18 +191,7 @@ static tinydelta_result_t io_decode_copy(io_decoder_t *p_decoder, uint32_t lengt
 
 /* ADD: literal bytes, taken from the instruction stream. */
 static tinydelta_result_t io_decode_add(io_decoder_t *p_decoder, uint32_t length) {
-    for (uint32_t index = 0u; index < length; index++) {
-        tinydelta_result_t result = io_byte(p_decoder, TINYDELTA_FIELD_LITERAL, write_position(p_decoder));
-
-        if (result != TINYDELTA_OK) {
-            return result;
-        }
-        result = produced(p_decoder, 1u);
-        if (result != TINYDELTA_OK) {
-            return result;
-        }
-    }
-    return TINYDELTA_OK;
+    return read_to_target(p_decoder, NULL, NULL, 0u, length, false);
 }
 
 /* SKIP: dictionary bytes at the cursor. */
