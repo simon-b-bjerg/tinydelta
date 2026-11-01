@@ -128,7 +128,7 @@ func buildCIODriver(t *testing.T) string {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "driver.c"), []byte(cIODriver), 0o644)
 	bin := filepath.Join(dir, "decode_io")
-	cCompile(t, bin, "c/tinydelta_io.c", filepath.Join(dir, "driver.c"))
+	cCompile(t, bin, append(append([]string{}, cCoderSources...), "c/tinydelta_io.c", filepath.Join(dir, "driver.c"))...)
 	return bin
 }
 
@@ -200,12 +200,16 @@ func TestCIODecoderMatchesGo(t *testing.T) {
 			t.Fatalf("%s: target does not fit cCapacity", p.name)
 		}
 		patches := map[string][]byte{
-			"optimal":   withHeader(encode(p.dict, p.tgt, MaxSize)),
-			"greedy":    withHeader(encodeGreedy(p.dict, p.tgt, MaxSize)),
-			"version 2": withVersion(FormatVersion2, encodeCovers(p.dict, p.tgt, MaxSize)),
+			"optimal":            withHeader(encode(p.dict, p.tgt, MaxSize)),
+			"greedy":             withHeader(encodeGreedy(p.dict, p.tgt, MaxSize)),
+			"version 2":          withVersion(FormatVersion2, encodeCovers(p.dict, p.tgt, MaxSize)),
+			"coded A":            encodeCoded(withHeader(encode(p.dict, p.tgt, MaxSize)), codedLayoutA),
+			"coded B, version 2": encodeCoded(withVersion(FormatVersion2, encodeCovers(p.dict, p.tgt, MaxSize)), codedLayoutB),
+			"coded C":            encodeCoded(withHeader(encodeGreedy(p.dict, p.tgt, MaxSize)), codedLayoutC),
 		}
 		for name, patch := range patches {
 			for _, c := range ioConfigs {
+				c := withTables(c, patch)
 				got, code, ok := runCIO(t, bin, c, true, p.dict, patch, capacity)
 				if !ok || !bytes.Equal(got, p.tgt) {
 					t.Fatalf("%s/%s %+v: did not reproduce the target (code %s)", p.name, name, c, code)
@@ -224,6 +228,7 @@ func TestCIODecoderMatchesGo(t *testing.T) {
 				for _, v := range variants {
 					want, gErr := DecodeReaderLimit(p.dict, bytes.NewReader(v), capacity)
 					for _, c := range ioConfigs {
+						c := withTables(c, patch)
 						got, _, ok := runCIO(t, bin, c, true, p.dict, v, capacity)
 						if (gErr == nil) != ok || (ok && !bytes.Equal(got, want)) {
 							t.Errorf("%s/%s corrupted %+v: Go err=%v, C accepted=%v", p.name, name, c, gErr, ok)
@@ -231,6 +236,48 @@ func TestCIODecoderMatchesGo(t *testing.T) {
 					}
 				}
 			}
+		}
+	}
+}
+
+// withTables grows a buffer setup by a coded patch's tables, which take
+// the front of the buffer: the ring after them stays c.buffer bytes.
+func withTables(c ioConfig, patch []byte) ioConfig {
+	if len(patch) > 1 && (patch[0] == codedFlag|FormatVersion || patch[0] == codedFlag|FormatVersion2) {
+		c.buffer += CodedTablesSize(int(patch[1] & 3))
+	}
+	return c
+}
+
+// TestCIODecoderCodedBuffer checks the buffer split for coded patches:
+// tables first, then a ring that must be a power of two holding a page.
+// A buffer too small for the tables means the patch needs more than the
+// device has: TINYDELTA_ERR_VERSION; tables plus a bad ring: MALFORMED.
+func TestCIODecoderCodedBuffer(t *testing.T) {
+	bin := buildCIODriver(t)
+	r := rand.New(rand.NewSource(34))
+	dict := textFile(r, 2000)
+	tgt := splice(dict, 700, 3, []byte("changed"))
+	patch := encodeCoded(withHeader(encode(dict, tgt, MaxSize)), codedLayoutB)
+	tables := CodedTablesSize(codedLayoutB)
+	cases := []struct {
+		c    ioConfig
+		code string
+	}{
+		{ioConfig{tables + 64, 16}, ""},
+		{ioConfig{tables, 16}, "-4"},
+		{ioConfig{tables - 1, 1}, "-4"},
+		{ioConfig{tables + 48, 16}, "-1"},
+		{ioConfig{tables + 8, 16}, "-1"},
+	}
+	for _, k := range cases {
+		got, code, ok := runCIO(t, bin, k.c, true, dict, patch, cCapacity)
+		if k.code == "" {
+			if !ok || !bytes.Equal(got, tgt) {
+				t.Errorf("%+v: did not decode (code %s)", k.c, code)
+			}
+		} else if ok || code != k.code {
+			t.Errorf("%+v: ok=%v code %s, want %s", k.c, ok, code, k.code)
 		}
 	}
 }
@@ -266,9 +313,11 @@ func TestCIODecoderCallbackFailures(t *testing.T) {
 	dict := textFile(r, 2048)
 	tgt := splice(splice(dict, 500, 10, []byte("changed!")), 1500, 0, bytes.Repeat([]byte{'q'}, 100))
 	tgt = append(tgt, tgt[:200]...) // a far copy, through target_read
-	for _, patch := range [][]byte{withHeader(encode(dict, tgt, MaxSize)), withVersion(FormatVersion2, encodeCovers(dict, tgt, MaxSize))} {
+	plain := withHeader(encode(dict, tgt, MaxSize))
+	for _, patch := range [][]byte{plain, withVersion(FormatVersion2, encodeCovers(dict, tgt, MaxSize)), encodeCoded(plain, codedLayoutC)} {
 		for _, c := range []ioConfig{{1, 1}, {64, 16}} {
-			for n := 1; n <= 60; n++ {
+			c := withTables(c, patch)
+			for n := 1; n <= 400; n++ {
 				_, code, ok := runCIO(t, bin, c, true, dict, patch, cCapacity, fmt.Sprint(n))
 				if ok {
 					break // fewer than n callback calls: nothing left to fail

@@ -83,7 +83,9 @@ func applyEdits(dict, script []byte) []byte {
 // and the optimizing encoder's patch must be no larger than the greedy
 // one's, which Encode and EncodeWith document. The version 2 cover
 // encoder, and EncodeWith with ForCompression, must meet the first three
-// too.
+// too. Coded patches of both instruction sets, in every table layout,
+// must decode back to exactly the plain patch and the target, and
+// EncodeWith with DecoderRAM must be no larger than the plain patch.
 //
 // `go test` runs the seed corpus below plus any failing inputs saved under
 // testdata/fuzz/FuzzEncodeRoundTrip. To search for new failures:
@@ -175,6 +177,25 @@ func FuzzEncodeRoundTrip(f *testing.F) {
 					t.Fatalf("version %d: instruction of %d B exceeds MaxInstructionLen %d", patch[0], n, maxLen)
 				}
 			}
+		}
+
+		// Coded patches: both instruction sets in every table layout
+		// code and decode back to exactly the plain patch, and EncodeWith
+		// with DecoderRAM is never larger than the plain patch.
+		v1 := mustEncode(t, dict, target, EncodeOptions{MaxInstructionLen: int(maxLen)})
+		for _, plain := range [][]byte{v1, withVersion(FormatVersion2, encodeCovers(dict, target, limit))} {
+			for _, layout := range []int{codedLayoutA, codedLayoutB, codedLayoutC} {
+				coded := encodeCoded(plain, layout)
+				if back, err := decodeCoded(coded, MaxSize); err != nil || !bytes.Equal(back, plain) {
+					t.Fatalf("coded version %d, layout %d: uncoded stream differs: %v", plain[0], layout, err)
+				}
+				if got, err := Decode(dict, coded); err != nil || !bytes.Equal(got, target) {
+					t.Fatalf("coded version %d, layout %d: round trip failed: %v", plain[0], layout, err)
+				}
+			}
+		}
+		if coded := mustEncode(t, dict, target, EncodeOptions{DecoderRAM: 1287, MaxInstructionLen: int(maxLen)}); len(coded) > len(v1) {
+			t.Fatalf("DecoderRAM patch %d B is larger than the plain one, %d B", len(coded), len(v1))
 		}
 	})
 }

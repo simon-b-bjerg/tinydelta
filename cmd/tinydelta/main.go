@@ -3,7 +3,7 @@
 
 // Command tinydelta creates and applies tinydelta patches.
 //
-//	tinydelta encode [-greedy] [-for-compression] [-max-len N] [-max-distance N] [-v] <dictionary> <target> [<patch>]
+//	tinydelta encode [-greedy] [-for-compression] [-decoder-ram N] [-max-len N] [-max-distance N] [-v] <dictionary> <target> [<patch>]
 //	tinydelta decode [-max-size N] [-v] <dictionary> <patch> [<target>]
 //	tinydelta version
 //
@@ -34,7 +34,7 @@ MIT License: https://github.com/simon-b-bjerg/tinydelta/blob/main/LICENSE
 const usageText = `tinydelta creates and applies compact binary patches.
 
 Usage:
-  tinydelta encode [-greedy] [-for-compression] [-max-len N] [-max-distance N] [-v] <dictionary> <target> [<patch>]
+  tinydelta encode [-greedy] [-for-compression] [-decoder-ram N] [-max-len N] [-max-distance N] [-v] <dictionary> <target> [<patch>]
   tinydelta decode [-max-size N] [-v] <dictionary> <patch> [<target>]
   tinydelta version
 
@@ -84,11 +84,12 @@ func encodeCommand(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	greedy := fs.Bool("greedy", false, "use the fast greedy encoder instead of the optimal one\n(patches are typically a few percent larger)")
 	forCompression := fs.Bool("for-compression", false, "make a patch to encode again against an empty dictionary\n(compression mode, see the README); may be format version 2")
+	decoderRAM := fs.Int("decoder-ram", 0, "allow a range-coded patch, decoded in one pass, if the decoder can lend\nthis many bytes of RAM to its probability tables (522, 777 or 1287; 0: plain only)")
 	maxDistance := fs.Int("max-distance", 0, "limit how far back a copy from the target may read, so a decoder\nonly needs that many bytes of recent output (0 means no limit)")
 	maxLen := fs.Int("max-len", 0, "limit the target bytes any one instruction produces\n(0 means no limit)")
 	verbose := fs.Bool("v", false, "print sizes to standard error")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "Usage: tinydelta encode [-greedy] [-for-compression] [-max-len N] [-max-distance N] [-v] <dictionary> <target> [<patch>]")
+		fmt.Fprintln(stderr, "Usage: tinydelta encode [-greedy] [-for-compression] [-decoder-ram N] [-max-len N] [-max-distance N] [-v] <dictionary> <target> [<patch>]")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -107,7 +108,7 @@ func encodeCommand(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, err)
 	}
-	patch, err := tinydelta.EncodeWith(dict, target, tinydelta.EncodeOptions{Greedy: *greedy, ForCompression: *forCompression, MaxInstructionLen: *maxLen, MaxTargetDistance: *maxDistance})
+	patch, err := tinydelta.EncodeWith(dict, target, tinydelta.EncodeOptions{Greedy: *greedy, ForCompression: *forCompression, DecoderRAM: *decoderRAM, MaxInstructionLen: *maxLen, MaxTargetDistance: *maxDistance})
 	if err != nil {
 		return fail(stderr, err)
 	}

@@ -122,7 +122,7 @@ func TestVectors(t *testing.T) {
 // several buffer and page sizes against every conformance vector.
 func TestCVectors(t *testing.T) {
 	vectors := readVectors(t)
-	memory := buildCDriver(t)
+	memory := buildCDriver(t, cCoderSources...)
 	callback := buildCIODriver(t)
 	dir := t.TempDir()
 
@@ -158,6 +158,7 @@ func TestCVectors(t *testing.T) {
 		}
 
 		for _, c := range ioConfigs {
+			c := withTables(c, v.patch)
 			out, code, ok := runCIO(t, callback, c, true, v.dict, v.patch, v.capacity)
 			check(v, fmt.Sprintf("callback decoder, buffer %d, page %d", c.buffer, c.page), out, code, ok)
 		}

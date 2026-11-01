@@ -62,6 +62,9 @@ func TestWriteCFuzzSeeds(t *testing.T) {
 			}
 			patch = withVersion(FormatVersion2, encodeCovers(dict, target, limit))
 		}
+		if i%7 >= 4 { // coded, in one of the three table layouts
+			patch = encodeCoded(patch, codedLayoutC+i%3)
+		}
 
 		// Header: output capacity (little-endian), dictionary length, page
 		// size byte, callback call to fail (0: none); see the input layout

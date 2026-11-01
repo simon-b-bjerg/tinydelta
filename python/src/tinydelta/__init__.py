@@ -54,7 +54,7 @@ def binary_path():
 
 
 def encode(dictionary, target, *, greedy=False, max_instruction_len=0,
-           for_compression=False, max_distance=0):
+           for_compression=False, max_distance=0, decoder_ram=0):
     """Returns a patch that turns dictionary into target (both bytes-like).
 
     greedy uses the fast greedy encoder instead of the optimal one (patches
@@ -67,15 +67,23 @@ def encode(dictionary, target, *, greedy=False, max_instruction_len=0,
     off). max_distance, if above 0, limits how far back the patch reads
     its own output, so a decoder only needs a buffer that large; see the
     README.
+
+    decoder_ram, if above 0, allows a range-coded patch, decoded in one
+    pass, when the decoder can lend that many bytes to its probability
+    tables (522, 777 or 1287 bytes for the three table layouts). The
+    smallest patch is returned, coded or plain. Not with for_compression.
     """
     if max_instruction_len < 0:
         raise ValueError("max_instruction_len must be 0 (no limit) or more")
     if max_distance < 0:
         raise ValueError("max_distance must be 0 (no limit) or more")
+    if decoder_ram < 0:
+        raise ValueError("decoder_ram must be 0 (plain patches only) or more")
     with tempfile.TemporaryDirectory(prefix="tinydelta-") as work:
         dict_file = _write(work, "dictionary", dictionary)
         target_file = _write(work, "target", target)
-        args = ["encode", "-max-len", str(max_instruction_len), "-max-distance", str(max_distance)]
+        args = ["encode", "-max-len", str(max_instruction_len), "-max-distance", str(max_distance),
+                "-decoder-ram", str(decoder_ram)]
         if greedy:
             args.append("-greedy")
         if for_compression:

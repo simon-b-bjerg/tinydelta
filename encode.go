@@ -5,6 +5,7 @@ package tinydelta
 
 import (
 	"compress/flate"
+	"errors"
 	"fmt"
 )
 
@@ -57,6 +58,19 @@ type EncodeOptions struct {
 	// affects version 1.
 	MaxTargetDistance int
 
+	// DecoderRAM, if positive, allows coded patches (see coded.go):
+	// the instruction stream range-coded with adaptive probabilities,
+	// decoded in one pass. It is the RAM, in bytes, the decoder can lend
+	// to the coder's probability states while it decodes (a buffer that
+	// may live on the stack). The encoder makes the plain version-1
+	// patch and a version-2 one, codes each with every table layout that
+	// fits in DecoderRAM (CodedTablesSize: 522, 777 or 1287 bytes), and
+	// returns the smallest of all of them, the plain patch included, so
+	// a small update that codes no smaller stays plain. 0, the default,
+	// means plain patches only. Not with ForCompression, which makes the
+	// first of two plain passes instead.
+	DecoderRAM int
+
 	// MaxInstructionLen, if positive, caps the number of target bytes
 	// any single instruction may produce: longer ADD, SKIP, COPY and
 	// COPY_TARGET runs are split into several instructions. Use it when
@@ -87,8 +101,31 @@ func EncodeWith(dict, target []byte, opts EncodeOptions) ([]byte, error) {
 	if opts.MaxInstructionLen > 0 && opts.MaxInstructionLen < MaxSize {
 		maxLen = opts.MaxInstructionLen
 	}
+	if opts.DecoderRAM < 0 {
+		return nil, fmt.Errorf("tinydelta: negative DecoderRAM %d", opts.DecoderRAM)
+	}
+	if opts.ForCompression && opts.DecoderRAM > 0 {
+		return nil, errors.New("tinydelta: ForCompression and DecoderRAM exclude each other")
+	}
 	if opts.ForCompression {
 		return encodeForCompression(dict, target, maxLen, maxDistance, opts.Greedy), nil
+	}
+	if layouts := codedLayoutsWithin(opts.DecoderRAM); len(layouts) > 0 {
+		var plain []byte
+		if opts.Greedy {
+			plain = withHeader(encodeGreedyLimited(dict, target, maxLen, maxDistance))
+		} else {
+			plain = withHeader(encodeLimited(dict, target, maxLen, maxDistance))
+		}
+		best := plain
+		for _, candidate := range [][]byte{plain, withVersion(FormatVersion2, encodeCovers(dict, target, maxLen))} {
+			for _, layout := range layouts {
+				if coded := encodeCoded(candidate, layout); len(coded) < len(best) {
+					best = coded
+				}
+			}
+		}
+		return best, nil
 	}
 	if opts.Greedy {
 		return withHeader(encodeGreedyLimited(dict, target, maxLen, maxDistance)), nil

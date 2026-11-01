@@ -66,6 +66,17 @@ func DecodeReaderLimit(dict []byte, r io.Reader, maxOutput int) (target []byte, 
 		}
 		return nil, fmt.Errorf("tinydelta: %w", err)
 	}
+	if version == codedFlag|FormatVersion || version == codedFlag|FormatVersion2 {
+		rest, err := io.ReadAll(br)
+		if err != nil {
+			return nil, fmt.Errorf("tinydelta: %w", err)
+		}
+		plain, err := decodeCoded(append([]byte{version}, rest...), MaxSize)
+		if err != nil {
+			return nil, err
+		}
+		return DecodeReaderLimit(dict, bytes.NewReader(plain), maxOutput)
+	}
 	if version != FormatVersion && version != FormatVersion2 {
 		return nil, fmt.Errorf("%w: patch is version %d, this decoder reads versions %d and %d", ErrUnsupportedVersion, version, FormatVersion, FormatVersion2)
 	}

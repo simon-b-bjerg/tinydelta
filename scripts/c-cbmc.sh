@@ -18,7 +18,7 @@ cd "$(dirname "$0")/../c"
 JOBS="${JOBS:-$(nproc)}"
 
 CHECKS="--bounds-check --pointer-check --pointer-overflow-check --signed-overflow-check
-        --undefined-shift-check --div-by-zero-check --unwinding-assertions --slice-formula --object-bits 10"
+        --undefined-shift-check --div-by-zero-check --unwinding-assertions --slice-formula --object-bits 12"
 
 # One run per line: a description, then CBMC's arguments. Bounds are the
 # largest dictionary, patch and output in bytes. A patch of 8 bytes holds

@@ -42,10 +42,13 @@ no compression library.
 - **Optimizing encoder.** Dynamic programming over exact instruction
   costs, never worse than the built-in greedy encoder, which is
   available when speed matters more.
-- **Tiny C decoder.** 504 bytes of code on Cortex-M0 when everything is
-  in RAM; 908 bytes when the data lives on external flash behind your
+- **Tiny C decoder.** 500 bytes of code on Cortex-M0 when everything is
+  in RAM; 884 bytes when the data lives on external flash behind your
   own read/write functions, with one small buffer of yours (it can be a
-  local array) as flash page cache and recent history.
+  local array) as flash page cache and recent history. Optionally, it
+  reads [coded patches](#coded-patches) too, about 40% smaller firmware
+  patches for roughly 0.9 KB more code and 0.5–1.3 KB of short-lived
+  RAM, a trade the encoder tunes to the device.
 - **No dynamic allocation, no static RAM.** The C decoders never call
   `malloc` and have no global or static variables (0 bytes of `.data`
   and `.bss`). All working state is on the stack, and the only other
@@ -108,8 +111,8 @@ What that compression costs on the device:
 
 | decoder | code (Cortex-M0, `-Os`) | RAM besides stack | stack |
 |---|---:|---:|---:|
-| **tinydelta**, memory decoder | **504 B** | **0** | 128 B |
-| **tinydelta**, callback decoder | **908 B** | **256 B** buffer\* | ~185 B |
+| **tinydelta**, memory decoder | **500 B** | **0** | ~110 B |
+| **tinydelta**, callback decoder | **884 B** | **256 B** buffer\* | ~180 B |
 | HPatchLite + tinyuz | ~2.2 KB | 4–32 KB dictionary | – |
 | detools + heatshrink | 1,948 B | 640 B state† | ~0.5 KB |
 | tiny-vcdiff (open-vcdiff's format) | 3,881 B | 3,221 B | ~150 B |
@@ -267,6 +270,62 @@ own output further back than the buffer holds: its `target_read` can be
 
 </details>
 
+## Coded patches
+
+A coded patch is a plain patch whose instruction stream is range-coded:
+every bit is coded with an adaptive probability chosen by what the bit
+belongs to (an instruction byte after a given previous instruction, an
+`ADD_DIFF` byte, a literal, ...). In firmware patches those are very
+regular: `SKIP` and `ADD_DIFF` alternate, and the same few difference
+values recur, so they cost a fraction of a bit each. The device decodes
+it in **one pass**, with no intermediate patch to store, and the
+instructions and their meaning are exactly those of a plain patch.
+
+The price is on the device, so it is optional twice over: the C
+decoders only read coded patches when built with `TINYDELTA_CODER = 1`,
+and the encoder only makes one when told how much RAM the decoder can
+lend to the coder's probability tables, for as long as it decodes
+(a local array is fine):
+
+| table layout | RAM | firmware patches, sample below |
+|---|---:|---:|
+| plain, best of one and two passes | 0 | 49,225 B |
+| C: one shared byte table | 522 B | 31,904 B (−35%) |
+| B: `ADD_DIFF` bytes, and one for the rest | 777 B | 30,208 B (−39%) |
+| A: one table per kind of byte | 1,287 B | 30,114 B (−39%) |
+
+Sample: six MicroPython updates for a SAMD21 board (Cortex-M0+, about
+185 KB), five 1 commit apart and one 5 commits apart; the
+[benchmark](#benchmark) doesn't include coded patches yet. On those,
+coded patches were smaller than HPatchLite's (4 KB dictionary) in every
+update. On small configuration updates the plain patch is often
+smaller: a few bytes of coder setup outweigh the gain on a 20-byte
+patch, and the encoder then returns the plain one.
+
+```sh
+tinydelta encode -decoder-ram 777 old.bin new.bin update.td   # coded if smaller, layout A, B or C as RAM allows
+```
+
+On the device (`TINYDELTA_CODER = 1`, plus `tinydelta_coder.c`):
+
+```c
+uint8_t tables[TINYDELTA_CODED_TABLES_B];   /* memory decoder: 777 B, short-lived */
+result = tinydelta_decode_coded(p_dict, dict_len, p_patch, patch_len, p_target, target_cap,
+                                tables, sizeof tables, &target_len);
+
+uint8_t work[TINYDELTA_CODED_TABLES_B + 256u]; /* callback decoder: the tables, then the 256 B ring */
+io.p_buffer = work; io.buffer_size = sizeof work; io.page_size = 256u;
+result = tinydelta_decode_io(&io, &target_len);
+```
+
+The callback decoder takes the tables from the front of its buffer and
+uses the rest as the page cache and ring, which must still be a power
+of two. A patch that needs more RAM than the buffer (or a build without
+the coder) is rejected with `TINYDELTA_ERR_VERSION` before anything is
+written. The code it costs is under
+[Code size and stack](#code-size-and-stack); the format is under
+[Wire format](#coded-form).
+
 ## Why another delta format?
 
 Established formats were not designed for a decoder that has to fit in a
@@ -296,6 +355,7 @@ The [benchmark](#benchmark) shows what that costs and buys.
 - [Highlights](#highlights)
 - [Benchmark](#benchmark)
 - [Compression mode](#compression-mode)
+- [Coded patches](#coded-patches)
 - [Why another delta format?](#why-another-delta-format)
 - [Installation](#installation)
   - [Command-line tool](#command-line-tool)
@@ -318,6 +378,7 @@ The [benchmark](#benchmark) shows what that costs and buys.
   - [State](#state)
   - [Rules](#rules)
   - [Example](#example)
+  - [Coded form](#coded-form)
   - [Stability](#stability)
   - [Conformance vectors](#conformance-vectors)
 - [How the encoder works](#how-the-encoder-works)
@@ -387,7 +448,7 @@ from a release.
 ## Command-line usage
 
 ```text
-tinydelta encode [-greedy] [-for-compression] [-max-len N] [-max-distance N] [-v] <dictionary> <target> [<patch>]
+tinydelta encode [-greedy] [-for-compression] [-decoder-ram N] [-max-len N] [-max-distance N] [-v] <dictionary> <target> [<patch>]
 tinydelta decode [-max-size N] [-v] <dictionary> <patch> [<target>]
 tinydelta version
 ```
@@ -406,7 +467,9 @@ encoding. `encode -max-len N` makes sure no single instruction produces
 more than N target bytes (see [below](#limiting-instruction-length)).
 `encode -for-compression` and `encode -max-distance N` are for patches
 that are compressed or encoded a second time (see
-[Compression mode](#compression-mode)). `decode -max-size` rejects patches whose output would exceed
+[Compression mode](#compression-mode)). `encode -decoder-ram N` allows a
+coded patch for a decoder with N bytes of RAM for its tables (see
+[Coded patches](#coded-patches)). `decode -max-size` rejects patches whose output would exceed
 the given size. The exit status is 0 on success, 1 on failure and 2 on
 a usage error.
 
@@ -424,6 +487,9 @@ patch, err := tinydelta.EncodeWith(oldFile, newFile, tinydelta.EncodeOptions{
 patch, err := tinydelta.EncodeWith(oldFile, newFile, tinydelta.EncodeOptions{
 	ForCompression: true, // a patch to encode again (compression mode)
 })
+patch, err := tinydelta.EncodeWith(oldFile, newFile, tinydelta.EncodeOptions{
+	DecoderRAM: 777, // coded if smaller, with tables that fit 777 bytes (coded patches)
+})
 
 newFile, err := tinydelta.Decode(oldFile, patch)
 newFile, err := tinydelta.DecodeReaderLimit(oldFile, r, maxSize) // from an io.Reader, capped
@@ -433,7 +499,7 @@ newFile, err := tinydelta.DecodeReaderLimit(oldFile, r, maxSize) // from an io.R
 |---|---|
 | `Encode` | Optimizing parse; roughly 100–300 ms for a few KB. Never larger than `EncodeGreedy`'s patch; falls back to greedy above roughly 100 KB to bound memory. |
 | `EncodeGreedy` | One pass with one byte of lookahead; well under a millisecond for a few KB, patches typically a few percent larger. |
-| `EncodeWith` | Either encoder, chosen with `EncodeOptions.Greedy`, with options such as `MaxInstructionLen`, `ForCompression` and `MaxTargetDistance` ([Compression mode](#compression-mode)). |
+| `EncodeWith` | Either encoder, chosen with `EncodeOptions.Greedy`, with options such as `MaxInstructionLen`, `ForCompression` and `MaxTargetDistance` ([Compression mode](#compression-mode)), and `DecoderRAM` ([Coded patches](#coded-patches)). |
 | `Decode`, `DecodeReader` | Apply a patch from a byte slice or an `io.Reader`. |
 | `DecodeReaderLimit` | As `DecodeReader`, but fails with `ErrTooLarge` before the target would exceed a size you choose. |
 
@@ -467,6 +533,7 @@ beyond `memcpy`.
 |---|---|---|
 | **memory decoder** | `tinydelta.h`, `tinydelta_internal.h`, `tinydelta_decode.c` | dictionary, patch and output buffer are all in RAM |
 | **callback decoder** | `tinydelta.h`, `tinydelta_internal.h`, `tinydelta_io.h`, `tinydelta_io.c` | the data is elsewhere, e.g. external flash, reached through your own read/write functions; one buffer of yours caches flash pages and the recent output |
+| **coder** (optional) | `tinydelta_coder.h`, `tinydelta_coder.c`, and `TINYDELTA_CODER=1` for all files | either decoder should read [coded patches](#coded-patches) |
 
 ### Code size and stack
 
@@ -476,11 +543,16 @@ even on Cortex-M0). Reproduce with [`scripts/c-size.sh`](scripts/c-size.sh).
 
 | part | Cortex-M0 | Cortex-M3 | Cortex-M4 | stack (Cortex-M0) |
 |---|---:|---:|---:|---:|
-| memory decoder | 504 B | 502 B | 504 B | 128 B |
-| callback decoder | 908 B | 898 B | 900 B | ~185 B\* |
+| memory decoder | 500 B | 470 B | 470 B | ~110 B |
+| callback decoder | 884 B | 876 B | 876 B | ~180 B\* |
+| memory decoder + coder | 1,404 B | 1,332 B | 1,332 B | ~290 B |
+| callback decoder + coder | 1,756 B | 1,708 B | 1,708 B | ~305 B\* |
 
 \* Deepest path, excluding your buffer and your callbacks' own stack
-use.
+use. With the coder (`TINYDELTA_CODER = 1`), each decoder grows by
+about 250 B and links `tinydelta_coder.c`, 624 B on Cortex-M0, 192 B of
+which are its constant state tables; its probability tables are in the
+buffer you pass in ([Coded patches](#coded-patches)).
 
 On 16-bit MSP430 the code is roughly two and a half times larger, as
 every 32-bit operation takes several 16-bit instructions.
@@ -502,7 +574,7 @@ Every decoding function returns a `tinydelta_result_t`:
 | `TINYDELTA_ERR_MALFORMED` | corrupt or truncated patch, or one that doesn't fit the dictionary; for the callback decoder also a buffer or page size that isn't a power of two, or a copy reaching back past the buffer with `target_read` `NULL` |
 | `TINYDELTA_ERR_TOO_LARGE` | the target would exceed its capacity, or the dictionary exceeds `TINYDELTA_MAX_SIZE` |
 | `TINYDELTA_ERR_IO` | one of your callbacks failed (callback decoder only) |
-| `TINYDELTA_ERR_VERSION` | the patch's version byte is neither 1 nor 2: a newer version, or not a tinydelta patch |
+| `TINYDELTA_ERR_VERSION` | the patch's version byte is none of 1, 2, 0x81 or 0x82 (a newer version, or not a tinydelta patch), or it is a coded patch this build (`TINYDELTA_CODER`) or buffer can't decode |
 
 On any error, whatever was already written to the target is incomplete
 and must not be used.
@@ -518,6 +590,9 @@ tinydelta_result_t tinydelta_decode(const uint8_t *p_dict, uint32_t dict_len,
 
 Writes the target into `p_target` and sets `*p_target_len`. It fails
 with `TINYDELTA_ERR_TOO_LARGE` rather than write past `target_cap`.
+With `TINYDELTA_CODER`, `tinydelta_decode_coded` takes two more
+arguments, a buffer for a coded patch's tables and its size, and reads
+plain and coded patches.
 
 ### Callback decoder
 
@@ -724,6 +799,8 @@ deviations, listed with their reasons in
 | 18.4 no `+`/`-` on pointers | advisory | buffer + offset addressing, always after a bounds check |
 | 10.8 composite expression cast | required | the masked two-bit opcode is cast to `tinydelta_opcode`, so `-Wswitch-enum` proves every opcode has a case |
 | 11.8 const cast away | required | cppcheck false positive: a callback's `void *p_ctx` is copied out of the `const tinydelta_io_t`; no qualifier is removed |
+| 11.5 `void *` to object pointer | advisory | the coder's byte source gets its decoder through `void *`, like the callbacks' contexts |
+| 2.5 unused macro | advisory | in builds without `TINYDELTA_CODER` only: the coder's macros go unused |
 
 ## Wire format
 
@@ -819,9 +896,75 @@ patch:      01 2a 15 42 52 4f 57 4e 72 05 21       (11 bytes)
 05 21       ADD 1          (1<<2 | 1)    "!"
 ```
 
+### Coded form
+
+A coded patch carries the instruction stream of a version 1 or 2 patch
+range-coded ([Coded patches](#coded-patches)):
+
+```text
+coded patch = 0x80 | version (0x81 or 0x82)
+            + features (1 byte: bits 0-1 the table layout, 1-3; bits 2-7 are 0)
+            + n (varint: the length of the instruction stream, uncoded)
+            + the coded stream
+```
+
+A features byte with layout 0 or any of bits 2-7 set is unsupported,
+like an unknown version. Decoding yields the instruction stream's bytes
+one at a time, `n` of them, and the instructions are decoded from them
+exactly as from a plain patch's.
+
+**Range decoder** (LZMA's, 12-bit probabilities). Start with
+`range = 0xFFFFFFFF` and `code` = the first 4 coded bytes, big-endian.
+Each bit is decoded with a 1-byte state `s`, whose bits 1-6 are a
+state number `k` (0-62) and whose bit 0, `m`, is the more likely bit:
+
+```text
+p0    = (m == 0) ? 4096 - LPS[k] : LPS[k]       // P(bit = 0), out of 4096
+bound = (range >> 12) * p0
+if code < bound:  bit = 0; range = bound
+else:             bit = 1; code -= bound; range -= bound
+if bit == m:      k = min(k + 1, 62)
+else:             if k == 0: m = 1 - m
+                  k = NEXT_LPS[k]
+s = 2k + m
+while range < 2^24:  range <<= 8; code = (code << 8) | next coded byte
+```
+
+```text
+LPS      = 2048 1944 1845 1752 1663 1578 1498 1422 1350 1281 1216 1154 1096 1040  987  937
+            890  844  802  761  722  685  651  618  586  557  528  501  476  452  429  407
+            386  367  348  330  314  298  283  268  255  242  229  218  207  196  186  177
+            168  159  151  144  136  129  123  117  111  105  100   95   90   85   81
+NEXT_LPS =    0    0    1    2    3    4    4    5    6    7    8    9   10   10   11   12
+             13   14   14   15   16   17   17   18   19   20   20   21   22   22   23   24
+             24   25   26   26   27   27   28   29   29   30   30   31   31   32   32   33
+             33   33   34   34   35   35   35   36   36   36   37   37   37   38   38
+```
+
+**States.** All start at 0. They are 15 for opcodes, 252 for lengths,
+and 255 per byte table, 1, 2 or 4 tables for layouts 1, 2 and 3
+(layout C, B, A: 522, 777 or 1287 bytes in all):
+
+- **The first byte of an instruction:** its two opcode bits, bit 1
+  first, through a bit tree at state `3 × prev` (`prev`, the previous
+  instruction's opcode, is 4 before the first), then its bits 7 down to
+  2 through a bit tree at state `15 + 63 × opcode`.
+- **Every other byte** (ADD literal, ADD_DIFF byte, the first byte of a
+  `COPY`/`COPY_TARGET` delta, or a later byte of any varint), bits 7
+  down to 0, through a bit tree at state `267 + 255 × table`. Layout 3
+  (A) uses tables 0, 1, 2, 3 for those four kinds; layout 2 (B) table 1
+  for ADD_DIFF bytes and table 0 for the rest; layout 1 (C) table 0 for
+  all.
+
+A bit tree's first bit uses the state at its base; after bit `b`, the
+node, starting at 1, becomes `2 × node + b`, and the next bit uses the
+state at `base + node − 1`. A decoder that needs a coded byte past the
+end of the patch, or finds the stream's bytes run out mid-instruction,
+has a malformed patch.
+
 ### Stability
 
-Format versions 1 and 2 are fixed: a patch from any encoder decodes
+Format versions 1 and 2, and their coded form, are fixed: a patch from any encoder decodes
 with any decoder that implements its version, Go or C. A change to the
 instruction set gets a new version byte, and decoders reject versions
 they don't implement. Encoders may still produce different, usually
@@ -843,8 +986,9 @@ rules: varints of every length up to the 5-byte limit, non-minimal
 varints, `COPY` with length 0, copies ending exactly at the end of the
 dictionary or one byte past it, `COPY_TARGET` overlapping its own
 output or pointing at or past the write position, truncated operands,
-and capacities exactly reached and one byte short. A few more are real
-encoder output (`gen-*`).
+and capacities exactly reached and one byte short. Coded patches
+(`coded-*`) cover each table layout, both instruction sets, and the
+headers to reject. A few more are real encoder output (`gen-*`).
 
 They also settle one thing this section leaves open: an instruction is
 checked against the capacity as soon as its length is known, before its
