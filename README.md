@@ -942,6 +942,7 @@ There are two, one for each side of the format:
 | Python package | on Linux and Windows, with Python 3.9 and current: the Python tests, including every conformance vector, against a fresh build of the tool; on Linux also builds the wheels, checks them with `twine` and tests the installed wheel |
 | C static analysis | `scripts/c-format.sh` and `scripts/c-analyze.sh` |
 | C decoders model-checked | `scripts/c-cbmc.sh` (CBMC from Ubuntu's packages), a few minutes |
+| License headers (REUSE) | `reuse lint`: every file carries an SPDX license header, or is covered by [`REUSE.toml`](REUSE.toml) |
 | CodeQL (separate workflow, also weekly) | CodeQL over the Go code and the C library |
 | Nightly fuzzing (separate workflow) | every night on `main`, an hour each of the C fuzzer and `FuzzEncodeRoundTrip`, continuing from the previous night's corpus, kept in the Actions cache; crashing inputs are uploaded as artifacts |
 | C library on 32-bit ARM | `scripts/c-check.sh` for x86-64 and ARM, the C decoder tests on 32-bit ARM under QEMU, and the Cortex-M code size and stack report (informational) |
@@ -1037,8 +1038,15 @@ Issues and pull requests are welcome. Please keep `go test ./...`,
 `gofmt`-formatted and C code formatted with `scripts/c-format.sh --fix`
 (see [C coding rules](#c-coding-rules)). A change to the
 wire format must update this README, both Go encoders, the Go decoder
-and both C decoders together, with tests.
+and both C decoders together, with tests. New files need an SPDX header
+(`SPDX-FileCopyrightText: 2026 Simon Bjerg` and
+`SPDX-License-Identifier: MIT`), or an entry in
+[`REUSE.toml`](REUSE.toml) if they can't hold a comment.
 
 ## License
 
 [MIT](LICENSE) © 2026 Simon Bjerg
+
+Every file carries its license as an SPDX header (the project is
+[REUSE](https://reuse.software) compliant), so the C decoder files keep
+it when you copy them into your firmware tree.
