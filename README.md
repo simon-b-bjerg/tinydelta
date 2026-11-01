@@ -108,6 +108,10 @@ can be a local array, on the stack.
 
 What you give up:
 
+- **Somewhat larger patches for large changes.** On firmware updates
+  that change code, tinydelta's patch is typically 4% larger than
+  HPatchLite's and 28% larger than bsdiff's. Both need decoders several
+  to thousands of times larger (see the graph above).
 - **Two passes for large changes.** A compression-mode patch is decoded
   twice, and the device stores the intermediate patch in between (see
   [below](#compression-mode)).
