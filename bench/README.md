@@ -11,11 +11,16 @@ fixed commit range of a public repository ([`corpus.json`](corpus.json)):
 
 | kind | source | items | range |
 |---|---|---|---|
-| firmware | [MicroPython](https://github.com/micropython/micropython), stm32 port | NUCLEO_F091RC (Cortex-M0), PYBV11 (Cortex-M4) | commits touching firmware code between `v1.25.0` and `v1.26.0`; built with a fixed version string and build date (those of `v1.25.0`) and a fixed Python hash seed, so every build is byte-reproducible and a commit that doesn't change the compiled code gives an identical image, which is skipped |
-| device tree | Linux device trees ([devicetree-rebasing](https://git.kernel.org/pub/scm/linux/kernel/git/devicetree/devicetree-rebasing.git)), compiled to `.dtb` | rk3588-rock-5b, imx8mp-evk, k3-am625-sk | commits touching the board's vendor directory or `include/` between `v7.0-dts` and `v7.3-dts`, every non-merge commit in topological order (the kernel's main line brings device tree changes in a few large merges) |
+| firmware | [MicroPython](https://github.com/micropython/micropython), stm32 port | NUCLEO_F091RC (Cortex-M0), PYBV11 (Cortex-M4), 230–365 KB | commits touching firmware code between `v1.25.0` and `v1.26.0`; built with a fixed version string and build date (those of `v1.25.0`) and a fixed Python hash seed, so every build is byte-reproducible and a commit that doesn't change the compiled code gives an identical image, which is skipped |
+| firmware | [MicroPython](https://github.com/micropython/micropython), samd port | ADAFRUIT_TRINKET_M0, SEEED_XIAO_SAMD21 (Cortex-M0+, about 185 KB) | as for the stm32 port above, for commits touching the samd port |
+| configuration | Linux kernel configurations ([`arch/arm/configs`](https://github.com/torvalds/linux/tree/master/arch/arm/configs)), the files as they are, 3–6 KB of text | shmobile, at91_dt, sunxi, lpc32xx, u8500, bcm2835 `_defconfig` | every non-merge commit changing the file between `v5.0` and `v7.3` (the history is cloned from 2019 on only) |
+| configuration | Linux device trees as below, of microcontroller boards, 10–17 KB | stm32f746-disco, stm32f769-disco, stm32h743i-disco, stm32h750i-art-pi, lpc4357-ea4357-devkit | as for the device trees below, between `v6.5-dts` (where the 32-bit Arm trees moved into vendor directories) and `v7.3-dts` |
+| large configuration | Linux device trees ([devicetree-rebasing](https://git.kernel.org/pub/scm/linux/kernel/git/devicetree/devicetree-rebasing.git)), compiled to `.dtb` | rk3588-rock-5b, imx8mp-evk, k3-am625-sk, 47–107 KB | commits touching the board's vendor directory or `include/` between `v7.0-dts` and `v7.3-dts`, every non-merge commit in topological order (the kernel's main line brings device tree changes in a few large merges) |
 
-Up to 25 distinct builds per item: a commit that leaves the output
-unchanged is skipped, as is one that does not build. Pairs are 1 and 5
+Up to 25 distinct builds per item: a commit whose output equals any
+earlier build is skipped, as is one that does not build. (A walk through
+several branches meets the state of an older base again; counting it
+would pair a change with its own reversal, or a file with itself.) Pairs are 1 and 5
 builds apart. The commit and SHA-256 of every build are kept with the
 results, so the inputs can be rebuilt and checked.
 
@@ -49,14 +54,16 @@ commits to `bench-results-preview`, replaced each time. The results:
 
 | file | what |
 |---|---|
-| `forest.svg` | the headline: per kind of data, tinydelta's patch size divided by that of open-vcdiff, xdelta3, HPatchLite (4 KB), bsdiff and zstd (geometric mean, 10th-90th percentile), 1 and 5 commits apart |
-| `pairs.svg` | every pair: tinydelta against open-vcdiff, HPatchLite (4 KB), bsdiff and zstd, colour by tool, marker by kind of data |
-| `ratio_ecdf_<kind>.svg`, `patch_share_<kind>.svg` | the full distributions, one graph per kind of data (`firmware`, `device_tree`): the size ratio, and patch size as a share of the target |
+| `pairs.svg` | the headline: every pair, one panel per kind of data: tinydelta against open-vcdiff, HPatchLite (4 KB), detools, bsdiff and zstd, colour by tool, marker by commit step |
+| `forest.svg` | per kind of data, tinydelta's patch size divided by that of open-vcdiff, xdelta3, HPatchLite (4 KB), detools, bsdiff and zstd (geometric mean, 10th-90th percentile), 1 and 5 commits apart |
+| `ratio_ecdf_<kind>.svg`, `patch_share_<kind>.svg` | the full distributions, one graph per kind of data (`firmware`, `configuration`, `large_configuration`): the size ratio, and patch size as a share of the target |
 | `tradeoff.svg` | each tool's median patch size against its decoder's footprint on the device: code plus RAM buffers, stack excluded |
 | `summary.md` | the numbers behind the graphs, plus patch sizes in bytes |
 | `decoders.json`, `decoder-size.md` | the decoder costs behind the trade-off graph, with where each comes from, and this run's measurement of the decoders that build for Cortex-M0 |
 | `results.csv` | one row per pair, every tool's patch size |
 | `inputs/`, `corpus.json`, `results-tools.json` | the commit and SHA-256 of every build, the corpus and the tool versions |
+
+`pairs.svg`, `forest.svg` and `tradeoff.svg` show firmware and configuration; large configuration, larger than what tinydelta is made for, is in the summary and its own distribution graphs.
 
 Every graph is also a PNG, for slides. Every comparison has one baseline,
 "tinydelta" as defined above, as sent. Its footprint is the callback

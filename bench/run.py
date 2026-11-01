@@ -221,6 +221,8 @@ def main():
 
     pairs = []
     for name in sorted(os.listdir(builds)):
+        if name not in corpus:
+            continue  # cached builds of a corpus no longer listed
         kind = corpus[name]["kind"]
         for item in sorted(os.listdir(os.path.join(builds, name))):
             folder = os.path.join(builds, name, item)

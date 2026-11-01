@@ -27,10 +27,10 @@
   "detools": {
     "label": "detools (heatshrink)",
     "code": 1948,
-    "buffers": 0,
-    "stack": 1600,
+    "buffers": 640,
+    "stack": null,
     "plus_old_file": false,
-    "basis": "measured with detools' default heatshrink settings, Cortex-M0: 1,948 B code, no static RAM, ~1.6 KB stack (README benchmark)"
+    "basis": "measured (detools 0.53.0, sequential patch, heatshrink only, Cortex-M0, -Os, --gc-sections, arm-none-eabi-gcc 13.2): 1,948 B code; buffers: struct detools_apply_patch_t, 640 B, which the caller provides (stack or static): heatshrink's 256 B window and 256 B input buffer and the patch state. detools_apply_patch_callbacks, the convenience wrapper, adds a 512 B read buffer (1,184 B stack in all)"
   },
   "bsdiff": {
     "label": "bsdiff",
