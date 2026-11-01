@@ -40,11 +40,11 @@
 #define FUZZ_HEADER_SIZE 5u
 #define FUZZ_MAX_TARGET  4096u
 
-#define FAIL(...)                                                                                                      \
-    do {                                                                                                               \
-        fprintf(stderr, "fuzz_decode: " __VA_ARGS__);                                                                  \
-        fputc('\n', stderr);                                                                                           \
-        abort();                                                                                                       \
+#define FAIL(...)                                                                                                                                              \
+    do {                                                                                                                                                       \
+        fprintf(stderr, "fuzz_decode: " __VA_ARGS__);                                                                                                          \
+        fputc('\n', stderr);                                                                                                                                   \
+        abort();                                                                                                                                               \
     } while (0)
 
 /* ---- Reference decoder --------------------------------------------------- */
@@ -72,13 +72,8 @@ static int64_t ref_zigzag(uint64_t z) {
     return (int64_t)(z >> 1) ^ -(int64_t)(z & 1);
 }
 
-static tinydelta_result ref_decode(const uint8_t *dict,
-                                   uint64_t dict_len,
-                                   const uint8_t *patch,
-                                   uint64_t patch_len,
-                                   uint8_t *out,
-                                   uint64_t out_cap,
-                                   uint64_t *out_len) {
+static tinydelta_result_t
+ref_decode(const uint8_t *dict, uint64_t dict_len, const uint8_t *patch, uint64_t patch_len, uint8_t *out, uint64_t out_cap, uint64_t *out_len) {
     uint64_t patch_pos = 1, out_pos = 0; /* past the version byte */
     int64_t cursor = 0;
 
@@ -247,10 +242,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     const uint8_t *patch = data + dict_len;
     uint32_t patch_len   = (uint32_t)size - dict_len;
 
-    uint64_t ref_len     = 0;
-    uint32_t mem_len     = 0;
-    tinydelta_result ref = ref_decode(dict, dict_len, patch, patch_len, ref_out, out_cap, &ref_len);
-    tinydelta_result mem = tinydelta_decode(dict, dict_len, patch, patch_len, mem_out, out_cap, &mem_len);
+    uint64_t ref_len       = 0;
+    uint32_t mem_len       = 0;
+    tinydelta_result_t ref = ref_decode(dict, dict_len, patch, patch_len, ref_out, out_cap, &ref_len);
+    tinydelta_result_t mem = tinydelta_decode(dict, dict_len, patch, patch_len, mem_out, out_cap, &mem_len);
     if (mem != ref) {
         FAIL("memory decoder returned %d, reference %d", mem, ref);
     }
@@ -261,27 +256,27 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     for (int with_read = 1; with_read >= 0; with_read--) {
         source patch_src = {patch, patch_len}, dict_src = {dict, dict_len};
         uint8_t buffer[128];
-        tinydelta_io io = {
+        tinydelta_io_t io = {
             .patch_read   = source_read,
-            .patch_ctx    = &patch_src,
+            .p_patch_ctx  = &patch_src,
             .patch_len    = patch_len,
             .dict_read    = source_read,
-            .dict_ctx     = &dict_src,
+            .p_dict_ctx   = &dict_src,
             .dict_len     = dict_len,
             .target_write = flash_program,
             .target_read  = with_read ? flash_read : NULL,
-            .target_ctx   = &target_flash,
+            .p_target_ctx = &target_flash,
             .target_cap   = out_cap,
-            .buffer       = buffer,
+            .p_buffer     = buffer,
             .buffer_size  = buffer_size,
             .page_size    = page_size,
         };
         memset(&target_flash, 0, sizeof target_flash);
-        target_flash.page_size  = page_size;
-        calls                   = 0;
-        failure_injected        = 0;
-        uint32_t io_len         = 0;
-        tinydelta_result result = tinydelta_decode_io(&io, &io_len);
+        target_flash.page_size    = page_size;
+        calls                     = 0;
+        failure_injected          = 0;
+        uint32_t io_len           = 0;
+        tinydelta_result_t result = tinydelta_decode_io(&io, &io_len);
         if (failure_injected) {
             if (result != TINYDELTA_ERR_IO) {
                 FAIL("callback decoder returned %d after a failed callback", result);
@@ -289,11 +284,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             continue;
         }
         if (result != mem && !(!with_read && result == TINYDELTA_ERR_MALFORMED)) {
-            FAIL("callback decoder (buffer %u, page %u, target_read %d) returned %d, memory decoder %d", buffer_size,
-                 page_size, with_read, result, mem);
+            FAIL("callback decoder (buffer %u, page %u, target_read %d) returned %d, memory decoder %d", buffer_size, page_size, with_read, result, mem);
         }
-        if (result == TINYDELTA_OK && (io_len != mem_len || target_flash.programmed != mem_len ||
-                                       memcmp(target_flash.bytes, mem_out, mem_len) != 0)) {
+        if (result == TINYDELTA_OK && (io_len != mem_len || target_flash.programmed != mem_len || memcmp(target_flash.bytes, mem_out, mem_len) != 0)) {
             FAIL("callback decoder output differs");
         }
     }

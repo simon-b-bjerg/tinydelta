@@ -5,7 +5,7 @@
 # clang-format 18 or later; check with scripts/c-format.sh.
 BasedOnStyle: LLVM
 IndentWidth: 4
-ColumnLimit: 120
+ColumnLimit: 160 # BARR-C 1.2a asks for 80; a documented deviation (README.md)
 AlignConsecutiveMacros: Consecutive
 AlignConsecutiveAssignments:
   Enabled: true

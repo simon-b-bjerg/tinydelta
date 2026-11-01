@@ -26,19 +26,20 @@ enum {
     TINYDELTA_CALLBACK_FAILED = -1
 };
 
-/* Offsets are relative to the start of the patch, dictionary or target. */
-typedef int (*tinydelta_read_fn)(void *ctx, uint32_t offset, uint8_t *buf, uint32_t len);
-typedef int (*tinydelta_write_fn)(void *ctx, uint32_t offset, const uint8_t *buf, uint32_t len);
+/* Offsets are relative to the start of the patch, dictionary or target.
+ * p_ctx is the context pointer given with the callback in tinydelta_io_t. */
+typedef int (*tinydelta_read_fn_t)(void *p_ctx, uint32_t offset, uint8_t *p_buffer, uint32_t length);
+typedef int (*tinydelta_write_fn_t)(void *p_ctx, uint32_t offset, const uint8_t *p_buffer, uint32_t length);
 
 typedef struct {
     /* Patch: read front to back, a few bytes at a time. */
-    tinydelta_read_fn patch_read;
-    void *patch_ctx;
+    tinydelta_read_fn_t patch_read;
+    void *p_patch_ctx;
     uint32_t patch_len;
 
     /* Dictionary: read at random offsets. */
-    tinydelta_read_fn dict_read;
-    void *dict_ctx;
+    tinydelta_read_fn_t dict_read;
+    void *p_dict_ctx;
     uint32_t dict_len;
 
     /* Target:
@@ -47,25 +48,25 @@ typedef struct {
      *                 buffer_size bytes, and only ever of bytes already
      *                 passed to target_write. May be NULL; such a patch is
      *                 then rejected as malformed. */
-    tinydelta_write_fn target_write;
-    tinydelta_read_fn target_read;
-    void *target_ctx;
+    tinydelta_write_fn_t target_write;
+    tinydelta_read_fn_t target_read;
+    void *p_target_ctx;
     uint32_t target_cap; /* max target size (capped at TINYDELTA_MAX_SIZE) */
 
     /* The buffer: buffer_size bytes, a power of two. page_size, the size
      * of each target_write, is a power of two no larger than buffer_size
      * (equal is fine: one page of RAM). */
-    uint8_t *buffer;
+    uint8_t *p_buffer;
     uint32_t buffer_size;
     uint32_t page_size;
-} tinydelta_io;
+} tinydelta_io_t;
 
 /* Applies the patch to the dictionary, writing the target through
- * target_write. On success, sets *target_len to the target's length. On
+ * target_write. On success, sets *p_target_len to the target's length. On
  * error, whatever was already written is incomplete and must not be used.
  * Returns TINYDELTA_ERR_MALFORMED also when buffer_size or page_size is
  * not as required. No allocation; a few dozen bytes of stack besides the
  * buffer. */
-tinydelta_result tinydelta_decode_io(const tinydelta_io *io, uint32_t *target_len);
+tinydelta_result_t tinydelta_decode_io(const tinydelta_io_t *p_io, uint32_t *p_target_len);
 
 #endif

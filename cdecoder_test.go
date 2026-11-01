@@ -76,7 +76,7 @@ const cDriver = `#include <stdio.h>
 	uint8_t *d = slurp(argv[1], &dn), *p = slurp(argv[2], &pn);
 	uint32_t cap = (uint32_t)atol(argv[4]);
 	uint8_t *o = malloc(cap ? cap : 1);
-	tinydelta_result rc = tinydelta_decode(d, dn, p, pn, o, cap, &on);
+	tinydelta_result_t rc = tinydelta_decode(d, dn, p, pn, o, cap, &on);
 	if (rc != TINYDELTA_OK) {
 		printf("%d\n", rc);
 		return 1;

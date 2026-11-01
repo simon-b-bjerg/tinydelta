@@ -216,22 +216,23 @@ length is pass 2's patch length:
 
 ```c
 uint8_t buffer[256];  /* one flash page; on the stack is fine */
-uint32_t inner_len, new_len;
-tinydelta_io pass1 = {  /* outer patch, empty dictionary -> inner area */
-    .patch_read = flash_read, .patch_ctx = &patch_area, .patch_len = patch_len,
-    .dict_len = 0,
+uint32_t inner_len;
+uint32_t new_len;
+tinydelta_io_t pass1 = {  /* outer patch, empty dictionary -> inner area */
+    .patch_read = flash_read, .p_patch_ctx = &patch_area, .patch_len = patch_len,
+    .dict_len = 0u,
     .target_write = flash_write, .target_read = flash_read,
-    .target_ctx = &inner_area, .target_cap = INNER_AREA_SIZE,
-    .buffer = buffer, .buffer_size = sizeof buffer, .page_size = sizeof buffer,
+    .p_target_ctx = &inner_area, .target_cap = INNER_AREA_SIZE,
+    .p_buffer = buffer, .buffer_size = sizeof buffer, .page_size = sizeof buffer,
 };
-tinydelta_result result = tinydelta_decode_io(&pass1, &inner_len);
+tinydelta_result_t result = tinydelta_decode_io(&pass1, &inner_len);
 if (result == TINYDELTA_OK) {
-    tinydelta_io pass2 = {  /* inner patch, old firmware -> new firmware */
-        .patch_read = flash_read, .patch_ctx = &inner_area, .patch_len = inner_len,
-        .dict_read = flash_read, .dict_ctx = &old_slot, .dict_len = old_len,
+    tinydelta_io_t pass2 = {  /* inner patch, old firmware -> new firmware */
+        .patch_read = flash_read, .p_patch_ctx = &inner_area, .patch_len = inner_len,
+        .dict_read = flash_read, .p_dict_ctx = &old_slot, .dict_len = old_len,
         .target_write = flash_write, .target_read = flash_read,
-        .target_ctx = &new_slot, .target_cap = new_len_expected,
-        .buffer = buffer, .buffer_size = sizeof buffer, .page_size = sizeof buffer,
+        .p_target_ctx = &new_slot, .target_cap = new_len_expected,
+        .p_buffer = buffer, .buffer_size = sizeof buffer, .page_size = sizeof buffer,
     };
     result = tinydelta_decode_io(&pass2, &new_len);
 }
@@ -471,7 +472,7 @@ every 32-bit operation takes several 16-bit instructions.
 
 ### Results
 
-Every decoding function returns a `tinydelta_result`:
+Every decoding function returns a `tinydelta_result_t`:
 
 | value | meaning |
 |---|---|
@@ -487,22 +488,22 @@ and must not be used.
 ### Memory decoder
 
 ```c
-tinydelta_result tinydelta_decode(const uint8_t *dict, uint32_t dict_len,
-                                  const uint8_t *patch, uint32_t patch_len,
-                                  uint8_t *out, uint32_t out_cap,
-                                  uint32_t *out_len);
+tinydelta_result_t tinydelta_decode(const uint8_t *p_dict, uint32_t dict_len,
+                                    const uint8_t *p_patch, uint32_t patch_len,
+                                    uint8_t *p_target, uint32_t target_cap,
+                                    uint32_t *p_target_len);
 ```
 
-Writes the target into `out` and sets `*out_len`. It fails with
-`TINYDELTA_ERR_TOO_LARGE` rather than write past `out_cap`.
+Writes the target into `p_target` and sets `*p_target_len`. It fails
+with `TINYDELTA_ERR_TOO_LARGE` rather than write past `target_cap`.
 
 ### Callback decoder
 
 ```c
-tinydelta_result tinydelta_decode_io(const tinydelta_io *io, uint32_t *target_len);
+tinydelta_result_t tinydelta_decode_io(const tinydelta_io_t *p_io, uint32_t *p_target_len);
 ```
 
-[`tinydelta_io`](c/tinydelta_io.h) holds your callbacks, a context
+[`tinydelta_io_t`](c/tinydelta_io.h) holds your callbacks, a context
 pointer for each data source, the sizes, and one buffer of yours:
 
 | data | callbacks | access pattern |
@@ -541,30 +542,31 @@ typically makes firmware patches 2% larger with a 256-byte buffer and
 #include "tinydelta_io.h"
 
 /* Your flash driver; addresses here are made up. */
-extern int spi_flash_read(uint32_t addr, uint8_t *buf, uint32_t len);
-extern int spi_flash_program(uint32_t addr, const uint8_t *buf, uint32_t len);
+extern int spi_flash_read(uint32_t address, uint8_t *p_buffer, uint32_t length);
+extern int spi_flash_program(uint32_t address, const uint8_t *p_buffer, uint32_t length);
 #define DICT_BASE   0x000000u   /* current config */
 #define PATCH_BASE  0x010000u   /* received patch */
 #define TARGET_BASE 0x020000u   /* new config, erased beforehand */
+#define FLASH_PAGE  256u
 
-static int rd(void *base, uint32_t off, uint8_t *buf, uint32_t len) {
-    return spi_flash_read((uint32_t)(uintptr_t)base + off, buf, len);
+/* p_ctx carries the region's base address. */
+static int region_read(void *p_ctx, uint32_t offset, uint8_t *p_buffer, uint32_t length) {
+    return spi_flash_read((uint32_t)(uintptr_t)p_ctx + offset, p_buffer, length);
 }
-static int wr(void *base, uint32_t off, const uint8_t *buf, uint32_t len) {
-    return spi_flash_program((uint32_t)(uintptr_t)base + off, buf, len);
+static int region_program(void *p_ctx, uint32_t offset, const uint8_t *p_buffer, uint32_t length) {
+    return spi_flash_program((uint32_t)(uintptr_t)p_ctx + offset, p_buffer, length);
 }
 
-tinydelta_result apply_patch(uint32_t dict_len, uint32_t patch_len,
-                             uint32_t target_cap, uint32_t *target_len) {
-    uint8_t page[256];                   /* buffer and page: one flash page */
-    tinydelta_io io = {
-        .patch_read = rd, .patch_ctx = (void *)(uintptr_t)PATCH_BASE, .patch_len = patch_len,
-        .dict_read  = rd, .dict_ctx  = (void *)(uintptr_t)DICT_BASE,  .dict_len  = dict_len,
-        .target_write = wr, .target_read = rd,  /* NULL for patches made with -max-distance 256 */
-        .target_ctx = (void *)(uintptr_t)TARGET_BASE, .target_cap = target_cap,
-        .buffer = page, .buffer_size = sizeof page, .page_size = sizeof page,
+tinydelta_result_t apply_patch(uint32_t dict_len, uint32_t patch_len, uint32_t target_cap, uint32_t *p_target_len) {
+    uint8_t page[FLASH_PAGE];  /* buffer and page: one flash page */
+    tinydelta_io_t io = {
+        .patch_read = region_read, .p_patch_ctx = (void *)(uintptr_t)PATCH_BASE, .patch_len = patch_len,
+        .dict_read = region_read, .p_dict_ctx = (void *)(uintptr_t)DICT_BASE, .dict_len = dict_len,
+        .target_write = region_program, .target_read = region_read,  /* NULL for patches made with -max-distance 256 */
+        .p_target_ctx = (void *)(uintptr_t)TARGET_BASE, .target_cap = target_cap,
+        .p_buffer = page, .buffer_size = FLASH_PAGE, .page_size = FLASH_PAGE,
     };
-    return tinydelta_decode_io(&io, target_len);   /* TINYDELTA_OK on success */
+    return tinydelta_decode_io(&io, p_target_len);  /* TINYDELTA_OK on success */
 }
 ```
 
@@ -648,10 +650,9 @@ Then, on the device:
 3. **Decode into a separate region**, never over the dictionary:
    patching in place isn't supported. Erase it first, or erase as you
    write.
-4. **Cap the output at the target length**: pass it as `out_cap` /
-   `target_cap`. A short, valid patch can describe a very large target,
+4. **Cap the output at the target length**: pass it as `target_cap`. A short, valid patch can describe a very large target,
    and the decoders stop at the cap.
-5. **Check the result**: `out_len` / `target_len` must equal the target
+5. **Check the result**: the decoded length must equal the target
    length, and the target's CRC or hash must match. Only then switch
    over.
 
@@ -667,10 +668,21 @@ cppcheck's MISRA addon, so it can go into firmware that has to pass a
 MISRA checker:
 
 - **Layout**: [`c/.clang-format`](c/.clang-format) (4-space indent,
-  120 columns, braces on every `if`, `else` and loop body). Run
+  160 columns, braces on every `if`, `else` and loop body). Run
   `scripts/c-format.sh --fix` before committing; CI runs it as a check.
-- **Names**: everything public starts with `tinydelta_` / `TINYDELTA_`;
-  internal names are lowercase with underscores.
+  The 160 columns deviate from BARR-C's 80, so long callback calls stay
+  on one line.
+- **Names** (BARR-C 5 to 7): lowercase with underscores; everything
+  public starts with `tinydelta_` / `TINYDELTA_`, and functions private
+  to a file with its decoder (`memory_`, `io_`). Types end in `_t`
+  (`tinydelta_io_t`, `tinydelta_result_t`). Pointers start with `p_`,
+  booleans with `b_` and globals (there are none) with `g_`. No name is
+  shorter than 3 characters, loop counters included. Callback members
+  keep their verb names (`patch_read`, `target_write`).
+- **Structure**: one small function per instruction in each decoder;
+  version 2's opcode 3 becomes its own operation (`ADD_DIFF`) before the
+  `switch`, rather than a special case inside `COPY_TARGET`. Every cast
+  has a comment saying why it is safe (BARR-C 1.6a).
 - **Types**: fixed-width integers (`uint32_t`, `uint8_t`) for every size
   and offset, never `int` or `size_t` in the API; `bool` for flags;
   unsigned literals (`0u`) in unsigned expressions; explicit parentheses
@@ -688,7 +700,7 @@ deviations, listed with their reasons in
 | 17.8 parameters not modified | advisory | offset and length parameters double as loop counters |
 | 18.4 no `+`/`-` on pointers | advisory | buffer + offset addressing, always after a bounds check |
 | 10.8 composite expression cast | required | the masked two-bit opcode is cast to `tinydelta_opcode`, so `-Wswitch-enum` proves every opcode has a case |
-| 11.8 const cast away | required | cppcheck false positive: a callback's `void *ctx` is copied out of the `const tinydelta_io`; no qualifier is removed |
+| 11.8 const cast away | required | cppcheck false positive: a callback's `void *p_ctx` is copied out of the `const tinydelta_io_t`; no qualifier is removed |
 
 ## Wire format
 
