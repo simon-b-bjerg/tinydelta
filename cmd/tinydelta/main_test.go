@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Simon Bjerg
+// SPDX-License-Identifier: MIT
+
 package main
 
 import (
@@ -114,8 +117,13 @@ func TestVersion(t *testing.T) {
 	}
 	version = "v9.9.9"
 	defer func() { version = "" }()
-	if r := runCLI(nil, "--version"); strings.TrimSpace(r.stdout) != "tinydelta v9.9.9" {
+	r = runCLI(nil, "--version")
+	lines := strings.Split(strings.TrimSpace(r.stdout), "\n")
+	if lines[0] != "tinydelta v9.9.9" {
 		t.Errorf("version with -ldflags-style version set: %q", r.stdout)
+	}
+	if len(lines) < 3 || !strings.HasPrefix(lines[1], "Copyright (c) ") || !strings.Contains(lines[2], "MIT License") {
+		t.Errorf("version without copyright and license lines: %q", r.stdout)
 	}
 }
 

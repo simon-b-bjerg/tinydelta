@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
 """Turns the benchmark CSV into a summary and two graphs.
 
     python3 bench/plot.py <results.csv> <output dir>

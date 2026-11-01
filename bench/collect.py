@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
 """Builds the benchmark versions listed in bench/corpus.json.
 
     python3 bench/collect.py [cache dir]        (default bench/.cache)

@@ -1,3 +1,7 @@
+/* SPDX-FileCopyrightText: 2026 Simon Bjerg
+ * SPDX-License-Identifier: MIT
+ */
+
 #include <string.h>
 
 #include "tinydelta.h"

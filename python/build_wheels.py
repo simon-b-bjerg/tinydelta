@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
 """Builds the tinydelta Python wheels from the release archives.
 
     python3 python/build_wheels.py <version> <dist dir> <output dir>
@@ -73,16 +76,16 @@ def metadata(version):
     with open(os.path.join(HERE, "README.md"), encoding="utf-8") as f:
         readme = f.read()
     headers = [
-        ("Metadata-Version", "2.1"),
+        ("Metadata-Version", "2.4"),
         ("Name", NAME),
         ("Version", version),
         ("Summary", SUMMARY),
         ("Home-page", URL),
         ("Author", "Simon Bjerg"),
-        ("License", "MIT"),
+        ("License-Expression", "MIT"),
+        ("License-File", "LICENSE"),
         ("Project-URL", "Source, " + URL),
         ("Requires-Python", REQUIRES_PYTHON),
-        ("Classifier", "License :: OSI Approved :: MIT License"),
         ("Classifier", "Programming Language :: Python :: 3"),
         ("Classifier", "Topic :: System :: Archiving :: Compression"),
         ("Classifier", "Topic :: Software Development :: Embedded Systems"),
@@ -120,7 +123,7 @@ def write_wheel(out_dir, version, tag, binary, binary_name, common):
     ).encode()
     files[dist_info + "/entry_points.txt"] = b"[console_scripts]\ntinydelta = tinydelta.__main__:main\n"
     with open(os.path.join(ROOT, "LICENSE"), "rb") as f:
-        files[dist_info + "/LICENSE"] = f.read()
+        files[dist_info + "/licenses/LICENSE"] = f.read()  # PEP 639
 
     record = []
     for path in sorted(files):

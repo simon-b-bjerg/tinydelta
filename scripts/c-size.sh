@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
 # Prints the C library's code size (.text) and worst-case stack per part
 # for Cortex-M, as a Markdown table. Needs arm-none-eabi-gcc.
 set -euo pipefail

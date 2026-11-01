@@ -1,3 +1,7 @@
+/* SPDX-FileCopyrightText: 2026 Simon Bjerg
+ * SPDX-License-Identifier: MIT
+ */
+
 /* CBMC harness: the callback decoder, for every dictionary, patch and
  * capacity up to the bounds below, with one buffer setup per run
  * (BUFFER_SIZE, PAGE_SIZE, WITH_READ; see scripts/c-cbmc.sh).

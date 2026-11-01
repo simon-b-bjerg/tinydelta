@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
 # Static analysis of the C library with four analyzers; any finding fails:
 #   - GCC's static analyzer (-fanalyzer)
 #   - the Clang Static Analyzer (clang --analyze)

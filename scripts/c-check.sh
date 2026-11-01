@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
 # Builds the C library with strict warnings as errors, including
 # -Wswitch-enum (every opcode handled) and -Wconversion. Extra arguments
 # are passed to the compiler. Usage: scripts/c-check.sh [compiler [flags...]], e.g.

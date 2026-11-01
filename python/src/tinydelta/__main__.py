@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
 """Runs the bundled tinydelta command-line tool, as `python -m tinydelta`
 or as the `tinydelta` command the wheel installs."""
 

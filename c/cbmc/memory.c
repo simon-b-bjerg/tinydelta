@@ -1,3 +1,7 @@
+/* SPDX-FileCopyrightText: 2026 Simon Bjerg
+ * SPDX-License-Identifier: MIT
+ */
+
 /* CBMC harness: the memory decoder, for every dictionary, patch and
  * output capacity up to the bounds below (see scripts/c-cbmc.sh). Proves, within
  * the bounds: no out-of-bounds access, no undefined behaviour, one of the

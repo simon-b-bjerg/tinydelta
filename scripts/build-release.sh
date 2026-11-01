@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
 # Builds release archives of the tinydelta CLI into dist/:
 #   tinydelta_<version>_linux_<arch>.tar.gz   (static binary, README, LICENSE)
 #   tinydelta_<version>_windows_<arch>.zip    (tinydelta.exe, README, LICENSE)

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
 # clang-tidy settings for the C library, used by scripts/c-analyze.sh.
 # All bug-finding check groups, every finding an error, except:
 #   misc-include-cleaner                  wants <stdint.h> in every file;

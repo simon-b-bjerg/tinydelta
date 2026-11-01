@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
 # Builds the C fuzz harness (c/fuzz/fuzz_decode.c) with libFuzzer, for
 # scripts/c-fuzz.sh (with sanitizers) and scripts/c-coverage.sh (with
 # coverage instrumentation). Extra arguments are passed to the compiler.

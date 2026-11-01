@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
 """Encodes every benchmark pair with every tool and writes the sizes.
 
     python3 bench/run.py <cache dir> <results.csv> [--tools a,b,...]

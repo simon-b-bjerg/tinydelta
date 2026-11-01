@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+
 # Model-checks the C decoders with CBMC (c/cbmc/): every input up to small
 # bounds, exhaustively, not a sample. Within the bounds it proves:
 #   - no out-of-bounds access and no undefined behaviour in either decoder;

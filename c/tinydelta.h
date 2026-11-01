@@ -1,3 +1,7 @@
+/* SPDX-FileCopyrightText: 2026 Simon Bjerg
+ * SPDX-License-Identifier: MIT
+ */
+
 /* tinydelta C decoders. See README.md for the wire format.
  *
  *   tinydelta_decode     (this header)       dictionary, patch and target
