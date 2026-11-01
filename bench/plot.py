@@ -20,9 +20,6 @@ Writes to <output dir>:
     tradeoff.svg      each tool's typical patch size against its decoder's
                       footprint, code + RAM buffers, stack excluded
                       (from bench/decoders.json)
-    forest_larger.svg, pairs_larger.svg, tradeoff_larger.svg
-                      the same for the larger inputs; the three above show
-                      the small ones (SMALL_KINDS), which tinydelta is made for
     ratio_ecdf_<kind>.svg  distribution of tinydelta's patch size divided by
                       each other tool's, one graph per kind of data
     patch_share_<kind>.svg each tool's patch size as a share of the target,
@@ -119,25 +116,14 @@ def geomean(values):
     return math.exp(sum(math.log(v) for v in values) / len(values))
 
 
-# The kinds of data, in the order the graphs show them. The small ones
-# are what tinydelta is made for, so the headline graphs (forest, pairs,
-# tradeoff) show them; the larger ones get their own "_larger" graphs.
-SMALL_KINDS = ["small firmware", "config file", "small device tree"]
-KIND_ORDER = SMALL_KINDS + ["firmware", "device tree"]  # others after, by name
+# The kinds of data, in the order the graphs show them; others after, by
+# name. Each kind's title gives the size of its files.
+KIND_ORDER = ["firmware", "configuration", "large configuration"]
 
 
 def kinds_of(rows):
     kinds = {r["kind"] for r in rows}
     return [k for k in KIND_ORDER if k in kinds] + sorted(kinds - set(KIND_ORDER))
-
-
-def groups(rows):
-    """The rows behind the headline graphs ("") and the larger inputs
-    ("_larger"). Without small kinds (an older corpus), all rows are the
-    headline."""
-    small = [r for r in rows if r["kind"] in SMALL_KINDS]
-    larger = [r for r in rows if r["kind"] not in SMALL_KINDS]
-    return [("", small), ("_larger", larger)] if small and larger else [("", rows)]
 
 
 def kb(n):
@@ -379,7 +365,7 @@ def forest_range(rows, tools, kinds, steps):
 FOREST_TOOLS = ["openvcdiff", "xdelta3", "hpatchlite_4k", "bsdiff", "zstd"]
 
 
-def forest(rows, out, name="forest"):
+def forest(rows, out):
     kinds = kinds_of(rows)
     steps = sorted({r["step"] for r in rows})
     others = {t[0]: t for t in OTHERS}
@@ -443,7 +429,7 @@ def forest(rows, out, name="forest"):
     fig.text(0.02, 1 - 0.45 / height, "Each row: tinydelta's patch divided by that tool's, over every pair. "
              "Below 1, tinydelta's patch is smaller.", ha="left", va="top", fontsize=9, color=MUTED)
     fig.tight_layout(rect=(0, 0, 1, 1 - 0.7 / height))
-    save(fig, out, name)
+    save(fig, out, "forest")
 
 
 KIND_MARKERS = ["o", "^", "s", "D", "v"]
@@ -572,7 +558,7 @@ def place_labels(fig, ax, points):
         placed.append(extent)
 
 
-def tradeoff(rows, out, name="tradeoff"):
+def tradeoff(rows, out):
     """Typical patch size against the decoder's footprint on the device:
     code plus the RAM buffers it needs, stack excluded (decoders.json).
     For a decoder that holds the whole old file, the median old file of that
@@ -624,7 +610,7 @@ def tradeoff(rows, out, name="tradeoff"):
     fig.text(0.02, 1 - 0.45 / height, "Lower left is better. Arrows are lower bounds: code size unknown, "
              "or the whole old file in RAM.", ha="left", va="top", fontsize=9, color=MUTED)
     fig.tight_layout(rect=(0, 0, 1, 1 - 0.7 / height))
-    save(fig, out, name)
+    save(fig, out, "tradeoff")
 
 
 def main():
@@ -636,10 +622,9 @@ def main():
     if not rows:
         sys.exit("plot: no rows in %s" % results)
     summary(rows, os.path.splitext(results)[0] + "-tools.json", out)
-    for suffix, sel in groups(rows):
-        forest(sel, out, "forest" + suffix)
-        pair_scatter(sel, out, "pairs" + suffix)
-        tradeoff(sel, out, "tradeoff" + suffix)
+    forest(rows, out)
+    pair_scatter(rows, out, "pairs")
+    tradeoff(rows, out)
     ratio_ecdf(rows, out)
     patch_share(rows, out)
 
