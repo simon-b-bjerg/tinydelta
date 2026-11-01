@@ -109,15 +109,15 @@ int main(void) {
     const uint8_t *dict = dict_area + (DICT_MAX - dict_len), *patch = patch_area + (PATCH_MAX - patch_len);
 
     source patch_src = {patch, patch_len}, dict_src = {dict, dict_len};
-    tinydelta_io io = {
-        .patch_read = source_read, .patch_ctx = &patch_src, .patch_len = patch_len,
-        .dict_read = source_read, .dict_ctx = &dict_src, .dict_len = dict_len,
+    tinydelta_io_t io = {
+        .patch_read = source_read, .p_patch_ctx = &patch_src, .patch_len = patch_len,
+        .dict_read = source_read, .p_dict_ctx = &dict_src, .dict_len = dict_len,
         .target_write = flash_write, .target_read = WITH_READ ? flash_read : 0,
-        .target_ctx = 0, .target_cap = cap,
-        .buffer = buffer + 1, .buffer_size = BUFFER_SIZE, .page_size = PAGE_SIZE,
+        .p_target_ctx = 0, .target_cap = cap,
+        .p_buffer = buffer + 1, .buffer_size = BUFFER_SIZE, .page_size = PAGE_SIZE,
     };
     uint32_t io_len = 0xFFFFFFFFu;
-    tinydelta_result result = tinydelta_decode_io(&io, &io_len);
+    tinydelta_result_t result = tinydelta_decode_io(&io, &io_len);
 
     if (!VALID_SETUP) {
         assert(result == TINYDELTA_ERR_MALFORMED);
@@ -127,7 +127,7 @@ int main(void) {
         static uint8_t out_area[OUT_MAX];
         uint8_t *out = out_area + (OUT_MAX - cap);
         uint32_t mem_len = 0xFFFFFFFFu;
-        tinydelta_result expected = tinydelta_decode(dict, dict_len, patch, patch_len, out, cap, &mem_len);
+        tinydelta_result_t expected = tinydelta_decode(dict, dict_len, patch, patch_len, out, cap, &mem_len);
         assert(result == expected || (!WITH_READ && result == TINYDELTA_ERR_MALFORMED));
         if (result == TINYDELTA_OK) {
             assert(io_len == mem_len && written == mem_len);

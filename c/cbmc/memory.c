@@ -30,7 +30,7 @@ int main(void) {
     uint8_t *out = out_area + (OUT_MAX - out_cap);
     uint32_t out_len = 0xFFFFFFFFu;
 
-    tinydelta_result result = tinydelta_decode(dict, dict_len, patch, patch_len, out, out_cap, &out_len);
+    tinydelta_result_t result = tinydelta_decode(dict, dict_len, patch, patch_len, out, out_cap, &out_len);
 
     assert(result == TINYDELTA_OK || result == TINYDELTA_ERR_MALFORMED || result == TINYDELTA_ERR_TOO_LARGE ||
            result == TINYDELTA_ERR_VERSION);

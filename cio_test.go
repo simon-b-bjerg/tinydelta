@@ -90,12 +90,12 @@ int main(int argc, char **argv) {
 	if (argc == 7) failat = atol(argv[6]);
 	flash = malloc(cap ? cap : 1);
 
-	tinydelta_io io = {
+	tinydelta_io_t io = {
 		.patch_read = patch_rd, .patch_len = patch_len,
 		.dict_read = dict_rd, .dict_len = dict_len,
 		.target_write = fl_wr, .target_read = use_read ? fl_rd : NULL,
 		.target_cap = cap,
-		.buffer = malloc(buffer_size ? buffer_size : 1),
+		.p_buffer = malloc(buffer_size ? buffer_size : 1),
 		.buffer_size = (uint32_t)buffer_size, .page_size = page,
 	};
 	uint32_t n = 0;

@@ -19,11 +19,11 @@
  * patch. Version 2 is made for compression (ADD_DIFF in place of
  * COPY_TARGET). A patch with any other first byte is rejected with
  * TINYDELTA_ERR_VERSION. */
-#define TINYDELTA_FORMAT_VERSION 1u
+#define TINYDELTA_FORMAT_VERSION   1u
 #define TINYDELTA_FORMAT_VERSION_2 2u
 
 typedef enum {
-    TINYDELTA_OK            =  0,
+    TINYDELTA_OK            = 0,
     TINYDELTA_ERR_MALFORMED = -1, /* corrupt or truncated patch, or one that
                                      doesn't fit the dictionary */
     TINYDELTA_ERR_TOO_LARGE = -2, /* target would exceed its capacity, or the
@@ -33,16 +33,14 @@ typedef enum {
     TINYDELTA_ERR_VERSION   = -4  /* the patch's version byte is neither 1
                                      nor 2: a newer format version, or not
                                      a patch */
-} tinydelta_result;
+} tinydelta_result_t;
 
-/* Applies patch to dict and writes the target into out, which holds
- * out_cap bytes (values above TINYDELTA_MAX_SIZE are treated as
- * TINYDELTA_MAX_SIZE). On success, sets *out_len to the target's length.
- * Uses 32-bit arithmetic only, no allocation, and reads the patch once,
- * front to back. */
-tinydelta_result tinydelta_decode(const uint8_t *dict, uint32_t dict_len,
-                                  const uint8_t *patch, uint32_t patch_len,
-                                  uint8_t *out, uint32_t out_cap,
-                                  uint32_t *out_len);
+/* Applies the patch to the dictionary and writes the target into
+ * p_target, which holds target_cap bytes (values above TINYDELTA_MAX_SIZE
+ * are treated as TINYDELTA_MAX_SIZE). On success, sets *p_target_len to
+ * the target's length. Uses 32-bit arithmetic only, no allocation, and
+ * reads the patch once, front to back. */
+tinydelta_result_t tinydelta_decode(
+    const uint8_t *p_dict, uint32_t dict_len, const uint8_t *p_patch, uint32_t patch_len, uint8_t *p_target, uint32_t target_cap, uint32_t *p_target_len);
 
 #endif

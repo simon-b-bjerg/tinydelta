@@ -3,6 +3,8 @@
 #ifndef TINYDELTA_INTERNAL_H
 #define TINYDELTA_INTERNAL_H
 
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "tinydelta.h"
@@ -16,24 +18,34 @@
 /* ---- Instructions -------------------------------------------------------
  * Every instruction starts with one varint: the opcode in its low bits, the
  * number of target bytes the instruction produces (its length) above them.
+ * Every instruction moves the target position and the dictionary cursor
+ * forward by its length; COPY first moves the cursor to where it copies
+ * from.
  */
 
 typedef enum {
-    TINYDELTA_OP_COPY        = 0, /* dictionary at cursor + delta; the cursor
-                                     moves to just past the copied bytes */
+    TINYDELTA_OP_COPY        = 0, /* dictionary bytes at cursor + delta */
     TINYDELTA_OP_ADD         = 1, /* literal bytes, taken from the patch */
-    TINYDELTA_OP_SKIP        = 2, /* dictionary at the cursor */
-    TINYDELTA_OP_COPY_TARGET = 3  /* version 1: earlier target bytes, at
-                                     position + delta; version 2: ADD_DIFF,
-                                     patch bytes added to the dictionary
-                                     bytes at the cursor */
-} tinydelta_opcode;
+    TINYDELTA_OP_SKIP        = 2, /* dictionary bytes at the cursor */
+    TINYDELTA_OP_COPY_TARGET = 3, /* version 1: earlier target bytes, at
+                                     target position + delta */
+    TINYDELTA_OP_ADD_DIFF    = 4  /* version 2's opcode 3: dictionary bytes at
+                                     the cursor, each plus a patch byte. Not a
+                                     wire value: instruction_opcode maps it */
+} tinydelta_opcode_t;
 
 #define TINYDELTA_OPCODE_BITS 2u
 #define TINYDELTA_OPCODE_MASK ((1u << TINYDELTA_OPCODE_BITS) - 1u)
 
-static inline tinydelta_opcode instruction_opcode(uint32_t instruction) {
-    return (tinydelta_opcode)(instruction & TINYDELTA_OPCODE_MASK);
+/* The operation an instruction performs in the given format version. */
+static inline tinydelta_opcode_t instruction_opcode(uint32_t instruction, bool b_format_v2) {
+    /* Cast: the masked value is 0 to 3, and each has an enumerator. */
+    tinydelta_opcode_t opcode = (tinydelta_opcode_t)(instruction & TINYDELTA_OPCODE_MASK);
+
+    if (b_format_v2 && (opcode == TINYDELTA_OP_COPY_TARGET)) {
+        opcode = TINYDELTA_OP_ADD_DIFF;
+    }
+    return opcode;
 }
 
 static inline uint32_t instruction_length(uint32_t instruction) {
@@ -46,29 +58,30 @@ static inline uint32_t instruction_length(uint32_t instruction) {
  * the 5th byte may only carry bits 28-31.
  */
 
-#define VARINT_MAX_BYTES      5u
-#define VARINT_BITS_PER_BYTE  7u
-#define VARINT_VALUE_MASK     0x7Fu
-#define VARINT_CONTINUES      0x80u
-#define VARINT_LAST_BYTE_MAX  0x0Fu
+#define VARINT_MAX_BYTES     5u
+#define VARINT_BITS_PER_BYTE 7u
+#define VARINT_VALUE_MASK    0x7Fu
+#define VARINT_CONTINUES     0x80u
+#define VARINT_LAST_BYTE_MAX 0x0Fu
 
-/* Parses one varint from the start of bytes[0 .. available). On success
- * sets *value and *used (the bytes it took). Fails if the varint is
+/* Parses one varint from the start of p_bytes[0 .. available). On success
+ * sets *p_value and *p_used (the bytes it took). Fails if the varint is
  * truncated or holds more than 32 bits. */
-static inline tinydelta_result varint_parse(const uint8_t *bytes, uint32_t available,
-                                            uint32_t *value, uint32_t *used) {
-    uint32_t result = 0;
-    uint32_t limit = available < VARINT_MAX_BYTES ? available : VARINT_MAX_BYTES;
+static inline tinydelta_result_t varint_parse(const uint8_t *p_bytes, uint32_t available, uint32_t *p_value, uint32_t *p_used) {
+    uint32_t value = 0u;
+    uint32_t limit = (available < VARINT_MAX_BYTES) ? available : VARINT_MAX_BYTES;
 
-    for (uint32_t i = 0; i < limit; i++) {
-        uint8_t byte = bytes[i];
-        if (i == VARINT_MAX_BYTES - 1 && byte > VARINT_LAST_BYTE_MAX) {
+    for (uint32_t byte_index = 0u; byte_index < limit; byte_index++) {
+        uint8_t byte = p_bytes[byte_index];
+
+        if ((byte_index == (VARINT_MAX_BYTES - 1u)) && (byte > VARINT_LAST_BYTE_MAX)) {
             return TINYDELTA_ERR_MALFORMED; /* more than 32 bits */
         }
-        result |= (uint32_t)(byte & VARINT_VALUE_MASK) << (VARINT_BITS_PER_BYTE * i);
-        if (!(byte & VARINT_CONTINUES)) {
-            *value = result;
-            *used = i + 1;
+        /* Cast: widens the byte, so the shift (at most 28) stays in 32 bits. */
+        value |= ((uint32_t)byte & VARINT_VALUE_MASK) << (VARINT_BITS_PER_BYTE * byte_index);
+        if ((byte & VARINT_CONTINUES) == 0u) {
+            *p_value = value;
+            *p_used  = byte_index + 1u;
             return TINYDELTA_OK;
         }
     }
@@ -83,12 +96,13 @@ static inline tinydelta_result varint_parse(const uint8_t *bytes, uint32_t avail
  * unsigned bounds check rejects it.
  */
 static inline uint32_t zigzag_decode(uint32_t encoded) {
-    return (encoded >> 1) ^ (0u - (encoded & 1u));
+    return (encoded >> 1u) ^ (0u - (encoded & 1u));
 }
 
-/* True if [start, start + length) lies within [0, size). */
-static inline int range_within(uint32_t start, uint32_t length, uint32_t size) {
-    return start <= size && length <= size - start;
+/* True if [start, start + length) lies within [0, size), checked without
+ * overflow. */
+static inline bool range_within(uint32_t start, uint32_t length, uint32_t size) {
+    return (start <= size) && (length <= (size - start));
 }
 
 #endif
