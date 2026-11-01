@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Simon Bjerg
 # SPDX-License-Identifier: MIT
 
-"""Turns the benchmark CSV into a summary and two graphs.
+"""Turns the benchmark CSV into a summary and graphs.
 
     python3 bench/plot.py <results.csv> <output dir>
 
@@ -20,6 +20,9 @@ Writes to <output dir>:
     tradeoff.svg      each tool's typical patch size against its decoder's
                       footprint, code + RAM buffers, stack excluded
                       (from bench/decoders.json)
+    forest_larger.svg, pairs_larger.svg, tradeoff_larger.svg
+                      the same for the larger inputs; the three above show
+                      the small ones (SMALL_KINDS), which tinydelta is made for
     ratio_ecdf_<kind>.svg  distribution of tinydelta's patch size divided by
                       each other tool's, one graph per kind of data
     patch_share_<kind>.svg each tool's patch size as a share of the target,
@@ -116,12 +119,36 @@ def geomean(values):
     return math.exp(sum(math.log(v) for v in values) / len(values))
 
 
-KIND_ORDER = ["firmware", "device tree"]  # firmware first; others after, by name
+# The kinds of data, in the order the graphs show them. The small ones
+# are what tinydelta is made for, so the headline graphs (forest, pairs,
+# tradeoff) show them; the larger ones get their own "_larger" graphs.
+SMALL_KINDS = ["small firmware", "config file", "small device tree"]
+KIND_ORDER = SMALL_KINDS + ["firmware", "device tree"]  # others after, by name
 
 
 def kinds_of(rows):
     kinds = {r["kind"] for r in rows}
     return [k for k in KIND_ORDER if k in kinds] + sorted(kinds - set(KIND_ORDER))
+
+
+def groups(rows):
+    """The rows behind the headline graphs ("") and the larger inputs
+    ("_larger"). Without small kinds (an older corpus), all rows are the
+    headline."""
+    small = [r for r in rows if r["kind"] in SMALL_KINDS]
+    larger = [r for r in rows if r["kind"] not in SMALL_KINDS]
+    return [("", small), ("_larger", larger)] if small and larger else [("", rows)]
+
+
+def kb(n):
+    return "%.1f" % (n / 1e3) if n < 10e3 else "%d" % round(n / 1e3)
+
+
+def kind_label(rows, kind):
+    """A kind of data with the size of its files: "config file, 3.1-5.8 KB"."""
+    sizes = [r["target_bytes"] for r in rows if r["kind"] == kind]
+    lo, hi = kb(min(sizes)), kb(max(sizes))
+    return "%s, %s KB" % (kind, lo if lo == hi else lo + "–" + hi)
 
 
 def plain_key(rows):
@@ -202,7 +229,7 @@ def summary(rows, tools_file, out):
         for step in sorted({r["step"] for r in rows if r["kind"] == kind}):
             sel = [r for r in rows if r["kind"] == kind and r["step"] == step]
             items = sorted({r["corpus"] + "/" + r["item"] for r in sel})
-            lines += ["## %s, %d commit%s apart" % (kind, step, "" if step == 1 else "s"), "",
+            lines += ["## %s, %d commit%s apart" % (kind_label(rows, kind), step, "" if step == 1 else "s"), "",
                       "%d pairs from %s; median target %s bytes." % (
                           len(sel), ", ".join(items), "{:,}".format(int(statistics.median(r["target_bytes"] for r in sel)))),
                       ""]
@@ -282,7 +309,7 @@ def ratio_ecdf(rows, out):
         ax.set_xlabel("tinydelta's patch size ÷ the tool's (log scale)", fontsize=9, color=MUTED)
         ax.set_ylabel("% of pairs at or below this ratio", fontsize=9, color=MUTED)
         ax.legend(frameon=False, fontsize=9, loc="upper left", labelcolor=INK)
-        titled(fig, "%s: how often, and by how much, tinydelta is smaller (%d pairs)" % (kind, len(sel)),
+        titled(fig, "%s: how often, and by how much, tinydelta is smaller (%d pairs)" % (kind_label(rows, kind), len(sel)),
                "Each line climbs through every pair, smallest ratio first; its height at 1 is the share where tinydelta is smaller.")
         save(fig, out, "ratio_ecdf_" + slug(kind))
 
@@ -314,7 +341,7 @@ def patch_share(rows, out):
         ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: "%g%%" % x))
         ax.xaxis.set_minor_formatter(ticker.NullFormatter())
         ax.set_xlabel("patch size as % of target (log scale)", fontsize=9, color=MUTED)
-        titled(fig, "%s: patch size as a share of the target (%d pairs)" % (kind, len(sel)),
+        titled(fig, "%s: patch size as a share of the target (%d pairs)" % (kind_label(rows, kind), len(sel)),
                "Box: middle half of the pairs, thick line the median; whiskers to 1.5 box lengths, dots beyond.")
         save(fig, out, "patch_share_" + slug(kind))
 
@@ -352,7 +379,7 @@ def forest_range(rows, tools, kinds, steps):
 FOREST_TOOLS = ["openvcdiff", "xdelta3", "hpatchlite_4k", "bsdiff", "zstd"]
 
 
-def forest(rows, out):
+def forest(rows, out, name="forest"):
     kinds = kinds_of(rows)
     steps = sorted({r["step"] for r in rows})
     others = {t[0]: t for t in OTHERS}
@@ -399,7 +426,7 @@ def forest(rows, out):
         ax.set_xlim(FOREST_MIN, FOREST_MAX)
         log_axis(ax.xaxis)
         n = len([r for r in rows if r["kind"] == kind])
-        ax.set_title("%s (%d pairs)" % (kind, n), fontsize=11, color=INK, loc="left")
+        ax.set_title("%s (%d pairs)" % (kind_label(rows, kind), n), fontsize=11, color=INK, loc="left")
     handles = [plt.Line2D([], [], marker="o", linestyle="", markersize=7, color=MUTED,
                           markerfacecolor=MUTED if step == steps[0] else SURFACE, markeredgewidth=2,
                           label="%d commit%s apart" % (step, "" if step == 1 else "s")) for step in steps]
@@ -416,10 +443,10 @@ def forest(rows, out):
     fig.text(0.02, 1 - 0.45 / height, "Each row: tinydelta's patch divided by that tool's, over every pair. "
              "Below 1, tinydelta's patch is smaller.", ha="left", va="top", fontsize=9, color=MUTED)
     fig.tight_layout(rect=(0, 0, 1, 1 - 0.7 / height))
-    save(fig, out, "forest")
+    save(fig, out, name)
 
 
-KIND_MARKERS = ["o", "^", "s", "D"]
+KIND_MARKERS = ["o", "^", "s", "D", "v"]
 # The pair graph's tools: the VCDIFF reference, the closest
 # embedded alternative, and the strongest compressors on size.
 PAIR_TOOLS = ["openvcdiff", "hpatchlite_4k", "bsdiff", "zstd"]
@@ -459,7 +486,7 @@ def pair_scatter(rows, out, name):
     # Two legends: colour for the tool, marker for the kind of data.
     tool_handles = [plt.Line2D([], [], marker="o", linestyle="", markersize=6, color=color, label=label)
                     for _, label, color, _, _ in tools]
-    kind_handles = [plt.Line2D([], [], marker=marker, linestyle="", markersize=6, color=MUTED, label=kind)
+    kind_handles = [plt.Line2D([], [], marker=marker, linestyle="", markersize=6, color=MUTED, label=kind_label(rows, kind))
                     for kind, marker in zip(kinds, KIND_MARKERS)]
     first = ax.legend(handles=tool_handles, frameon=False, fontsize=9, loc="upper left", labelcolor=INK,
                       title="tool", title_fontsize=9, alignment="left")
@@ -545,7 +572,7 @@ def place_labels(fig, ax, points):
         placed.append(extent)
 
 
-def tradeoff(rows, out):
+def tradeoff(rows, out, name="tradeoff"):
     """Typical patch size against the decoder's footprint on the device:
     code plus the RAM buffers it needs, stack excluded (decoders.json).
     For a decoder that holds the whole old file, the median old file of that
@@ -588,7 +615,7 @@ def tradeoff(rows, out):
             lambda x, _: "%g MB" % (x / 1e6) if x >= 1e6 else "%g KB" % (x / 1e3) if x >= 1e3 else "%g B" % x))
         ax.xaxis.set_minor_formatter(ticker.NullFormatter())
         log_axis(ax.yaxis, "%")
-        ax.set_title("%s" % kind, fontsize=11, color=INK, loc="left")
+        ax.set_title(kind_label(rows, kind), fontsize=11, color=INK, loc="left")
         ax.set_xlabel("decoder footprint: code + RAM buffers, stack excluded (log scale)", fontsize=9, color=MUTED)
         ax.set_ylabel("median patch size, % of target (log scale)", fontsize=9, color=MUTED)
     height = fig.get_figheight()
@@ -597,7 +624,7 @@ def tradeoff(rows, out):
     fig.text(0.02, 1 - 0.45 / height, "Lower left is better. Arrows are lower bounds: code size unknown, "
              "or the whole old file in RAM.", ha="left", va="top", fontsize=9, color=MUTED)
     fig.tight_layout(rect=(0, 0, 1, 1 - 0.7 / height))
-    save(fig, out, "tradeoff")
+    save(fig, out, name)
 
 
 def main():
@@ -609,10 +636,10 @@ def main():
     if not rows:
         sys.exit("plot: no rows in %s" % results)
     summary(rows, os.path.splitext(results)[0] + "-tools.json", out)
-    forest(rows, out)
-    # tinydelta against the closest embedded alternative.
-    pair_scatter(rows, out, "pairs")
-    tradeoff(rows, out)
+    for suffix, sel in groups(rows):
+        forest(sel, out, "forest" + suffix)
+        pair_scatter(sel, out, "pairs" + suffix)
+        tradeoff(sel, out, "tradeoff" + suffix)
     ratio_ecdf(rows, out)
     patch_share(rows, out)
 

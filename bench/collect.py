@@ -16,6 +16,10 @@ output differs from the previous one, up to max_versions per item:
 
 Commits that fail to build are logged and skipped. Needs git; for
 MicroPython arm-none-eabi-gcc and make; for device trees cpp and dtc.
+
+A corpus's "collector" says how its items are built (micropython, dtb or
+file; default: the corpus's name). Corpora from the same repository share
+one clone.
 """
 
 import hashlib
@@ -28,20 +32,30 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 JOBS = str(os.cpu_count() or 2)
 
-# Paths whose changes can change a MicroPython stm32 build.
-MICROPYTHON_PATHS = ["py", "extmod", "shared", "drivers", "lib", "ports/stm32", "mpy-cross"]
+# Paths whose changes can change a MicroPython build, besides the port's
+# own directory.
+MICROPYTHON_PATHS = ["py", "extmod", "shared", "drivers", "lib", "mpy-cross"]
 
 
 def git(src, *args, capture=True):
-    result = subprocess.run(["git", "-C", src] + list(args), check=True, text=True,
+    result = subprocess.run(["git", "-c", "gc.auto=0", "-C", src] + list(args), check=True, text=True,
                             stdout=subprocess.PIPE if capture else None)
     return result.stdout.strip() if capture else ""
 
 
-def clone(repo, src):
+def source_dir(cache, spec):
+    """The clone of a corpus's repository, shared by corpora from the same one."""
+    return os.path.join(cache, "src", spec["repo"].rstrip("/").split("/")[-1].removesuffix(".git"))
+
+
+def clone(spec, src):
+    """Clones without file contents (fetched as needed). With shallow_since,
+    only the history from that date on: enough for a range that starts
+    after it, and much smaller for a repository as large as Linux."""
+    shallow = ["--shallow-since=" + spec["shallow_since"]] if "shallow_since" in spec else []
     if not os.path.isdir(os.path.join(src, ".git")):
-        subprocess.run(["git", "clone", "-q", "--filter=blob:none", "--no-checkout", repo, src], check=True)
-    git(src, "fetch", "-q", "--tags", "origin")
+        subprocess.run(["git", "clone", "-q", "--filter=blob:none", "--no-checkout"] + shallow + [spec["repo"], src], check=True)
+    git(src, "fetch", "-q", "--tags", *shallow, "origin")
 
 
 def commits_touching(src, first, last, paths, first_parent=True):
@@ -118,11 +132,12 @@ def run(cmd, cwd, log, env=None):
 
 
 def collect_micropython(cache, name, spec):
-    src = os.path.join(cache, "src", name)
-    clone(spec["repo"], src)
+    src = source_dir(cache, spec)
+    clone(spec, src)
     items = [(Item(cache, name, it["name"], spec["max_versions"]), it) for it in spec["items"]]
     log = os.path.join(cache, "build-%s.log" % name)
-    commits = commits_touching(src, spec["from"], spec["to"], MICROPYTHON_PATHS)
+    ports = sorted({"ports/" + it["port"] for it in spec["items"]})
+    commits = commits_touching(src, spec["from"], spec["to"], MICROPYTHON_PATHS + ports)
     # The firmware embeds its version (git describe) and build date in its
     # banner. Both are fixed to the range's start, so a commit that leaves
     # the compiled code unchanged gives an identical image and is skipped,
@@ -166,8 +181,8 @@ def collect_micropython(cache, name, spec):
 
 
 def collect_dtb(cache, name, spec):
-    src = os.path.join(cache, "src", name)
-    clone(spec["repo"], src)
+    src = source_dir(cache, spec)
+    clone(spec, src)
     log = os.path.join(cache, "build-%s.log" % name)
     items = []
     for it in spec["items"]:
@@ -205,6 +220,31 @@ def collect_dtb(cache, name, spec):
     return items
 
 
+def collect_file(cache, name, spec):
+    """Items that are a file in the repository as it is, without a build
+    (configuration files): its content at every commit that changes it."""
+    src = source_dir(cache, spec)
+    clone(spec, src)
+    items = []
+    for it in spec["items"]:
+        item = Item(cache, name, it["name"], spec["max_versions"])
+        items.append(item)
+        commits = commits_touching(src, spec["from"], spec["to"], [it["path"]], first_parent=False)
+        item.keep_only(commits)
+        for index, commit in enumerate(commits):
+            if item.full():
+                break
+            if not item.pending(index, commit):
+                continue
+            show = subprocess.run(["git", "-C", src, "show", "%s:%s" % (commit, it["path"])], capture_output=True)
+            if show.returncode != 0:
+                item.skipped.append(commit)  # removed or renamed at this commit
+                continue
+            item.add(commit, show.stdout)
+        print("%s %s: %d versions" % (name, item.name, len(item.versions)), flush=True)
+    return items
+
+
 def annotate(level, title, text):
     """Prints a GitHub Actions annotation (harmless elsewhere)."""
     print("::%s title=%s::%s" % (level, title, text.replace("%", "%25").replace("\n", "%0A")), flush=True)
@@ -220,11 +260,11 @@ def tail(path, lines=40):
 def main():
     cache = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, ".cache"))
     corpus = json.load(open(os.environ.get("BENCH_CORPUS", os.path.join(HERE, "corpus.json"))))
-    collectors = {"micropython": collect_micropython, "dtb": collect_dtb}
+    collectors = {"micropython": collect_micropython, "dtb": collect_dtb, "file": collect_file}
+    names = [n for n in corpus if isinstance(corpus[n], dict)]
     report, failed = [], []
-    for name, collector in collectors.items():
-        if name not in corpus:
-            continue
+    for name in names:
+        collector = collectors[corpus[name].get("collector", name)]
         for item in collector(cache, name, corpus[name]):
             report.append("%s/%s: %d versions, %d commits skipped (did not build)%s" % (
                 name, item.name, len(item.versions), len(item.skipped),
@@ -237,7 +277,7 @@ def main():
         annotate("warning", "Left out: %s/%s" % (name, item.name),
                  "%d version(s) in the commit range, too few to compare. Build log (end):\n%s"
                  % (len(item.versions), tail(os.path.join(cache, "build-%s.log" % name))))
-    if len(failed) == sum(len(corpus[n]["items"]) for n in collectors if n in corpus):
+    if len(failed) == sum(len(corpus[n]["items"]) for n in names):
         sys.exit("collect: no item has two versions to compare")
 
 

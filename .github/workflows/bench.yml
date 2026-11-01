@@ -3,9 +3,9 @@
 
 name: Benchmark
 
-# Compares tinydelta's patch sizes with open-vcdiff, xdelta3 and bsdiff on
-# real version pairs: consecutive commits of MicroPython firmware and of
-# Linux device trees (bench/corpus.json). Run it by hand under Actions >
+# Compares tinydelta's patch sizes with other delta tools on real version
+# pairs: consecutive commits of MicroPython firmware, Linux device trees
+# and Linux kernel configuration files (bench/corpus.json). Run it by hand under Actions >
 # Benchmark > Run workflow. Results (CSV, summary, graphs, and the exact
 # commits and hashes of every input) are attached to the run and shown in
 # the job summary, and committed: by a manual run to the bench-results
@@ -79,7 +79,7 @@ jobs:
           restore-keys: |
             bench-builds-v4-${{ hashFiles('bench/corpus.json') }}-
             bench-builds-v4-
-      - name: Build the corpus (MicroPython firmware, device trees)
+      - name: Build the corpus (MicroPython firmware, device trees, config files)
         run: python3 bench/collect.py bench/.cache
       - name: Cache the builds
         if: always()

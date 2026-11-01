@@ -1,5 +1,49 @@
 {
-  "_comment": "Benchmark corpus: which versions to build and compare. Every corpus walks consecutive commits in a fixed range of a public repository, so the inputs are reproducible from this file alone. See bench/README.md.",
+  "_comment": "Benchmark corpus: which versions to build and compare. Every corpus walks consecutive commits in a fixed range of a public repository, so the inputs are reproducible from this file alone. collector says how items are built (default: the corpus's name). See bench/README.md.",
+  "micropython_samd": {
+    "kind": "small firmware",
+    "collector": "micropython",
+    "repo": "https://github.com/micropython/micropython",
+    "from": "v1.25.0",
+    "to": "v1.26.0",
+    "max_versions": 25,
+    "items": [
+      {"name": "samd-ADAFRUIT_TRINKET_M0", "port": "samd", "board": "ADAFRUIT_TRINKET_M0"},
+      {"name": "samd-SEEED_XIAO_SAMD21", "port": "samd", "board": "SEEED_XIAO_SAMD21"}
+    ]
+  },
+  "defconfig": {
+    "kind": "config file",
+    "collector": "file",
+    "repo": "https://github.com/torvalds/linux",
+    "shallow_since": "2019-03-01",
+    "from": "v5.0",
+    "to": "v7.3",
+    "max_versions": 25,
+    "items": [
+      {"name": "shmobile_defconfig", "path": "arch/arm/configs/shmobile_defconfig"},
+      {"name": "at91_dt_defconfig", "path": "arch/arm/configs/at91_dt_defconfig"},
+      {"name": "sunxi_defconfig", "path": "arch/arm/configs/sunxi_defconfig"},
+      {"name": "lpc32xx_defconfig", "path": "arch/arm/configs/lpc32xx_defconfig"},
+      {"name": "u8500_defconfig", "path": "arch/arm/configs/u8500_defconfig"},
+      {"name": "bcm2835_defconfig", "path": "arch/arm/configs/bcm2835_defconfig"}
+    ]
+  },
+  "dtb_mcu": {
+    "kind": "small device tree",
+    "collector": "dtb",
+    "repo": "https://git.kernel.org/pub/scm/linux/kernel/git/devicetree/devicetree-rebasing.git",
+    "from": "v6.5-dts",
+    "to": "v7.3-dts",
+    "max_versions": 25,
+    "items": [
+      {"name": "stm32f746-disco", "dts": "src/arm/st/stm32f746-disco.dts"},
+      {"name": "stm32f769-disco", "dts": "src/arm/st/stm32f769-disco.dts"},
+      {"name": "stm32h743i-disco", "dts": "src/arm/st/stm32h743i-disco.dts"},
+      {"name": "stm32h750i-art-pi", "dts": "src/arm/st/stm32h750i-art-pi.dts"},
+      {"name": "lpc4357-ea4357-devkit", "dts": "src/arm/nxp/lpc/lpc4357-ea4357-devkit.dts"}
+    ]
+  },
   "micropython": {
     "kind": "firmware",
     "repo": "https://github.com/micropython/micropython",
