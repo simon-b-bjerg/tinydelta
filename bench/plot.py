@@ -27,10 +27,12 @@ Writes to <output dir>:
     patch_share_<kind>.svg each tool's patch size as a share of the target,
                       one graph per kind of data
 Each graph is also written as a PNG for slides. Every comparison uses one
-baseline, "tinydelta": per pair, the smaller of tinydelta's plain patch
-(the optimal encoder's, when measured) and its compression-mode patch,
-the one an update server would send. Both are listed on their own in
-the patch-size tables.
+baseline, "tinydelta": the coded patch with 777 B of coder tables (the
+smaller of the plain patch and the coded ones that fit, as the encoder
+sends it), when measured; else the smaller of the plain patch (the
+optimal encoder's, when measured) and the two-pass one. The trade-off
+graph shows both, each with its decoder's footprint; every variant is
+listed on its own in the patch-size tables.
 Needs matplotlib.
 """
 
@@ -74,21 +76,23 @@ OTHERS = [
     ("zstd", "zstd --patch-from", "#e34948", ":", True),
 ]
 SURFACE, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#6b6a64", "#e4e3de"
-# The one tinydelta every comparison uses: per pair, the smaller of the
-# plain patch and compression mode decoded twice (a column load() adds).
+# tinydelta without the coder: per pair, the smaller of the plain patch
+# and the two-pass one (a column load() adds).
 BEST = "tinydelta_best"
 CZ = "tinydelta_cz_twice"
+# tinydelta with the coder, the one every comparison uses when measured.
+CODED = "tinydelta_coded_b"
 # tinydelta's variants, the comparison's first; the others appear in the
 # patch-size tables.
 TINY_VARIANTS = [
-    (BEST, "tinydelta", INK),
+    (CODED, "tinydelta, coded, 777 B tables", INK),
+    (BEST, "tinydelta, plain or two-pass", "#8a8983"),
     ("tinydelta_optimal", "tinydelta, plain (optimal)", "#8a8983"),
     ("tinydelta", "tinydelta, plain", "#8a8983"),
     ("tinydelta_greedy", "tinydelta, plain (greedy)", "#8a8983"),
-    (CZ, "tinydelta, compression mode, decoded twice", "#8a8983"),
-    ("tinydelta_cz_twice_1k", "tinydelta, compression mode, decoded twice, 1 KB window", "#8a8983"),
+    (CZ, "tinydelta, two-pass", "#8a8983"),
+    ("tinydelta_cz_twice_1k", "tinydelta, two-pass, 1 KB window", "#8a8983"),
     ("tinydelta_coded_c", "tinydelta, coded, 522 B tables", "#8a8983"),
-    ("tinydelta_coded_b", "tinydelta, coded, 777 B tables", "#8a8983"),
     ("tinydelta_coded_a", "tinydelta, coded, 1287 B tables", "#8a8983"),
     ("tinydelta_window_256", "tinydelta, plain, copies at most 256 B back", "#8a8983"),
     ("tinydelta_window_1k", "tinydelta, plain, copies at most 1 KB back", "#8a8983"),
@@ -153,8 +157,14 @@ def plain_key(rows):
 
 
 def tiny_key(rows):
-    """The tinydelta column the comparisons use: the smaller of plain and
-    compression mode when both are measured, else plain."""
+    """The tinydelta column the comparisons use: coded when measured, else
+    the smaller of plain and two-pass when both are, else plain."""
+    return CODED if CODED in rows[0] else uncoded_key(rows)
+
+
+def uncoded_key(rows):
+    """tinydelta without the coder: the smaller of plain and two-pass when
+    both are measured, else plain."""
     return BEST if BEST in rows[0] else plain_key(rows)
 
 
@@ -208,8 +218,12 @@ def summary(rows, tools_file, out):
         lines += ["Tools: " + "; ".join("%s (%s)" % (k, v) for k, v in versions.items()), ""]
     tiny = tiny_key(rows)
     plain = "the optimal encoder at any size" if plain_key(rows) == "tinydelta_optimal" else "the library default"
-    if tiny == BEST:
-        what = ("tinydelta is, per pair, the smaller of its plain patch (%s) and its compression-mode "
+    if tiny == CODED:
+        what = ("tinydelta is its coded patch with 777 B of coder tables: per pair, the smaller of the "
+                "plain patch and the coded ones that fit, as the encoder sends it. Every variant is "
+                "listed on its own in the patch-size tables.")
+    elif tiny == BEST:
+        what = ("tinydelta is, per pair, the smaller of its plain patch (%s) and its two-pass "
                 "patch, the one an update server would send. Both are listed on their own in the "
                 "patch-size tables." % plain)
     else:
@@ -228,8 +242,8 @@ def summary(rows, tools_file, out):
                       "%d pairs from %s; median target %s bytes." % (
                           len(sel), ", ".join(items), "{:,}".format(int(statistics.median(r["target_bytes"] for r in sel)))),
                       ""]
-            if tiny == BEST:
-                lines += ["Compression mode is the smaller in %d%% of these pairs." % round(
+            if BEST in sel[0]:
+                lines += ["Two-pass is the smaller in %d%% of these pairs." % round(
                     100 * sum(r[CZ] < r[plain_key(rows)] for r in sel) / len(sel)), ""]
             lines += [
                       "| tinydelta vs | geo. mean | median | p10-p90 | tinydelta smaller |",
@@ -584,9 +598,10 @@ def tradeoff(rows, out):
     colors = {k: c for k, _, c, _, _ in OTHERS}
     colors["openvcdiff_interleaved"] = colors["openvcdiff"]  # tiny-vcdiff: the same format family
     colors.update({k: c for k, _, c in TINY_VARIANTS})
-    # decoders.json's "tinydelta" stands for whichever tinydelta column the
-    # comparisons use (optimal, when measured).
-    column = {k: (tiny_key(rows) if k == "tinydelta" else k) for k in decoders}
+    # decoders.json's "tinydelta" is the decoder without the coder, for the
+    # smaller of plain and two-pass (plain optimal, when measured);
+    # "tinydelta_coded" the one with it, for the coded patches.
+    column = {k: {"tinydelta": uncoded_key(rows), "tinydelta_coded": CODED}.get(k, k) for k in decoders}
     # HPatchLite's 32 KB dictionary is left out to keep the graph readable
     # (it is close to the 4 KB one); it is in the summary.
     tools = [k for k in decoders if column[k] in rows[0] and k != "hpatchlite_32k"]

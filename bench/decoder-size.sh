@@ -41,6 +41,10 @@ tuz_dec="$(find_one "$hpl" tuz_dec.c)"
 echo "| decoder | code (.text, Cortex-M0, -Os) | largest stack frames |"
 echo "|---|---:|---|"
 measure tinydelta-callback c/tinydelta_io.c
+(
+  FLAGS+=(-DTINYDELTA_CODER=1)
+  measure tinydelta-coded-callback c/tinydelta_io.c c/tinydelta_coder.c
+)
 if [ -n "$hpatch_lite" ] && [ -n "$tuz_dec" ]; then
   measure hpatchlite "$hpatch_lite" "$tuz_dec"
   measure hpatchlite-patch-only "$hpatch_lite"
