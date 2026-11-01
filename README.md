@@ -38,8 +38,8 @@ no compression library.
 - **Optimizing encoder.** Dynamic programming over exact instruction
   costs, never worse than the built-in greedy encoder, which is
   available when speed matters more.
-- **Tiny C decoder.** 472 bytes of code on Cortex-M0 when everything is
-  in RAM; 876 bytes when the data lives on external flash behind your
+- **Tiny C decoder.** 504 bytes of code on Cortex-M0 when everything is
+  in RAM; 908 bytes when the data lives on external flash behind your
   own read/write functions, with one small buffer of yours (it can be a
   local array) as flash page cache and recent history.
 - **No dynamic allocation, no static RAM.** The C decoders never call
@@ -96,8 +96,8 @@ What that compression costs on the device:
 
 | decoder | code (Cortex-M0, `-Os`) | RAM besides stack | stack |
 |---|---:|---:|---:|
-| **tinydelta**, memory decoder | **472 B** | **0** | 72 B |
-| **tinydelta**, callback decoder | **876 B** | **256 B** buffer\* | ~175 B |
+| **tinydelta**, memory decoder | **504 B** | **0** | 128 B |
+| **tinydelta**, callback decoder | **908 B** | **256 B** buffer\* | ~185 B |
 | HPatchLite + tinyuz | ~2.2 KB | 4–32 KB dictionary | – |
 | detools + heatshrink | 1,948 B | 0 | ~1.6 KB |
 | tiny-vcdiff (open-vcdiff's format) | 3,881 B | 3,221 B | ~150 B |
@@ -454,8 +454,8 @@ even on Cortex-M0). Reproduce with [`scripts/c-size.sh`](scripts/c-size.sh).
 
 | part | Cortex-M0 | Cortex-M3 | Cortex-M4 | stack (Cortex-M0) |
 |---|---:|---:|---:|---:|
-| memory decoder | 472 B | 450 B | 452 B | 72 B |
-| callback decoder | 876 B | 874 B | 876 B | ~175 B\* |
+| memory decoder | 504 B | 502 B | 504 B | 128 B |
+| callback decoder | 908 B | 898 B | 900 B | ~185 B\* |
 
 \* Deepest path, excluding your buffer and your callbacks' own stack
 use.
@@ -467,8 +467,8 @@ every 32-bit operation takes several 16-bit instructions.
 
 | part | MSP430 | MSP430X | MSP430X, `-mlarge` | stack (`-mlarge`) |
 |---|---:|---:|---:|---:|
-| memory decoder | 1,170 B | 1,138 B | 1,282 B | 114 B |
-| callback decoder | 2,494 B | 2,436 B | 2,580 B | ~220 B\* |
+| memory decoder | 1,216 B | 1,186 B | 1,274 B | 142 B |
+| callback decoder | 2,580 B | 2,522 B | 2,614 B | ~230 B\* |
 
 ### Results
 
