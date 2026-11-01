@@ -58,12 +58,12 @@ commits to `bench-results-preview`, replaced each time. The results:
 | `forest.svg` | per kind of data, tinydelta's patch size divided by that of open-vcdiff, xdelta3, HPatchLite (4 KB), detools, bsdiff and zstd (geometric mean, 10th-90th percentile), 1 and 5 commits apart |
 | `ratio_ecdf_<kind>.svg`, `patch_share_<kind>.svg` | the full distributions, one graph per kind of data (`firmware`, `configuration`, `large_configuration`): the size ratio, and patch size as a share of the target |
 | `tradeoff.svg` | each tool's median patch size against its decoder's footprint on the device: code plus RAM buffers, stack excluded |
-
-`pairs.svg`, `forest.svg` and `tradeoff.svg` show firmware and configuration; large configuration, larger than what tinydelta is made for, is in the summary and its own distribution graphs.
 | `summary.md` | the numbers behind the graphs, plus patch sizes in bytes |
 | `decoders.json`, `decoder-size.md` | the decoder costs behind the trade-off graph, with where each comes from, and this run's measurement of the decoders that build for Cortex-M0 |
 | `results.csv` | one row per pair, every tool's patch size |
 | `inputs/`, `corpus.json`, `results-tools.json` | the commit and SHA-256 of every build, the corpus and the tool versions |
+
+`pairs.svg`, `forest.svg` and `tradeoff.svg` show firmware and configuration; large configuration, larger than what tinydelta is made for, is in the summary and its own distribution graphs.
 
 Every graph is also a PNG, for slides. Every comparison has one baseline,
 "tinydelta" as defined above, as sent. Its footprint is the callback
