@@ -17,8 +17,10 @@ fixed commit range of a public repository ([`corpus.json`](corpus.json)):
 | configuration | Linux device trees as below, of microcontroller boards, 10–17 KB | stm32f746-disco, stm32f769-disco, stm32h743i-disco, stm32h750i-art-pi, lpc4357-ea4357-devkit | as for the device trees below, between `v6.5-dts` (where the 32-bit Arm trees moved into vendor directories) and `v7.3-dts` |
 | large configuration | Linux device trees ([devicetree-rebasing](https://git.kernel.org/pub/scm/linux/kernel/git/devicetree/devicetree-rebasing.git)), compiled to `.dtb` | rk3588-rock-5b, imx8mp-evk, k3-am625-sk, 47–107 KB | commits touching the board's vendor directory or `include/` between `v7.0-dts` and `v7.3-dts`, every non-merge commit in topological order (the kernel's main line brings device tree changes in a few large merges) |
 
-Up to 25 distinct builds per item: a commit that leaves the output
-unchanged is skipped, as is one that does not build. Pairs are 1 and 5
+Up to 25 distinct builds per item: a commit whose output equals any
+earlier build is skipped, as is one that does not build. (A walk through
+several branches meets the state of an older base again; counting it
+would pair a change with its own reversal, or a file with itself.) Pairs are 1 and 5
 builds apart. The commit and SHA-256 of every build are kept with the
 results, so the inputs can be rebuilt and checked.
 

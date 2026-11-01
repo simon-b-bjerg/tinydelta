@@ -87,7 +87,8 @@ class Item:
         mix into the new series."""
         position = {c: i for i, c in enumerate(commits)}
         order = [position.get(v["commit"], -1) for v in self.versions]
-        if -1 in order or order != sorted(order):
+        repeats = len({v["sha256"] for v in self.versions}) < len(self.versions)  # from before add() skipped them
+        if -1 in order or order != sorted(order) or repeats:
             print("%s: cached builds come from another commit list; rebuilding" % self.name, flush=True)
             for v in self.versions:
                 try:
@@ -112,8 +113,12 @@ class Item:
 
     def add(self, commit, data):
         digest = hashlib.sha256(data).hexdigest()
-        if self.versions and self.versions[-1]["sha256"] == digest:
-            return False  # unchanged by this commit
+        if any(v["sha256"] == digest for v in self.versions):
+            # Unchanged by this commit, or back to an earlier version: a walk
+            # through several branches (device trees, configs) meets the
+            # state of an older base again. It is not an update, and pairing
+            # it would count the same change twice, or an empty one.
+            return False
         name = "%02d-%s.bin" % (len(self.versions), commit[:12])
         with open(os.path.join(self.dir, name), "wb") as f:
             f.write(data)
