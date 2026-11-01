@@ -359,10 +359,10 @@ def forest_range(rows, tools, kinds, steps):
 
 
 # The forest graph's tools, in the README table's order: what a reader
-# would otherwise use. The rest (HPatchLite's 32 KB dictionary, detools,
-# open-vcdiff's patch zlib-compressed) is in the summary and the other
-# graphs.
-FOREST_TOOLS = ["openvcdiff", "xdelta3", "hpatchlite_4k", "bsdiff", "zstd"]
+# would otherwise use, the two embedded alternatives included. The rest
+# (HPatchLite's 32 KB dictionary, close to its 4 KB one, and open-vcdiff's
+# patch zlib-compressed) is in the summary and the other graphs.
+FOREST_TOOLS = ["openvcdiff", "xdelta3", "hpatchlite_4k", "detools", "bsdiff", "zstd"]
 
 
 def forest(rows, out):
@@ -433,9 +433,9 @@ def forest(rows, out):
 
 
 KIND_MARKERS = ["o", "^", "s", "D", "v"]
-# The pair graph's tools: the VCDIFF reference, the closest
-# embedded alternative, and the strongest compressors on size.
-PAIR_TOOLS = ["openvcdiff", "hpatchlite_4k", "bsdiff", "zstd"]
+# The pair graph's tools: the VCDIFF reference, the two embedded
+# alternatives, and the strongest compressors on size.
+PAIR_TOOLS = ["openvcdiff", "hpatchlite_4k", "detools", "bsdiff", "zstd"]
 
 
 def pair_scatter(rows, out, name):

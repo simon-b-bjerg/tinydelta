@@ -99,12 +99,14 @@ What that compression costs on the device:
 | **tinydelta**, memory decoder | **504 B** | **0** | 128 B |
 | **tinydelta**, callback decoder | **908 B** | **256 B** buffer\* | ~185 B |
 | HPatchLite + tinyuz | ~2.2 KB | 4–32 KB dictionary | – |
-| detools + heatshrink | 1,948 B | 0 | ~1.6 KB |
+| detools + heatshrink | 1,948 B | 640 B state† | ~0.5 KB |
 | tiny-vcdiff (open-vcdiff's format) | 3,881 B | 3,221 B | ~150 B |
 | bsdiff (bzip2) | – | 2.3–3.7 MB | – |
 
 \* One 256-byte flash page; any power of two works, and a small buffer
 can be a local array, on the stack.
+† Its decoder state, heatshrink's 256-byte window and input buffer
+included, which the caller provides, on the stack or static.
 
 What you give up:
 
@@ -137,8 +139,8 @@ against an empty dictionary) and the smaller counts; both are listed on
 their own in the summary, with how often each wins. The other tools run at their
 smallest settings: open-vcdiff with `-target_matches`, xdelta3 `-9 -S
 none`, HPatchLite `hdiffi -c-tuz-4k` (and `-32k`), detools with
-heatshrink, zstd `-19 --patch-from`. The overview graph shows the five
-tools in the table above; detools, HPatchLite with a 32 KB dictionary
+heatshrink, zstd `-19 --patch-from`. The overview graph shows the six
+tools in the table above; HPatchLite with a 32 KB dictionary
 and open-vcdiff's patch compressed afterwards with zlib at level 9 are
 in the [summary](docs/benchmark/summary.md). The trade-off graph places
 tiny-vcdiff with open-vcdiff's interleaved output, the variant it reads.
@@ -162,8 +164,10 @@ tinydelta's figures are from [`scripts/c-size.sh`](scripts/c-size.sh)
 1,567 B for the tinyuz decompressor, measured; its dictionary is set when
 the patch is created. detools and tiny-vcdiff: measured on a 230 KB
 MicroPython image with each decoder linked into a small test program, with
-`--gc-sections`; detools at its default heatshrink settings (larger windows
-need more RAM). bsdiff: bzip2's own figures for 900 KB blocks; bspatch also
+`--gc-sections`; detools as a sequential patch with heatshrink only, at
+its default settings (larger windows need more RAM): its 640-byte state
+struct counts as RAM, and its `detools_apply_patch_callbacks` wrapper
+adds a 512-byte read buffer. bsdiff: bzip2's own figures for 900 KB blocks; bspatch also
 holds the old and new file in memory. Every figure and its source is in
 [`bench/decoders.json`](bench/decoders.json).
 
