@@ -1206,10 +1206,12 @@ Issues and pull requests are welcome. Please keep `go test ./...`,
 `gofmt`-formatted and C code formatted with `scripts/c-format.sh --fix`
 (see [C coding rules](#c-coding-rules)). A change to the
 wire format must update this README, both Go encoders, the Go decoder
-and both C decoders together, with tests. New files need an SPDX header
+and both C decoders together, with tests. <!-- REUSE-IgnoreStart -->
+New files need an SPDX header
 (`SPDX-FileCopyrightText: 2026 Simon Bjerg` and
 `SPDX-License-Identifier: MIT`), or an entry in
 [`REUSE.toml`](REUSE.toml) if they can't hold a comment.
+<!-- REUSE-IgnoreEnd -->
 
 ## License
 
