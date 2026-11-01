@@ -66,10 +66,9 @@ typedef struct {
     uint8_t states[1287];
 } ref_source;
 
-static const uint16_t ref_lps[63] = {2048, 1944, 1845, 1752, 1663, 1578, 1498, 1422, 1350, 1281, 1216, 1154, 1096, 1040, 987, 937,
-                                     890,  844,  802,  761,  722,  685,  651,  618,  586,  557,  528,  501,  476,  452,  429, 407,
-                                     386,  367,  348,  330,  314,  298,  283,  268,  255,  242,  229,  218,  207,  196,  186, 177,
-                                     168,  159,  151,  144,  136,  129,  123,  117,  111,  105,  100,  95,   90,   85,   81};
+static const uint16_t ref_lps[63]     = {2048, 1944, 1845, 1752, 1663, 1578, 1498, 1422, 1350, 1281, 1216, 1154, 1096, 1040, 987, 937, 890, 844, 802, 761, 722,
+                                         685,  651,  618,  586,  557,  528,  501,  476,  452,  429,  407,  386,  367,  348,  330, 314, 298, 283, 268, 255, 242,
+                                         229,  218,  207,  196,  186,  177,  168,  159,  151,  144,  136,  129,  123,  117,  111, 105, 100, 95,  90,  85,  81};
 static const uint8_t ref_next_lps[63] = {0,  0,  1,  2,  3,  4,  4,  5,  6,  7,  8,  9,  10, 10, 11, 12, 13, 14, 14, 15, 16,
                                          17, 17, 18, 19, 20, 20, 21, 22, 22, 23, 24, 24, 25, 26, 26, 27, 27, 28, 29, 29, 30,
                                          30, 31, 31, 32, 32, 33, 33, 33, 34, 34, 35, 35, 35, 36, 36, 36, 37, 37, 37, 38, 38};
@@ -130,7 +129,13 @@ static int ref_tree(ref_source *s, int base, int hi, int lo, int *value) {
     return 0;
 }
 
-enum { F_LITERAL, F_DIFF, F_DELTA, F_CONTINUED, F_INSTRUCTION };
+enum {
+    F_LITERAL,
+    F_DIFF,
+    F_DELTA,
+    F_CONTINUED,
+    F_INSTRUCTION
+};
 
 /* The next instruction-stream byte, a field of kind field. */
 static int ref_byte(ref_source *s, int field, uint8_t *byte) {
@@ -408,7 +413,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         source patch_src = {patch, patch_len}, dict_src = {dict, dict_len};
         /* A coded patch's tables go first, then the ring. */
         static const uint32_t table_sizes[4] = {0u, TINYDELTA_CODED_TABLES_C, TINYDELTA_CODED_TABLES_B, TINYDELTA_CODED_TABLES_A};
-        uint32_t tables_size = table_sizes[ref_layout(patch, patch_len)];
+        uint32_t tables_size                 = table_sizes[ref_layout(patch, patch_len)];
         uint8_t buffer[TINYDELTA_CODED_TABLES_A + 128];
         tinydelta_io_t io = {
             .patch_read   = source_read,
