@@ -15,6 +15,7 @@ Writes to <output dir>:
     forest.svg        the headline: per kind of data and tool, the geometric
                       mean of tinydelta's patch size divided by the tool's,
                       with its 10th-90th percentile range, for each step
+    (forest, pairs and tradeoff leave out SECONDARY_KINDS)
     pairs.svg         every pair, one panel per kind of data: tinydelta's patch
                       size against open-vcdiff's, HPatchLite's (4 KB),
                       detools', bsdiff's and zstd's
@@ -120,6 +121,10 @@ def geomean(values):
 # The kinds of data, in the order the graphs show them; others after, by
 # name. Each kind's title gives the size of its files.
 KIND_ORDER = ["firmware", "configuration", "large configuration"]
+# Kinds left out of the headline graphs (forest, pairs, tradeoff): larger
+# than what tinydelta is made for. They stay in the summary and in their
+# own distribution graphs.
+SECONDARY_KINDS = ["large configuration"]
 
 
 def kinds_of(rows):
@@ -629,9 +634,10 @@ def main():
     if not rows:
         sys.exit("plot: no rows in %s" % results)
     summary(rows, os.path.splitext(results)[0] + "-tools.json", out)
-    forest(rows, out)
-    pair_scatter(rows, out, "pairs")
-    tradeoff(rows, out)
+    primary = [r for r in rows if r["kind"] not in SECONDARY_KINDS] or rows
+    forest(primary, out)
+    pair_scatter(primary, out, "pairs")
+    tradeoff(primary, out)
     ratio_ecdf(rows, out)
     patch_share(rows, out)
 

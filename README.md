@@ -62,41 +62,45 @@ no compression library.
 
 ## Benchmark
 
-530 real version pairs, one and five commits apart, against six other
+492 real version pairs, one and five commits apart, against six other
 delta tools: firmware (MicroPython builds for four Cortex-M boards,
-185–364 KB), configuration (Linux kernel configuration files and
-microcontroller device trees, 3–20 KB) and, for comparison, larger
-configuration (arm64 device trees, 47–107 KB). Every patch was decoded
-again and checked against the target.
+185–364 KB) and configuration (Linux kernel configuration files and
+microcontroller device trees, 3–20 KB). Every patch was decoded again
+and checked against the target.
 For each update, tinydelta's figure is the smaller of its plain patch
 and its [compression-mode](#compression-mode) patch, the one an update
 server would send.
 
-![tinydelta's patch size compared with other tools](docs/benchmark/forest.svg)
+![Every pair: tinydelta against open-vcdiff, HPatchLite, detools, bsdiff and zstd](docs/benchmark/pairs.svg)
 
 Typical ratio of tinydelta's patch to the other tool's (geometric mean;
 below 1, tinydelta's is smaller) and how often tinydelta's is smaller:
 
-| compared with | configuration, 3–20 KB (316 pairs) | firmware, 185–364 KB (176 pairs) | larger configuration, 47–107 KB (38 pairs) |
-|---|---|---|---|
-| open-vcdiff | **0.37**, smaller in 100% | **0.18**, smaller in 100% | **0.21**, smaller in 100% |
-| xdelta3 | 0.34, smaller in 100% | 0.33, smaller in 100% | 0.36, smaller in 100% |
-| HPatchLite, 4 KB dictionary | **0.65**, smaller in 87% | 1.10, smaller in 12% | 0.88, smaller in 34% |
-| detools (heatshrink) | 0.26, smaller in 100% | 0.63, smaller in 75% | 0.25, smaller in 100% |
-| bsdiff | **0.21**, smaller in 99% | 1.31, smaller in 8% | 0.63, smaller in 32% |
-| zstd `--patch-from` | 0.65, smaller in 81% | 0.78, smaller in 93% | 0.80, smaller in 68% |
+| compared with | configuration, 3–20 KB (316 pairs) | firmware, 185–364 KB (176 pairs) |
+|---|---|---|
+| open-vcdiff | **0.37**, smaller in 100% | **0.18**, smaller in 100% |
+| xdelta3 | 0.34, smaller in 100% | 0.33, smaller in 100% |
+| HPatchLite, 4 KB dictionary | **0.65**, smaller in 87% | 1.10, smaller in 12% |
+| detools (heatshrink) | 0.26, smaller in 100% | 0.63, smaller in 75% |
+| bsdiff | **0.21**, smaller in 99% | 1.31, smaller in 8% |
+| zstd `--patch-from` | 0.65, smaller in 81% | 0.78, smaller in 93% |
 
 tinydelta's patch is smaller than the VCDIFF tools' in every pair.
 Against the tools that compress their patches it depends on the size of
-the change: when tinydelta's patch is under 1 KB (337 pairs, nearly all
-configuration updates), it is the smaller one in 88% of them against
+the change: when tinydelta's patch is under 1 KB (324 pairs, nearly all
+configuration updates), it is the smaller one in 89% of them against
 HPatchLite and in 99% against bsdiff, typically 0.63× and 0.20× their
-size; at 1 KB and above (193 pairs, mostly firmware), HPatchLite's and
-bsdiff's are smaller in nearly all of them, with tinydelta's typically
-16% and 44% larger. A typical configuration update is 56 bytes; a
-typical firmware update about 9 KB, 4% of the image.
+size; at 1 KB and above (168 pairs, nearly all firmware), HPatchLite's
+and bsdiff's are smaller in nearly all of them, with tinydelta's
+typically 17% and 49% larger. A typical configuration update is 56
+bytes; a typical firmware update about 9 KB, 4% of the image.
 
-![Every pair: tinydelta against open-vcdiff, HPatchLite, detools, bsdiff and zstd](docs/benchmark/pairs.svg)
+Larger configuration files (arm64 device trees, 47–107 KB, 38 pairs)
+are left out of the graphs above: HPatchLite and bsdiff catch up as the
+files grow (0.88 and 0.63), and their patches are the smaller ones when
+versions are five commits apart. Their numbers and
+[graph](docs/benchmark/ratio_ecdf_large_configuration.svg) are with the
+[summary](docs/benchmark/summary.md).
 
 What that compression costs on the device:
 
@@ -152,7 +156,7 @@ against an empty dictionary) and the smaller counts; both are listed on
 their own in the summary, with how often each wins. The other tools run at their
 smallest settings: open-vcdiff with `-target_matches`, xdelta3 `-9 -S
 none`, HPatchLite `hdiffi -c-tuz-4k` (and `-32k`), detools with
-heatshrink, zstd `-19 --patch-from`. The overview graph shows the six
+heatshrink, zstd `-19 --patch-from`. The graphs show the six
 tools in the table above; HPatchLite with a 32 KB dictionary
 and open-vcdiff's patch compressed afterwards with zlib at level 9 are
 in the [summary](docs/benchmark/summary.md). The trade-off graph places
