@@ -7,13 +7,11 @@
 #include "tinydelta_internal.h"
 
 /* The callback decoder's state while it runs. The target position counts
- * every byte produced; the ring (the client's buffer, after a coded
- * patch's tables) holds the last ring_mask + 1 of them, at position &
- * ring_mask. */
+ * every byte produced; the buffer holds the last buffer_size of them, at
+ * position & buffer_mask. */
 typedef struct {
     const tinydelta_io_t *p_io;
-    uint8_t *p_ring;
-    uint32_t ring_mask;   /* ring size - 1 */
+    uint32_t buffer_mask; /* buffer_size - 1 */
     uint32_t page_mask;   /* page_size - 1 */
     uint32_t patch_pos;   /* next patch byte to read */
     uint32_t target_pos;  /* target bytes produced so far */
@@ -101,7 +99,7 @@ static tinydelta_result_t io_read_varint(io_decoder_t *p_decoder, tinydelta_fiel
 
 /* Where the next target byte goes in the ring. */
 static uint8_t *write_position(const io_decoder_t *p_decoder) {
-    return p_decoder->p_ring + (p_decoder->target_pos & p_decoder->ring_mask);
+    return p_decoder->p_io->p_buffer + (p_decoder->target_pos & p_decoder->buffer_mask);
 }
 
 /* How many of up to length bytes fit before the current page ends. */
@@ -114,7 +112,7 @@ static uint32_t page_room(const io_decoder_t *p_decoder, uint32_t length) {
 static tinydelta_result_t write_page(io_decoder_t *p_decoder) {
     const tinydelta_io_t *p_io = p_decoder->p_io;
     uint32_t length            = p_decoder->target_pos - p_decoder->written_len;
-    const uint8_t *p_page      = p_decoder->p_ring + (p_decoder->written_len & p_decoder->ring_mask);
+    const uint8_t *p_page      = p_decoder->p_io->p_buffer + (p_decoder->written_len & p_decoder->buffer_mask);
 
     if (length == 0u) {
         return TINYDELTA_OK;
@@ -207,15 +205,15 @@ static tinydelta_result_t io_decode_skip(io_decoder_t *p_decoder, uint32_t lengt
 /* COPY_TARGET within the ring: byte by byte, so a source overlapping the
  * bytes being written (a short repeating run) works. */
 static tinydelta_result_t copy_in_ring(io_decoder_t *p_decoder, uint32_t distance, uint32_t length) {
-    uint8_t *p_ring = p_decoder->p_ring;
+    uint8_t *p_ring = p_decoder->p_io->p_buffer;
 
     while (length > 0u) {
         uint32_t chunk = page_room(p_decoder, length);
         tinydelta_result_t result;
 
         for (uint32_t offset = 0u; offset < chunk; offset++) {
-            uint32_t position                       = p_decoder->target_pos + offset;
-            p_ring[position & p_decoder->ring_mask] = p_ring[(position - distance) & p_decoder->ring_mask];
+            uint32_t position                         = p_decoder->target_pos + offset;
+            p_ring[position & p_decoder->buffer_mask] = p_ring[(position - distance) & p_decoder->buffer_mask];
         }
         result = produced(p_decoder, chunk);
         if (result != TINYDELTA_OK) {
@@ -244,7 +242,7 @@ static tinydelta_result_t io_decode_copy_target(io_decoder_t *p_decoder, uint32_
         return TINYDELTA_ERR_MALFORMED; /* must be earlier output */
     }
     distance = p_decoder->target_pos - address;
-    if (distance <= (p_decoder->ring_mask + 1u)) {
+    if (distance <= (p_decoder->buffer_mask + 1u)) {
         return copy_in_ring(p_decoder, distance, length);
     }
     if (p_io->target_read == NULL) {
@@ -274,21 +272,22 @@ static bool is_power_of_two(uint32_t value) {
 
 #if TINYDELTA_CODER
 /* Reads a coded patch's header (the first byte's flag already seen) and
- * starts the coder with its tables at the front of the buffer:
- * *p_tables_size becomes their size, *p_version the instruction set's. */
-static tinydelta_result_t io_start_coded(io_decoder_t *p_decoder, uint32_t *p_tables_size, uint8_t *p_version) {
+ * starts the coder with its tables in p_tables: *p_version becomes the
+ * instruction set's version. */
+static tinydelta_result_t io_start_coded(io_decoder_t *p_decoder, uint8_t *p_version) {
     const tinydelta_io_t *p_io = p_decoder->p_io;
     uint8_t features;
     uint8_t layout;
+    uint32_t needed;
     tinydelta_result_t result = io_raw_byte(p_decoder, &features);
 
     if (result != TINYDELTA_OK) {
         return result;
     }
-    layout         = features & TINYDELTA_CODED_LAYOUT_MASK;
-    *p_tables_size = tinydelta_coder_tables_size(layout);
-    if (((features & ~TINYDELTA_CODED_LAYOUT_MASK) != 0u) || (*p_tables_size == 0u) || (p_io->buffer_size <= *p_tables_size)) {
-        return TINYDELTA_ERR_VERSION; /* a feature this build or buffer lacks */
+    layout = features & TINYDELTA_CODED_LAYOUT_MASK;
+    needed = tinydelta_coder_tables_size(layout);
+    if (((features & ~TINYDELTA_CODED_LAYOUT_MASK) != 0u) || (needed == 0u) || (p_io->p_tables == NULL) || (p_io->tables_size < needed)) {
+        return TINYDELTA_ERR_VERSION; /* a feature this build or its tables lack */
     }
     result = io_read_varint(p_decoder, TINYDELTA_FIELD_CONTINUED, &p_decoder->stream_left); /* stored as is: not coded yet */
     if (result != TINYDELTA_OK) {
@@ -296,7 +295,7 @@ static tinydelta_result_t io_start_coded(io_decoder_t *p_decoder, uint32_t *p_ta
     }
     p_decoder->b_coded = true;
     *p_version &= (uint8_t)~TINYDELTA_CODED_FLAG; /* Cast: the flag fits a byte. */
-    return tinydelta_coder_init(&p_decoder->coder, layout, p_io->p_buffer, io_raw_byte, p_decoder);
+    return tinydelta_coder_init(&p_decoder->coder, layout, p_io->p_tables, io_raw_byte, p_decoder);
 }
 #endif
 
@@ -312,13 +311,14 @@ static bool io_more(const io_decoder_t *p_decoder) {
 
 tinydelta_result_t tinydelta_decode_io(const tinydelta_io_t *p_io, uint32_t *p_target_len) {
     io_decoder_t decoder;
-    uint32_t target_cap  = min_u32(p_io->target_cap, TINYDELTA_MAX_SIZE);
-    uint32_t tables_size = 0u; /* a coded patch's tables, at the front of the buffer */
+    uint32_t target_cap = min_u32(p_io->target_cap, TINYDELTA_MAX_SIZE);
     uint8_t version;
     bool b_format_v2;
     tinydelta_result_t result;
 
-    if ((p_io->p_buffer == NULL) || !is_power_of_two(p_io->page_size)) {
+    /* The buffer: powers of two, page_size at most buffer_size (so it
+     * divides it). */
+    if ((p_io->p_buffer == NULL) || !is_power_of_two(p_io->page_size) || !is_power_of_two(p_io->buffer_size) || (p_io->page_size > p_io->buffer_size)) {
         return TINYDELTA_ERR_MALFORMED;
     }
     if (p_io->dict_len > TINYDELTA_MAX_SIZE) {
@@ -331,6 +331,7 @@ tinydelta_result_t tinydelta_decode_io(const tinydelta_io_t *p_io, uint32_t *p_t
     decoder.target_pos  = 0u;
     decoder.written_len = 0u;
     decoder.cursor      = 0u;
+    decoder.buffer_mask = p_io->buffer_size - 1u;
     result              = io_raw_byte(&decoder, &version);
     if (result != TINYDELTA_OK) {
         return result;
@@ -338,20 +339,13 @@ tinydelta_result_t tinydelta_decode_io(const tinydelta_io_t *p_io, uint32_t *p_t
 #if TINYDELTA_CODER
     decoder.b_coded = false;
     if ((version == (TINYDELTA_CODED_FLAG | TINYDELTA_FORMAT_VERSION)) || (version == (TINYDELTA_CODED_FLAG | TINYDELTA_FORMAT_VERSION_2))) {
-        result = io_start_coded(&decoder, &tables_size, &version);
+        result = io_start_coded(&decoder, &version);
         if (result != TINYDELTA_OK) {
             return result;
         }
     }
 #endif
-    /* The ring is the buffer after the tables: a power of two, page_size at
-     * most its size (so it divides it). */
-    if (!is_power_of_two(p_io->buffer_size - tables_size) || (p_io->page_size > (p_io->buffer_size - tables_size))) {
-        return TINYDELTA_ERR_MALFORMED;
-    }
-    decoder.p_ring    = &p_io->p_buffer[tables_size];
-    decoder.ring_mask = p_io->buffer_size - tables_size - 1u;
-    b_format_v2       = (version == TINYDELTA_FORMAT_VERSION_2);
+    b_format_v2 = (version == TINYDELTA_FORMAT_VERSION_2);
     if ((version != TINYDELTA_FORMAT_VERSION) && !b_format_v2) {
         return TINYDELTA_ERR_VERSION;
     }

@@ -185,15 +185,6 @@ static int64_t ref_zigzag(uint64_t z) {
     return (int64_t)(z >> 1) ^ -(int64_t)(z & 1);
 }
 
-/* The layout of a coded patch's tables (0: not coded), for sizing the
- * callback decoder's buffer. */
-static int ref_layout(const uint8_t *patch, uint64_t patch_len) {
-    if (patch_len >= 2 && (patch[0] == 0x81 || patch[0] == 0x82) && patch[1] >= 1 && patch[1] <= 3) {
-        return patch[1];
-    }
-    return 0;
-}
-
 static tinydelta_result_t
 ref_decode(const uint8_t *dict, uint64_t dict_len, const uint8_t *patch, uint64_t patch_len, uint8_t *out, uint64_t out_cap, uint64_t *out_len) {
     static ref_source src;
@@ -411,10 +402,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
     for (int with_read = 1; with_read >= 0; with_read--) {
         source patch_src = {patch, patch_len}, dict_src = {dict, dict_len};
-        /* A coded patch's tables go first, then the ring. */
-        static const uint32_t table_sizes[4] = {0u, TINYDELTA_CODED_TABLES_C, TINYDELTA_CODED_TABLES_B, TINYDELTA_CODED_TABLES_A};
-        uint32_t tables_size                 = table_sizes[ref_layout(patch, patch_len)];
-        uint8_t buffer[TINYDELTA_CODED_TABLES_A + 128];
+        static uint8_t io_tables[TINYDELTA_CODED_TABLES_A];
+        uint8_t buffer[128];
         tinydelta_io_t io = {
             .patch_read   = source_read,
             .p_patch_ctx  = &patch_src,
@@ -427,8 +416,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             .p_target_ctx = &target_flash,
             .target_cap   = out_cap,
             .p_buffer     = buffer,
-            .buffer_size  = tables_size + buffer_size,
+            .buffer_size  = buffer_size,
             .page_size    = page_size,
+            .p_tables     = io_tables,
+            .tables_size  = sizeof io_tables,
         };
         memset(&target_flash, 0, sizeof target_flash);
         target_flash.page_size    = page_size;

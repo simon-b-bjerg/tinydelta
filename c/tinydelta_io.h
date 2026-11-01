@@ -63,6 +63,13 @@ typedef struct {
     uint8_t *p_buffer;
     uint32_t buffer_size;
     uint32_t page_size;
+    /* Coded patches only (TINYDELTA_CODER = 1, README.md "Coded
+     * patches"): the coder's tables, tables_size bytes, for as long as the
+     * patch decodes; the encoder's coder_tables. NULL and 0 for plain
+     * patches only; a coded patch whose tables need more is rejected with
+     * TINYDELTA_ERR_VERSION. */
+    uint8_t *p_tables;
+    uint32_t tables_size;
 } tinydelta_io_t;
 
 /* Applies the patch to the dictionary, writing the target through

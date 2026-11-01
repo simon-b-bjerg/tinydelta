@@ -17,10 +17,11 @@ import (
 // cIODriver runs tinydelta_decode_io (c/tinydelta_io.c) over
 // RAM-backed callbacks that also police the callback contract:
 //
-//	driver <buffer>:<page>:<read> <dict> <patch> <out> <cap> [failat]
+//	driver <buffer>:<page>:<read>:<tables> <dict> <patch> <out> <cap> [failat]
 //
 // buffer and page are the buffer and page sizes; read 0 leaves
-// target_read NULL. Exit 0: decoded, target written to <out>. 1: the
+// target_read NULL; tables is the size of the coder's tables buffer (0:
+// p_tables NULL). Exit 0: decoded, target written to <out>. 1: the
 // decoder rejected the input (code printed). 3: a contract violation: a
 // read past the data, a target write that is not the next whole page (or
 // the final partial one), or a target read of bytes not yet written.
@@ -74,7 +75,7 @@ static int fl_wr(void *c, uint32_t off, const uint8_t *b, uint32_t n) {
 }
 
 int main(int argc, char **argv) {
-	unsigned long buffer_size, page_size;
+	unsigned long buffer_size, page_size, tables_size;
 	int use_read;
 	char *rest;
 	args_from_file(&argc, &argv);
@@ -85,6 +86,8 @@ int main(int argc, char **argv) {
 	page_size = strtoul(rest, &rest, 10);
 	if (*rest++ != ':') return 2;
 	use_read = (int)strtoul(rest, &rest, 10);
+	if (*rest++ != ':') return 2;
+	tables_size = strtoul(rest, &rest, 10);
 	if (*rest != 0) return 2;
 	page = (uint32_t)page_size;
 	dict = slurp(argv[2], &dict_len);
@@ -100,6 +103,7 @@ int main(int argc, char **argv) {
 		.target_cap = cap,
 		.p_buffer = malloc(buffer_size ? buffer_size : 1),
 		.buffer_size = (uint32_t)buffer_size, .page_size = page,
+		.p_tables = tables_size ? malloc(tables_size) : NULL, .tables_size = (uint32_t)tables_size,
 	};
 	uint32_t n = 0;
 	int rc = tinydelta_decode_io(&io, &n);
@@ -115,13 +119,14 @@ int main(int argc, char **argv) {
 }
 `
 
-// ioConfig is one buffer setup for the callback decoder driver.
-type ioConfig struct{ buffer, page int }
+// ioConfig is one buffer setup for the callback decoder driver: buffer
+// and page size, and the coder's tables buffer (0: none).
+type ioConfig struct{ buffer, page, tables int }
 
 // Buffer setups that hit every path: a 1-byte buffer (every copy one
 // byte, every far copy through target_read), a buffer of one page, a
 // buffer of several pages, and pages larger than a whole patch.
-var ioConfigs = []ioConfig{{1, 1}, {8, 8}, {64, 16}, {256, 64}, {1024, 1024}}
+var ioConfigs = []ioConfig{{1, 1, 0}, {8, 8, 0}, {64, 16, 0}, {256, 64, 0}, {1024, 1024, 0}}
 
 func buildCIODriver(t *testing.T) string {
 	t.Helper()
@@ -144,7 +149,7 @@ func runCIO(t *testing.T, bin string, c ioConfig, read bool, dict, patch []byte,
 	if read {
 		readFlag = 1
 	}
-	args := append([]string{fmt.Sprintf("%d:%d:%d", c.buffer, c.page, readFlag), d, p, o, fmt.Sprint(capacity)}, extra...)
+	args := append([]string{fmt.Sprintf("%d:%d:%d:%d", c.buffer, c.page, readFlag, c.tables), d, p, o, fmt.Sprint(capacity)}, extra...)
 	stdout, err := cCommand(bin, args...).Output()
 	var exit *exec.ExitError
 	switch {
@@ -240,44 +245,36 @@ func TestCIODecoderMatchesGo(t *testing.T) {
 	}
 }
 
-// withTables grows a buffer setup by a coded patch's tables, which take
-// the front of the buffer: the ring after them stays c.buffer bytes.
+// withTables gives a buffer setup the coder's tables a coded patch needs,
+// exactly that size.
 func withTables(c ioConfig, patch []byte) ioConfig {
 	if len(patch) > 1 && (patch[0] == codedFlag|FormatVersion || patch[0] == codedFlag|FormatVersion2) {
-		c.buffer += CodedTablesSize(int(patch[1] & 3))
+		c.tables = CodedTablesSize(int(patch[1] & 3))
 	}
 	return c
 }
 
-// TestCIODecoderCodedBuffer checks the buffer split for coded patches:
-// tables first, then a ring that must be a power of two holding a page.
-// A buffer too small for the tables means the patch needs more than the
-// device has: TINYDELTA_ERR_VERSION; tables plus a bad ring: MALFORMED.
-func TestCIODecoderCodedBuffer(t *testing.T) {
+// TestCIODecoderCodedTables checks the coder's tables buffer: one buffer
+// of a given size decodes every layout that fits it, whatever the ring;
+// a layout that doesn't fit, or no tables at all, is
+// TINYDELTA_ERR_VERSION before anything is written.
+func TestCIODecoderCodedTables(t *testing.T) {
 	bin := buildCIODriver(t)
 	r := rand.New(rand.NewSource(34))
 	dict := textFile(r, 2000)
 	tgt := splice(dict, 700, 3, []byte("changed"))
-	patch := encodeCoded(withHeader(encode(dict, tgt, MaxSize)), codedLayoutB)
-	tables := CodedTablesSize(codedLayoutB)
-	cases := []struct {
-		c    ioConfig
-		code string
-	}{
-		{ioConfig{tables + 64, 16}, ""},
-		{ioConfig{tables, 16}, "-4"},
-		{ioConfig{tables - 1, 1}, "-4"},
-		{ioConfig{tables + 48, 16}, "-1"},
-		{ioConfig{tables + 8, 16}, "-1"},
-	}
-	for _, k := range cases {
-		got, code, ok := runCIO(t, bin, k.c, true, dict, patch, cCapacity)
-		if k.code == "" {
-			if !ok || !bytes.Equal(got, tgt) {
-				t.Errorf("%+v: did not decode (code %s)", k.c, code)
+	plain := withHeader(encode(dict, tgt, MaxSize))
+	for _, tables := range []int{0, 521, 522, 777, 1287, 2000} {
+		for _, layout := range []int{codedLayoutC, codedLayoutB, codedLayoutA} {
+			patch := encodeCoded(plain, layout)
+			for _, c := range []ioConfig{{1, 1, tables}, {256, 64, tables}} {
+				got, code, ok := runCIO(t, bin, c, true, dict, patch, cCapacity)
+				if fits := tables >= CodedTablesSize(layout); fits && (!ok || !bytes.Equal(got, tgt)) {
+					t.Errorf("layout %d, %+v: did not decode (code %s)", layout, c, code)
+				} else if !fits && (ok || code != "-4") {
+					t.Errorf("layout %d, %+v: ok=%v code %s, want TINYDELTA_ERR_VERSION", layout, c, ok, code)
+				}
 			}
-		} else if ok || code != k.code {
-			t.Errorf("%+v: ok=%v code %s, want %s", k.c, ok, code, k.code)
 		}
 	}
 }
@@ -300,7 +297,7 @@ func TestCIODecoderWithoutTargetRead(t *testing.T) {
 	block := randomFile(r, 300)
 	tgt := append(append(append([]byte{}, block...), textFile(r, 700)...), block...)
 	far := mustEncode(t, nil, tgt, EncodeOptions{})
-	if _, code, ok := runCIO(t, bin, ioConfig{64, 16}, false, nil, far, cCapacity); ok || code != "-1" {
+	if _, code, ok := runCIO(t, bin, ioConfig{64, 16, 0}, false, nil, far, cCapacity); ok || code != "-1" {
 		t.Errorf("far copy without target_read: ok=%v code %s, want TINYDELTA_ERR_MALFORMED", ok, code)
 	}
 }
@@ -315,7 +312,7 @@ func TestCIODecoderCallbackFailures(t *testing.T) {
 	tgt = append(tgt, tgt[:200]...) // a far copy, through target_read
 	plain := withHeader(encode(dict, tgt, MaxSize))
 	for _, patch := range [][]byte{plain, withVersion(FormatVersion2, encodeCovers(dict, tgt, MaxSize)), encodeCoded(plain, codedLayoutC)} {
-		for _, c := range []ioConfig{{1, 1}, {64, 16}} {
+		for _, c := range []ioConfig{{1, 1, 0}, {64, 16, 0}} {
 			c := withTables(c, patch)
 			for n := 1; n <= 400; n++ {
 				_, code, ok := runCIO(t, bin, c, true, dict, patch, cCapacity, fmt.Sprint(n))
@@ -335,7 +332,7 @@ func TestCIODecoderCallbackFailures(t *testing.T) {
 func TestCIODecoderBufferChecks(t *testing.T) {
 	bin := buildCIODriver(t)
 	patch := withHeader(append(appendVarint(nil, 3<<2|opAdd), "abc"...))
-	for _, c := range []ioConfig{{0, 0}, {3, 1}, {8, 3}, {8, 16}, {8, 0}} {
+	for _, c := range []ioConfig{{0, 0, 0}, {3, 1, 0}, {8, 3, 0}, {8, 16, 0}, {8, 0, 0}} {
 		if _, code, ok := runCIO(t, bin, c, true, nil, patch, cCapacity); ok || code != "-1" {
 			t.Errorf("%+v: ok=%v code %s, want TINYDELTA_ERR_MALFORMED", c, ok, code)
 		}

@@ -129,7 +129,7 @@ func TestCTwoPass(t *testing.T) {
 		if got, err := memoryDecode(c.dict, inner); err != nil || !bytes.Equal(got, c.target) {
 			t.Fatalf("%s: memory decoder, second pass: %v", c.name, err)
 		}
-		for _, cfg := range []ioConfig{{1, 1}, {1024, 256}} {
+		for _, cfg := range []ioConfig{{1, 1, 0}, {1024, 256, 0}} {
 			label := fmt.Sprintf("%s: callback decoder (buffer %d, page %d)", c.name, cfg.buffer, cfg.page)
 			read := cfg.buffer < 1024 || c.outerName != "1 KB distance"
 			inner, code, ok := runCIO(t, callback, cfg, read, nil, c.outer, cCapacity)
