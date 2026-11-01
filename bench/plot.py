@@ -15,8 +15,9 @@ Writes to <output dir>:
     forest.svg        the headline: per kind of data and tool, the geometric
                       mean of tinydelta's patch size divided by the tool's,
                       with its 10th-90th percentile range, for each step
-    pairs.svg         every pair: tinydelta's patch size against open-vcdiff's,
-                      HPatchLite's (4 KB), bsdiff's and zstd's
+    pairs.svg         every pair, one panel per kind of data: tinydelta's patch
+                      size against open-vcdiff's, HPatchLite's (4 KB),
+                      detools', bsdiff's and zstd's
     tradeoff.svg      each tool's typical patch size against its decoder's
                       footprint, code + RAM buffers, stack excluded
                       (from bench/decoders.json)
@@ -432,53 +433,59 @@ def forest(rows, out):
     save(fig, out, "forest")
 
 
-KIND_MARKERS = ["o", "^", "s", "D", "v"]
+STEP_MARKERS = ["o", "^", "s", "D"]  # by commit step: 1 apart, 5 apart, ...
 # The pair graph's tools: the VCDIFF reference, the two embedded
 # alternatives, and the strongest compressors on size.
 PAIR_TOOLS = ["openvcdiff", "hpatchlite_4k", "detools", "bsdiff", "zstd"]
 
 
 def pair_scatter(rows, out, name):
-    """Every pair, once per tool: that tool's patch size across,
-    tinydelta's up. Colour is the tool, marker the kind of data."""
+    """Every pair, once per tool, one panel per kind of data: that tool's
+    patch size across, tinydelta's up. Colour is the tool, marker the
+    commit step."""
     tiny = tiny_key(rows)
     tools = [t for t in OTHERS if t[0] in PAIR_TOOLS and t[0] in rows[0]]
     if not tools:
         return
     kinds = kinds_of(rows)
-    fig, ax = plt.subplots(figsize=(6.0, 5.8), facecolor=SURFACE)
-    style(ax)
-    sizes = [r[k] for r in rows for k in [tiny] + [t[0] for t in tools]]
-    lo, hi = max(1, min(sizes)) / 1.5, max(sizes) * 1.5
-    ax.plot([lo, hi], [lo, hi], color=MUTED, linewidth=1)
-    for key, label, color, _, _ in tools:
-        for kind, marker in zip(kinds, KIND_MARKERS):
-            sel = [r for r in rows if r["kind"] == kind]
-            ax.scatter([r[key] for r in sel], [r[tiny] for r in sel], s=22, marker=marker, color=color,
-                       alpha=0.7, edgecolors=SURFACE, linewidths=0.5)
-    ax.set_xscale("log")
-    ax.set_yscale("log")
-    for axis in (ax.xaxis, ax.yaxis):  # decades only: the range spans several
-        axis.set_major_locator(ticker.LogLocator(base=10))
-        axis.set_major_formatter(ticker.FuncFormatter(lambda x, _: "{:,.0f}".format(x)))
-        axis.set_minor_formatter(ticker.NullFormatter())
-    ax.set_xlim(lo, hi)
-    ax.set_ylim(lo, hi)
-    ax.set_aspect("equal")
-    ax.set_xlabel("the other tool's patch (bytes, log scale)", fontsize=9, color=MUTED)
-    ax.set_ylabel("tinydelta's patch (bytes, log scale)", fontsize=9, color=MUTED)
-    ax.text(0.97, 0.05, "below the line:\ntinydelta smaller", transform=ax.transAxes, ha="right",
-            fontsize=9, color=MUTED)
-    # Two legends: colour for the tool, marker for the kind of data.
+    steps = sorted({r["step"] for r in rows})
+    fig, axes = plt.subplots(len(kinds), 1, figsize=(6.0, 0.8 + 5.0 * len(kinds)), squeeze=False, facecolor=SURFACE)
+    for ax, kind in zip(axes[:, 0], kinds):
+        sel = [r for r in rows if r["kind"] == kind]
+        style(ax)
+        sizes = [r[k] for r in sel for k in [tiny] + [t[0] for t in tools]]
+        lo, hi = max(1, min(sizes)) / 1.5, max(sizes) * 1.5
+        ax.plot([lo, hi], [lo, hi], color=MUTED, linewidth=1)
+        for key, label, color, _, _ in tools:
+            for step, marker in zip(steps, STEP_MARKERS):
+                pick = [r for r in sel if r["step"] == step]
+                ax.scatter([r[key] for r in pick], [r[tiny] for r in pick], s=22, marker=marker, color=color,
+                           alpha=0.7, edgecolors=SURFACE, linewidths=0.5)
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        for axis in (ax.xaxis, ax.yaxis):  # decades only: the range spans several
+            axis.set_major_locator(ticker.LogLocator(base=10))
+            axis.set_major_formatter(ticker.FuncFormatter(lambda x, _: "{:,.0f}".format(x)))
+            axis.set_minor_formatter(ticker.NullFormatter())
+        ax.set_xlim(lo, hi)
+        ax.set_ylim(lo, hi)
+        ax.set_aspect("equal")
+        ax.set_title("%s (%d pairs)" % (kind_label(rows, kind), len(sel)), fontsize=11, color=INK, loc="left")
+        ax.set_xlabel("the other tool's patch (bytes, log scale)", fontsize=9, color=MUTED)
+        ax.set_ylabel("tinydelta's patch (bytes, log scale)", fontsize=9, color=MUTED)
+        ax.text(0.97, 0.05, "below the line:\ntinydelta smaller", transform=ax.transAxes, ha="right",
+                fontsize=9, color=MUTED)
+    # Two legends, in the first panel: colour for the tool, marker for the step.
     tool_handles = [plt.Line2D([], [], marker="o", linestyle="", markersize=6, color=color, label=label)
                     for _, label, color, _, _ in tools]
-    kind_handles = [plt.Line2D([], [], marker=marker, linestyle="", markersize=6, color=MUTED, label=kind_label(rows, kind))
-                    for kind, marker in zip(kinds, KIND_MARKERS)]
-    first = ax.legend(handles=tool_handles, frameon=False, fontsize=9, loc="upper left", labelcolor=INK,
-                      title="tool", title_fontsize=9, alignment="left")
-    ax.add_artist(first)
-    ax.legend(handles=kind_handles, frameon=False, fontsize=9, loc="lower right", labelcolor=INK,
-              bbox_to_anchor=(1.0, 0.12), title="data", title_fontsize=9, alignment="left")
+    step_handles = [plt.Line2D([], [], marker=marker, linestyle="", markersize=6, color=MUTED,
+                               label="%d commit%s apart" % (step, "" if step == 1 else "s"))
+                    for step, marker in zip(steps, STEP_MARKERS)]
+    first = axes[0][0].legend(handles=tool_handles, frameon=False, fontsize=9, loc="upper left", labelcolor=INK,
+                              title="tool", title_fontsize=9, alignment="left")
+    axes[0][0].add_artist(first)
+    axes[0][0].legend(handles=step_handles, frameon=False, fontsize=9, loc="lower right", labelcolor=INK,
+                      bbox_to_anchor=(1.0, 0.12), alignment="left")
     height = fig.get_figheight()
     fig.text(0.02, 1 - 0.15 / height, "tinydelta against other tools, every pair",
              ha="left", va="top", fontsize=13, color=INK)
