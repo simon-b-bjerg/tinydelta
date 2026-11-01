@@ -6,6 +6,7 @@ package tinydelta
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"math/rand"
 	"testing"
 )
@@ -60,15 +61,12 @@ func TestCodedRoundTripAllLayouts(t *testing.T) {
 	}
 }
 
-func TestEncodeWithDecoderRAM(t *testing.T) {
+func TestEncodeWithCoderTables(t *testing.T) {
 	dict, target := firmwareLike(2, 60000)
 	plain, _ := Encode(dict, target)
 	prev := len(plain) + 1
 	for _, ram := range []int{0, 521, 522, 777, 1287, 4096} {
-		patch, err := EncodeWith(dict, target, EncodeOptions{DecoderRAM: ram})
-		if err != nil {
-			t.Fatal(err)
-		}
+		patch := mustEncode(t, dict, target, EncodeOptions{CoderTables: ram})
 		got, err := Decode(dict, patch)
 		if err != nil || !bytes.Equal(got, target) {
 			t.Fatalf("ram %d: round trip: %v", ram, err)
@@ -84,30 +82,68 @@ func TestEncodeWithDecoderRAM(t *testing.T) {
 			t.Errorf("ram %d: %d bytes, more than with less RAM (%d)", ram, len(patch), prev)
 		}
 		prev = len(patch)
-		t.Logf("DecoderRAM %4d: %6d bytes (plain %d)", ram, len(patch), len(plain))
+		t.Logf("CoderTables %4d: %6d bytes (plain %d)", ram, len(patch), len(plain))
 	}
 	if prev*3 > len(plain)*2 {
 		t.Errorf("coded patch %d bytes, expected well below plain %d", prev, len(plain))
 	}
 }
 
-func TestEncodeWithDecoderRAMKeepsSmallPatchesPlain(t *testing.T) {
+func TestEncodeWithCoderTablesKeepsSmallPatchesPlain(t *testing.T) {
 	dict, target := []byte("rate=10\nmode=fast\n"), []byte("rate=12\nmode=fast\n")
-	patch, err := EncodeWith(dict, target, EncodeOptions{DecoderRAM: 1287})
-	if err != nil {
-		t.Fatal(err)
-	}
+	patch := mustEncode(t, dict, target, EncodeOptions{CoderTables: 1287})
 	if patch[0] != FormatVersion {
 		t.Errorf("tiny update coded (%x), plain is smaller", patch)
 	}
 }
 
-func TestEncodeWithDecoderRAMOptions(t *testing.T) {
-	if _, err := EncodeWith(nil, []byte("x"), EncodeOptions{DecoderRAM: -1}); err == nil {
-		t.Error("negative DecoderRAM accepted")
+func TestEncodeWithCoderTablesOptions(t *testing.T) {
+	if _, err := EncodeWith(nil, []byte("x"), EncodeOptions{CoderTables: -1}); err == nil {
+		t.Error("negative CoderTables accepted")
 	}
-	if _, err := EncodeWith(nil, []byte("x"), EncodeOptions{DecoderRAM: 1287, ForCompression: true}); err == nil {
-		t.Error("DecoderRAM with ForCompression accepted")
+	if _, err := EncodeWith(nil, []byte("x"), EncodeOptions{Window: -1}); err == nil {
+		t.Error("negative Window accepted")
+	}
+}
+
+// TestEncodeWithChoosesSmallest checks that EncodeWith returns the
+// smallest patch the options allow, with its pass count, and that every
+// option combination decodes.
+func TestEncodeWithChoosesSmallest(t *testing.T) {
+	dict, target := firmwareLike(4, 30000)
+	sizes := map[string]int{}
+	for _, opts := range []EncodeOptions{{}, {TwoPass: true}, {CoderTables: 777}, {CoderTables: 777, TwoPass: true}, {Window: 256, TwoPass: true}} {
+		patch, err := EncodeWith(dict, target, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := patch.Bytes
+		switch patch.Passes {
+		case 2:
+			if !opts.TwoPass {
+				t.Fatalf("%+v: two-pass patch not allowed", opts)
+			}
+			if got, err = Decode(nil, got); err != nil {
+				t.Fatalf("%+v: first pass: %v", opts, err)
+			}
+		case 1:
+		default:
+			t.Fatalf("%+v: %d passes", opts, patch.Passes)
+		}
+		if got, err = Decode(dict, got); err != nil || !bytes.Equal(got, target) {
+			t.Fatalf("%+v: round trip: %v", opts, err)
+		}
+		sizes[fmt.Sprintf("%+v", opts)] = len(patch.Bytes)
+		t.Logf("%+v: %d bytes, %d pass(es)", opts, len(patch.Bytes), patch.Passes)
+	}
+	plain := sizes[fmt.Sprintf("%+v", EncodeOptions{})]
+	for name, size := range sizes {
+		if size > plain {
+			t.Errorf("%s: %d bytes, more than plain %d", name, size, plain)
+		}
+	}
+	if a, b := sizes[fmt.Sprintf("%+v", EncodeOptions{CoderTables: 777, TwoPass: true})], sizes[fmt.Sprintf("%+v", EncodeOptions{CoderTables: 777})]; a > b {
+		t.Errorf("allowing two passes made the patch larger: %d > %d", a, b)
 	}
 }
 

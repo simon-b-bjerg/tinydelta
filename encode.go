@@ -5,7 +5,6 @@ package tinydelta
 
 import (
 	"compress/flate"
-	"errors"
 	"fmt"
 )
 
@@ -25,51 +24,37 @@ func Encode(dict, target []byte) ([]byte, error) {
 	return withHeader(encode(dict, target, MaxSize)), nil
 }
 
-// EncodeOptions configures EncodeWith.
+// EncodeOptions describes the device's decoder to EncodeWith, which
+// returns the smallest patch that decoder can decode. The zero value is a
+// decoder with no limits: plain, single-pass patches with any copy.
 type EncodeOptions struct {
 	// Greedy selects the fast greedy encoder (see EncodeGreedy) instead
-	// of the optimizing one (see Encode).
+	// of the optimizing one (see Encode), for every patch considered.
 	Greedy bool
 
-	// ForCompression writes a format version 2 patch (FormatVersion2),
-	// made for patches that are compressed afterwards: in compression
-	// mode (see the README), by encoding the patch again with tinydelta
-	// against an empty dictionary. Regions
-	// that line up with the dictionary but have a few changed bytes
-	// (moved addresses and branch offsets in firmware) are written as
-	// differences from the dictionary, which compress far better than
-	// the new bytes themselves. Uncompressed, such a patch is usually
-	// larger than the default one. For small changes a version 1 patch
-	// often compresses better, so both are made, each is compressed with
-	// DEFLATE as a stand-in for the second pass, and the
-	// smaller one is returned: ForCompression may return a version 1
-	// patch. Greedy applies to that version 1 candidate.
-	ForCompression bool
+	// Window, if positive, keeps every copy from the target already
+	// produced (COPY_TARGET) within the last Window bytes. A decoder then
+	// reads its own output only from RAM: the C callback decoder from its
+	// buffer, never from flash, so its target_read may be NULL. Set it to
+	// that buffer's size. 0, the default, means no limit. Smaller windows
+	// give somewhat larger patches.
+	Window int
 
-	// MaxTargetDistance, if positive, limits how far back from the
-	// current output position a COPY_TARGET may read: at most this many
-	// bytes. A decoder then only needs the last MaxTargetDistance bytes
-	// of the target it has produced, such as the C callback decoder's
-	// buffer, instead of being able to read all of it back. That is what makes a
-	// second pass practical on a device: a patch encoded again against an
-	// empty dictionary (see the README) decodes in one stream with a
-	// buffer of this size. 0 means no limit. Smaller limits give larger
-	// patches. Version 2 patches have no COPY_TARGET, so the limit only
-	// affects version 1.
-	MaxTargetDistance int
+	// CoderTables, if positive, allows coded patches (see coded.go): the
+	// instruction stream range-coded, decoded in one pass. It is the size
+	// of the decoder's buffer for the coder's tables, tables_size in C
+	// (a buffer that may live on the stack); the encoder uses every table
+	// layout that fits (CodedTablesSize: 522, 777 or 1287 bytes). 0, the
+	// default, means a decoder without the coder.
+	CoderTables int
 
-	// DecoderRAM, if positive, allows coded patches (see coded.go):
-	// the instruction stream range-coded with adaptive probabilities,
-	// decoded in one pass. It is the RAM, in bytes, the decoder can lend
-	// to the coder's probability states while it decodes (a buffer that
-	// may live on the stack). The encoder makes the plain version-1
-	// patch and a version-2 one, codes each with every table layout that
-	// fits in DecoderRAM (CodedTablesSize: 522, 777 or 1287 bytes), and
-	// returns the smallest of all of them, the plain patch included, so
-	// a small update that codes no smaller stays plain. 0, the default,
-	// means plain patches only. Not with ForCompression, which makes the
-	// first of two plain passes instead.
-	DecoderRAM int
+	// TwoPass allows a two-pass patch, which the device decodes twice:
+	// first against an empty dictionary, then the result against the
+	// dictionary, with room to store that intermediate patch. On large
+	// changes to firmware it is typically about half the size of a plain
+	// one, and costs no decoder code. Patch.Passes says which was
+	// returned.
+	TwoPass bool
 
 	// MaxInstructionLen, if positive, caps the number of target bytes
 	// any single instruction may produce: longer ADD, SKIP, COPY and
@@ -80,57 +65,74 @@ type EncodeOptions struct {
 	MaxInstructionLen int
 }
 
-// EncodeWith is Encode or EncodeGreedy with options. With a
-// MaxInstructionLen limit, Encode's guarantee becomes: never larger than
-// EncodeGreedy's patch under the same limit.
-func EncodeWith(dict, target []byte, opts EncodeOptions) ([]byte, error) {
+// Patch is EncodeWith's result.
+type Patch struct {
+	// Bytes is the patch, as sent.
+	Bytes []byte
+
+	// Passes is how many times the device decodes it: 1, or 2 for a
+	// two-pass patch (EncodeOptions.TwoPass): first Bytes against an
+	// empty dictionary, then the result against the dictionary. The
+	// update has to carry it, as it is not part of the patch.
+	Passes int
+}
+
+// EncodeWith returns the smallest patch the decoder described by opts can
+// decode: plain, coded (CoderTables) or two-pass (TwoPass), whichever is
+// smallest, single-pass on a tie. With a MaxInstructionLen limit,
+// Encode's guarantee becomes: never larger than EncodeGreedy's patch
+// under the same limit.
+func EncodeWith(dict, target []byte, opts EncodeOptions) (Patch, error) {
 	if err := checkSizes(dict, target); err != nil {
-		return nil, err
+		return Patch{}, err
 	}
-	if opts.MaxInstructionLen < 0 {
-		return nil, fmt.Errorf("tinydelta: negative MaxInstructionLen %d", opts.MaxInstructionLen)
+	switch {
+	case opts.MaxInstructionLen < 0:
+		return Patch{}, fmt.Errorf("tinydelta: negative MaxInstructionLen %d", opts.MaxInstructionLen)
+	case opts.Window < 0:
+		return Patch{}, fmt.Errorf("tinydelta: negative Window %d", opts.Window)
+	case opts.CoderTables < 0:
+		return Patch{}, fmt.Errorf("tinydelta: negative CoderTables %d", opts.CoderTables)
 	}
-	if opts.MaxTargetDistance < 0 {
-		return nil, fmt.Errorf("tinydelta: negative MaxTargetDistance %d", opts.MaxTargetDistance)
-	}
-	maxDistance := MaxSize
-	if opts.MaxTargetDistance > 0 && opts.MaxTargetDistance < MaxSize {
-		maxDistance = opts.MaxTargetDistance
+	window := MaxSize
+	if opts.Window > 0 && opts.Window < MaxSize {
+		window = opts.Window
 	}
 	maxLen := MaxSize
 	if opts.MaxInstructionLen > 0 && opts.MaxInstructionLen < MaxSize {
 		maxLen = opts.MaxInstructionLen
 	}
-	if opts.DecoderRAM < 0 {
-		return nil, fmt.Errorf("tinydelta: negative DecoderRAM %d", opts.DecoderRAM)
-	}
-	if opts.ForCompression && opts.DecoderRAM > 0 {
-		return nil, errors.New("tinydelta: ForCompression and DecoderRAM exclude each other")
-	}
-	if opts.ForCompression {
-		return encodeForCompression(dict, target, maxLen, maxDistance, opts.Greedy), nil
-	}
-	if layouts := codedLayoutsWithin(opts.DecoderRAM); len(layouts) > 0 {
-		var plain []byte
+	plain := func(dict, target []byte) []byte {
 		if opts.Greedy {
-			plain = withHeader(encodeGreedyLimited(dict, target, maxLen, maxDistance))
-		} else {
-			plain = withHeader(encodeLimited(dict, target, maxLen, maxDistance))
+			return withHeader(encodeGreedyLimited(dict, target, maxLen, window))
 		}
-		best := plain
-		for _, candidate := range [][]byte{plain, withVersion(FormatVersion2, encodeCovers(dict, target, maxLen))} {
+		return withHeader(encodeLimited(dict, target, maxLen, window))
+	}
+	layouts := codedLayoutsWithin(opts.CoderTables)
+
+	best := Patch{Bytes: plain(dict, target), Passes: 1}
+	consider := func(patch []byte, passes int) {
+		if len(patch) < len(best.Bytes) {
+			best = Patch{Bytes: patch, Passes: passes}
+		}
+	}
+	if len(layouts) > 0 {
+		for _, candidate := range [][]byte{best.Bytes, withVersion(FormatVersion2, encodeCovers(dict, target, maxLen))} {
 			for _, layout := range layouts {
-				if coded := encodeCoded(candidate, layout); len(coded) < len(best) {
-					best = coded
-				}
+				consider(encodeCoded(candidate, layout), 1)
 			}
 		}
-		return best, nil
 	}
-	if opts.Greedy {
-		return withHeader(encodeGreedyLimited(dict, target, maxLen, maxDistance)), nil
+	if opts.TwoPass {
+		// The second pass is tinydelta as a compressor: the first pass's
+		// patch encoded against an empty dictionary.
+		outer := plain(nil, encodeFirstPass(dict, target, maxLen, window, opts.Greedy))
+		consider(outer, 2)
+		for _, layout := range layouts {
+			consider(encodeCoded(outer, layout), 2)
+		}
 	}
-	return withHeader(encodeLimited(dict, target, maxLen, maxDistance)), nil
+	return best, nil
 }
 
 // EncodeGreedy produces a patch that reconstructs target from dict via
@@ -297,10 +299,14 @@ func dictCandidate(cursor, addr uint64, length int) candidate {
 	return candidate{kind: opCopy, length: length, delta: delta, cost: cost}
 }
 
-// encodeForCompression makes a version 1 and a version 2 patch and
-// returns whichever compresses smaller with DEFLATE (see
-// EncodeOptions.ForCompression).
-func encodeForCompression(dict, target []byte, maxLen, maxDistance int, greedy bool) []byte {
+// encodeFirstPass is the first pass of a two-pass patch (see
+// EncodeOptions.TwoPass): it makes a version 1 and a version 2 patch and
+// returns whichever compresses smaller with DEFLATE, a stand-in for the
+// second pass. Regions that line up with the dictionary but have a few
+// changed bytes (moved addresses and branch offsets in firmware) become
+// differences from the dictionary in version 2, which compress far better
+// than the new bytes themselves.
+func encodeFirstPass(dict, target []byte, maxLen, maxDistance int, greedy bool) []byte {
 	var v1 []byte
 	if greedy {
 		v1 = withHeader(encodeGreedyLimited(dict, target, maxLen, maxDistance))

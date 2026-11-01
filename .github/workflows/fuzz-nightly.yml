@@ -98,7 +98,9 @@ jobs:
           key: go-fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: go-fuzz-corpus-
       - name: Fuzz
-        run: go test -run '^$' -fuzz '^FuzzEncodeRoundTrip$' -fuzztime "${MINUTES}m" .
+        run: |
+          go test -run '^$' -fuzz '^FuzzEncodeRoundTrip$' -fuzztime "${MINUTES}m" .
+          go test -run '^$' -fuzz '^FuzzDecode$' -fuzztime "$(( MINUTES / 4 + 1 ))m" .
       - name: Save the corpus
         if: always()
         uses: actions/cache/save@v4

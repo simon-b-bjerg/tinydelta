@@ -280,7 +280,7 @@ func TestCIODecoderCodedTables(t *testing.T) {
 }
 
 // TestCIODecoderWithoutTargetRead checks the point of the buffer: a
-// patch made with MaxTargetDistance no larger than the buffer decodes
+// patch made with Window no larger than the buffer decodes
 // without target_read, and one reaching further back is rejected as
 // malformed instead.
 func TestCIODecoderWithoutTargetRead(t *testing.T) {
@@ -288,7 +288,7 @@ func TestCIODecoderWithoutTargetRead(t *testing.T) {
 	r := rand.New(rand.NewSource(32))
 	for _, p := range ioTestPairs(r) {
 		for _, c := range ioConfigs {
-			limited := mustEncode(t, p.dict, p.tgt, EncodeOptions{MaxTargetDistance: c.buffer})
+			limited := mustEncode(t, p.dict, p.tgt, EncodeOptions{Window: c.buffer})
 			if got, code, ok := runCIO(t, bin, c, false, p.dict, limited, cCapacity); !ok || !bytes.Equal(got, p.tgt) {
 				t.Fatalf("%s %+v, limited to the buffer: did not reproduce the target (code %s)", p.name, c, code)
 			}

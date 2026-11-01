@@ -14,8 +14,8 @@
  * last buffer_size bytes of the target, so a COPY_TARGET reaching back at
  * most buffer_size bytes is served from RAM; one reaching further reads
  * flash through target_read. Patches made with
- * EncodeOptions.MaxTargetDistance = buffer_size (CLI: encode
- * -max-distance) never do, and then target_read may be NULL. */
+ * EncodeOptions.Window = buffer_size (CLI: encode -window) never do, and
+ * then target_read may be NULL. */
 #ifndef TINYDELTA_IO_H
 #define TINYDELTA_IO_H
 

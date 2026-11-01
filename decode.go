@@ -71,11 +71,13 @@ func DecodeReaderLimit(dict []byte, r io.Reader, maxOutput int) (target []byte, 
 		if err != nil {
 			return nil, fmt.Errorf("tinydelta: %w", err)
 		}
-		plain, err := decodeCoded(append([]byte{version}, rest...), MaxSize)
+		// The coded bytes are in memory; the plain patch they code is
+		// decoded as the instructions are read.
+		plain, err := newCodedReader(append([]byte{version}, rest...))
 		if err != nil {
 			return nil, err
 		}
-		return DecodeReaderLimit(dict, bytes.NewReader(plain), maxOutput)
+		return DecodeReaderLimit(dict, plain, maxOutput)
 	}
 	if version != FormatVersion && version != FormatVersion2 {
 		return nil, fmt.Errorf("%w: patch is version %d, this decoder reads versions %d and %d", ErrUnsupportedVersion, version, FormatVersion, FormatVersion2)

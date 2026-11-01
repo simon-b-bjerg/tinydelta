@@ -82,7 +82,7 @@
 //
 // Either version's instruction stream may also be sent range-coded, as a
 // coded patch (first byte 0x81 or 0x82; see coded.go and
-// EncodeOptions.DecoderRAM): the same instructions, decoded in one pass
+// EncodeOptions.CoderTables): the same instructions, decoded in one pass
 // from fewer bytes, in exchange for RAM in the decoder.
 package tinydelta
 
@@ -90,9 +90,9 @@ package tinydelta
 // EncodeWith write by default: the first byte of the patch.
 const FormatVersion = 1
 
-// FormatVersion2 is the format version EncodeWith writes with
-// ForCompression: COPY_TARGET is replaced by ADD_DIFF (see the package
-// doc). Decode reads both versions.
+// FormatVersion2 is the format version of the first pass of a two-pass
+// patch (EncodeOptions.TwoPass) where it pays off: COPY_TARGET is replaced
+// by ADD_DIFF (see the package doc). Decode reads both versions.
 const FormatVersion2 = 2
 
 // headerLen is the size of the patch header: the version byte.

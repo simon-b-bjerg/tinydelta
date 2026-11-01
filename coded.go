@@ -6,6 +6,7 @@ package tinydelta
 import (
 	"errors"
 	"fmt"
+	"io"
 )
 
 // Coded patches: the instruction stream of a version-1 or version-2 patch,
@@ -396,9 +397,21 @@ func encodeCoded(plain []byte, layout int) []byte {
 	return append(out, e.finish()...)
 }
 
-// decodeCoded turns a coded patch back into the plain patch it codes.
-// maxStream caps the uncoded instruction stream's length.
-func decodeCoded(patch []byte, maxStream int) ([]byte, error) {
+// codedReader yields the plain patch a coded patch codes, version byte
+// first, decoding as it is read: memory stays bounded by what the caller
+// keeps, whatever stream length the header claims.
+type codedReader struct {
+	version byte
+	started bool // the version byte has been read
+	m       *codedModel
+	w       *codedWalker
+	d       *rangeDecoder
+	left    uint64 // instruction-stream bytes still to decode
+	err     error  // the error to return once the bytes before it are read
+}
+
+// newCodedReader reads a coded patch's header.
+func newCodedReader(patch []byte) (*codedReader, error) {
 	if len(patch) < 2 {
 		return nil, errors.New("tinydelta: coded patch has no features byte")
 	}
@@ -411,24 +424,48 @@ func decodeCoded(patch []byte, maxStream int) ([]byte, error) {
 	if used < 0 {
 		return nil, errors.New("tinydelta: coded patch: bad stream length")
 	}
-	if n > uint64(maxStream) {
-		return nil, fmt.Errorf("%w: coded patch's instruction stream is %d bytes", ErrTooLarge, n)
-	}
 	d, err := newRangeDecoder(patch[2+used:])
 	if err != nil {
 		return nil, fmt.Errorf("tinydelta: coded patch: %w", err)
 	}
-	m, w := newCodedModel(layout), newCodedWalker(version)
-	plain := make([]byte, 0, headerLen+min(int(n), 1<<20))
-	plain = append(plain, version)
-	for i := uint64(0); i < n; i++ {
-		b, err := codeByte(m, w, 0, func(i int, _ uint32) (uint32, error) { return d.bit(m, i) })
-		if err != nil {
-			return nil, fmt.Errorf("tinydelta: coded patch: %w", err)
-		}
-		plain = append(plain, b)
+	return &codedReader{version: version, m: newCodedModel(layout), w: newCodedWalker(version), d: d, left: n}, nil
+}
+
+func (r *codedReader) Read(p []byte) (int, error) {
+	n := 0
+	if !r.started && len(p) > 0 {
+		p[0], r.started, n = r.version, true, 1
 	}
-	return plain, nil
+	for n < len(p) && r.left > 0 && r.err == nil {
+		b, err := codeByte(r.m, r.w, 0, func(i int, _ uint32) (uint32, error) { return r.d.bit(r.m, i) })
+		if err != nil {
+			r.err = fmt.Errorf("tinydelta: coded patch: %w", err)
+			break
+		}
+		p[n] = b
+		n++
+		r.left--
+	}
+	switch {
+	case n > 0:
+		return n, nil
+	case r.err != nil:
+		return 0, r.err
+	}
+	return 0, io.EOF
+}
+
+// decodeCoded turns a coded patch back into the plain patch it codes.
+// maxStream caps the uncoded instruction stream's length.
+func decodeCoded(patch []byte, maxStream int) ([]byte, error) {
+	r, err := newCodedReader(patch)
+	if err != nil {
+		return nil, err
+	}
+	if r.left > uint64(maxStream) {
+		return nil, fmt.Errorf("%w: coded patch's instruction stream is %d bytes", ErrTooLarge, r.left)
+	}
+	return io.ReadAll(r)
 }
 
 // codedLayoutsWithin lists the table layouts whose states fit in ram

@@ -60,7 +60,7 @@ class RoundTrip(unittest.TestCase):
         self.assertGreater(len(short), len(long))
         self.assertEqual(tinydelta.decode(b"", short), bytes(500))
 
-    def test_compression_mode(self):
+    def test_two_pass(self):
         # Firmware after an insertion: the same code, every address moved.
         rng = random.Random(9)
         old, new = bytearray(), bytearray(rng.randrange(256) for _ in range(36))
@@ -71,23 +71,24 @@ class RoundTrip(unittest.TestCase):
             new += code + (addr + 36).to_bytes(4, "little")
         old, new = bytes(old), bytes(new)
         plain = tinydelta.encode(old, new)
-        inner = tinydelta.encode(old, new, for_compression=True)
-        self.assertIn(inner[0], (1, 2))
-        self.assertEqual(tinydelta.decode(old, inner), new)
-        outer = tinydelta.encode(b"", inner)
-        self.assertLess(len(outer) * 2, len(plain))
-        self.assertEqual(tinydelta.decode(old, tinydelta.decode(b"", outer)), new)
+        self.assertEqual(plain.passes, 1)
+        twice = tinydelta.encode(old, new, two_pass=True)
+        self.assertEqual(twice.passes, 2)
+        self.assertLess(len(twice) * 2, len(plain))
+        self.assertEqual(tinydelta.decode(old, twice), new)  # passes from the Patch
+        self.assertEqual(tinydelta.decode(old, bytes(twice), passes=2), new)
+        self.assertEqual(tinydelta.decode(old, tinydelta.decode(b"", bytes(twice))), new)
 
-    def test_max_distance(self):
+    def test_window(self):
         rng = random.Random(3)
         block = bytes(rng.randrange(256) for _ in range(300))
         new = block + bytes(range(256)) * 3 + block  # the block again, ~1 KB back
         far = tinydelta.encode(b"", new)
-        near = tinydelta.encode(b"", new, max_distance=256)
+        near = tinydelta.encode(b"", new, window=256)
         self.assertGreater(len(near), len(far))
         self.assertEqual(tinydelta.decode(b"", near), new)
 
-    def test_decoder_ram(self):
+    def test_coder_tables(self):
         rng = random.Random(5)
         old = bytearray()
         new = bytearray()
@@ -98,7 +99,7 @@ class RoundTrip(unittest.TestCase):
             new += code + (addr + 36).to_bytes(4, "little")
         old, new = bytes(old), bytes(new)
         plain = tinydelta.encode(old, new)
-        coded = tinydelta.encode(old, new, decoder_ram=522)
+        coded = tinydelta.encode(old, new, coder_tables=522)
         self.assertEqual(coded[0] & 0x80, 0x80)
         self.assertLess(len(coded) * 2, len(plain))
         self.assertEqual(tinydelta.decode(old, coded), new)
@@ -127,9 +128,11 @@ class Errors(unittest.TestCase):
         with self.assertRaises(ValueError):
             tinydelta.encode(b"", b"", max_instruction_len=-1)
         with self.assertRaises(ValueError):
-            tinydelta.encode(b"", b"", max_distance=-1)
+            tinydelta.encode(b"", b"", window=-1)
         with self.assertRaises(ValueError):
-            tinydelta.encode(b"", b"", decoder_ram=-1)
+            tinydelta.encode(b"", b"", coder_tables=-1)
+        with self.assertRaises(ValueError):
+            tinydelta.decode(b"", b"\x01", passes=3)
 
     def test_missing_binary(self):
         saved = os.environ.get("TINYDELTA_BIN")

@@ -19,15 +19,17 @@ Tools (set the binaries with environment variables; defaults are on PATH):
                        `go test -c` (TestEncodeUnlimited)   $TINYDELTA_OPTIMAL
                        Not run by default: a few hundred MB and a minute or
                        more per firmware pair; add it with --tools.
-    tinydelta_window_256, _1k, _4k  tinydelta encode -max-distance 256/1024/4096:
+    tinydelta_window_256, _1k, _4k  tinydelta encode -window 256/1024/4096:
                        what the callback decoder (tinydelta_decode_io) can
                        decode with a buffer of that size and no target_read
-    tinydelta_cz_twice tinydelta encode -for-compression (format version 2
-                       where it compresses better), encoded again by tinydelta against
-                       an empty dictionary: the device decodes twice with
-                       the same decoder
-    tinydelta_cz_twice_1k  the same, the second pass with -max-distance 1024,
-                       so it decodes in one stream with a 1 KB buffer
+    tinydelta_cz_twice tinydelta encode -two-pass: the smaller of the plain
+                       patch and the two-pass one, which the device decodes
+                       twice with the same decoder
+    tinydelta_cz_twice_1k  the same with -window 1024, so each pass decodes
+                       in one stream with a 1 KB buffer
+    tinydelta_coded_c, _b, _a  tinydelta encode -coder-tables 522/777/1287:
+                       the smaller of the plain patch and coded ones whose
+                       tables fit, decoded in one pass
     openvcdiff         open-vcdiff encode -target_matches     $OPENVCDIFF
     openvcdiff_zlib   the open-vcdiff patch, zlib level 9
     openvcdiff_interleaved  open-vcdiff encode -interleaved -target_matches:
@@ -60,8 +62,9 @@ DETOOLS = os.environ.get("DETOOLS", "detools")
 HDIFFI = os.environ.get("HDIFFI", "hdiffi")
 HPATCHI = os.environ.get("HPATCHI", "hpatchi")
 WINDOWS = (("tinydelta_window_256", 256), ("tinydelta_window_1k", 1024), ("tinydelta_window_4k", 4096))
+CODED = (("tinydelta_coded_c", 522), ("tinydelta_coded_b", 777), ("tinydelta_coded_a", 1287))
 ALL_TOOLS = ["tinydelta", "tinydelta_greedy", "tinydelta_optimal"] + [t for t, _ in WINDOWS] + [
-             "tinydelta_cz_twice", "tinydelta_cz_twice_1k",
+             "tinydelta_cz_twice", "tinydelta_cz_twice_1k"] + [t for t, _ in CODED] + [
              "openvcdiff", "openvcdiff_zlib", "openvcdiff_interleaved", "xdelta3", "bsdiff",
              "detools", "hpatchlite_4k", "hpatchlite_32k", "zstd"]
 # Run by default: all but tinydelta_optimal, which takes a few hundred MB
@@ -78,6 +81,14 @@ def sh(*cmd, stdin=None, env=None):
     if result.returncode != 0:
         raise Failure("%s failed: %s" % (" ".join(cmd), (result.stderr or result.stdout).decode(errors="replace")[-500:]))
     return result.stdout
+
+
+def sh_stderr(*cmd):
+    """sh, returning what the command wrote to standard error."""
+    result = subprocess.run(list(cmd), capture_output=True)
+    if result.returncode != 0:
+        raise Failure("%s failed: %s" % (" ".join(cmd), result.stderr.decode(errors="replace")[-500:]))
+    return result.stderr.decode()
 
 
 def read(path):
@@ -104,22 +115,19 @@ def encode_all(tools, old, new, work):
             sizes[tool] = os.path.getsize(patch)
     for tool, window in WINDOWS:
         if tool in tools:
-            sh(TINYDELTA, "encode", "-max-distance", str(window), old, new, patch)
+            sh(TINYDELTA, "encode", "-window", str(window), old, new, patch)
             check(tool, sh(TINYDELTA, "decode", old, patch))
             sizes[tool] = os.path.getsize(patch)
-    if any(t.startswith("tinydelta_cz_") for t in tools):
-        sh(TINYDELTA, "encode", "-for-compression", old, new, patch)
-        check("tinydelta_cz", sh(TINYDELTA, "decode", old, patch))
-        raw = read(patch)
-        packed = os.path.join(work, "packed")
-        empty = os.path.join(work, "empty")
-        open(empty, "wb").close()
-        for tool, extra in (("tinydelta_cz_twice", []), ("tinydelta_cz_twice_1k", ["-max-distance", "1024"])):
-            if tool in tools:
-                sh(*([TINYDELTA, "encode"] + extra + [empty, patch, packed]))
-                if sh(TINYDELTA, "decode", empty, packed) != raw:
-                    raise Failure("%s: the second pass did not restore the patch for %s" % (tool, new))
-                sizes[tool] = os.path.getsize(packed)
+    for tool, extra in (("tinydelta_cz_twice", []), ("tinydelta_cz_twice_1k", ["-window", "1024"])):
+        if tool in tools:
+            passes = sh_stderr(*([TINYDELTA, "encode", "-two-pass"] + extra + [old, new, patch])).split()[-1]
+            check(tool, sh(*([TINYDELTA, "decode"] + (["-two-pass"] if passes == "2" else []) + [old, patch])))
+            sizes[tool] = os.path.getsize(patch)
+    for tool, tables in CODED:
+        if tool in tools:
+            sh(TINYDELTA, "encode", "-coder-tables", str(tables), old, new, patch)
+            check(tool, sh(TINYDELTA, "decode", old, patch))
+            sizes[tool] = os.path.getsize(patch)
     if "tinydelta_optimal" in tools:
         env = dict(os.environ, TINYDELTA_ENCODE_UNLIMITED="%s %s %s" % (old, new, patch))
         sh(TINYDELTA_OPTIMAL, "-test.run", "^TestEncodeUnlimited$", env=env)

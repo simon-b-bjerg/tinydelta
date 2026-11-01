@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-// twoPassCase is one update sent in compression mode: inner is the patch
+// twoPassCase is one update sent as a two-pass patch: inner is the patch
 // from the old to the new file, outer is inner encoded again against an
 // empty dictionary, which is what goes over the air.
 type twoPassCase struct {
@@ -45,10 +45,8 @@ func twoPassCases(t *testing.T) []twoPassCase {
 		name string
 		fn   func(dict, target []byte) []byte
 	}{
-		{"for compression", func(d, tg []byte) []byte { return mustEncode(t, d, tg, EncodeOptions{ForCompression: true}) }},
-		{"for compression, greedy", func(d, tg []byte) []byte {
-			return mustEncode(t, d, tg, EncodeOptions{ForCompression: true, Greedy: true})
-		}},
+		{"first pass", func(d, tg []byte) []byte { return encodeFirstPass(d, tg, MaxSize, MaxSize, false) }},
+		{"first pass, greedy", func(d, tg []byte) []byte { return encodeFirstPass(d, tg, MaxSize, MaxSize, true) }},
 		{"version 2", func(d, tg []byte) []byte { return withVersion(FormatVersion2, encodeCovers(d, tg, MaxSize)) }},
 	}
 	outers := []struct {
@@ -57,7 +55,7 @@ func twoPassCases(t *testing.T) []twoPassCase {
 	}{
 		{"optimal", EncodeOptions{}},
 		{"greedy", EncodeOptions{Greedy: true}},
-		{"1 KB distance", EncodeOptions{MaxTargetDistance: 1024}},
+		{"1 KB distance", EncodeOptions{Window: 1024}},
 	}
 	var cases []twoPassCase
 	for _, u := range updates {
@@ -92,9 +90,12 @@ func TestTwoPass(t *testing.T) {
 	r := rand.New(rand.NewSource(22))
 	dict, target := shiftedFirmware(r)
 	plain := mustEncode(t, dict, target, EncodeOptions{})
-	outer := mustEncode(t, nil, mustEncode(t, dict, target, EncodeOptions{ForCompression: true}), EncodeOptions{})
-	if len(outer)*2 > len(plain) {
-		t.Errorf("shifted addresses: two passes %d B, one plain pass %d B; want at most half", len(outer), len(plain))
+	twoPass, err := EncodeWith(dict, target, EncodeOptions{TwoPass: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if twoPass.Passes != 2 || len(twoPass.Bytes)*2 > len(plain) {
+		t.Errorf("shifted addresses: %d passes, %d B; one plain pass %d B; want two passes at most half its size", twoPass.Passes, len(twoPass.Bytes), len(plain))
 	}
 }
 

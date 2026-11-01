@@ -4,7 +4,8 @@
 package tinydelta
 
 // Cover encoder: the encoder for format version 2, which is made for
-// patches that are compressed afterwards (see EncodeOptions.ForCompression).
+// patches that are compressed afterwards: the first pass of a two-pass
+// patch (see EncodeOptions.TwoPass), or the instructions of a coded one.
 //
 // Version 1's encoders break a match at the first byte that differs and
 // then look for an exact match elsewhere. When code moves, though, most

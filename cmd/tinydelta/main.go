@@ -3,8 +3,8 @@
 
 // Command tinydelta creates and applies tinydelta patches.
 //
-//	tinydelta encode [-greedy] [-for-compression] [-decoder-ram N] [-max-len N] [-max-distance N] [-v] <dictionary> <target> [<patch>]
-//	tinydelta decode [-max-size N] [-v] <dictionary> <patch> [<target>]
+//	tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-max-len N] [-v] <dictionary> <target> [<patch>]
+//	tinydelta decode [-two-pass] [-max-size N] [-v] <dictionary> <patch> [<target>]
 //	tinydelta version
 //
 // An omitted output file, or "-", means standard output; a patch of "-"
@@ -12,6 +12,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
@@ -34,8 +35,8 @@ MIT License: https://github.com/simon-b-bjerg/tinydelta/blob/main/LICENSE
 const usageText = `tinydelta creates and applies compact binary patches.
 
 Usage:
-  tinydelta encode [-greedy] [-for-compression] [-decoder-ram N] [-max-len N] [-max-distance N] [-v] <dictionary> <target> [<patch>]
-  tinydelta decode [-max-size N] [-v] <dictionary> <patch> [<target>]
+  tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-max-len N] [-v] <dictionary> <target> [<patch>]
+  tinydelta decode [-two-pass] [-max-size N] [-v] <dictionary> <patch> [<target>]
   tinydelta version
 
 encode writes a patch that turns <dictionary> (the old file) into
@@ -83,13 +84,13 @@ func encodeCommand(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("encode", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	greedy := fs.Bool("greedy", false, "use the fast greedy encoder instead of the optimal one\n(patches are typically a few percent larger)")
-	forCompression := fs.Bool("for-compression", false, "make a patch to encode again against an empty dictionary\n(compression mode, see the README); may be format version 2")
-	decoderRAM := fs.Int("decoder-ram", 0, "allow a range-coded patch, decoded in one pass, if the decoder can lend\nthis many bytes of RAM to its probability tables (522, 777 or 1287; 0: plain only)")
-	maxDistance := fs.Int("max-distance", 0, "limit how far back a copy from the target may read, so a decoder\nonly needs that many bytes of recent output (0 means no limit)")
+	coderTables := fs.Int("coder-tables", 0, "the decoder's coder tables buffer, in bytes (C: tables_size): allows a\ncoded patch whose tables fit (522, 777 or 1287 bytes; 0: no coder)")
+	window := fs.Int("window", 0, "keep copies from the target already produced within this many bytes, so\nthe decoder reads them from its RAM buffer only (C: buffer_size, with\ntarget_read NULL; 0 means no limit)")
+	twoPass := fs.Bool("two-pass", false, "allow a patch the device decodes twice (decode -two-pass); prints the\nnumber of passes, 1 or 2, to standard error")
 	maxLen := fs.Int("max-len", 0, "limit the target bytes any one instruction produces\n(0 means no limit)")
 	verbose := fs.Bool("v", false, "print sizes to standard error")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "Usage: tinydelta encode [-greedy] [-for-compression] [-decoder-ram N] [-max-len N] [-max-distance N] [-v] <dictionary> <target> [<patch>]")
+		fmt.Fprintln(stderr, "Usage: tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-max-len N] [-v] <dictionary> <target> [<patch>]")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -108,16 +109,21 @@ func encodeCommand(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, err)
 	}
-	patch, err := tinydelta.EncodeWith(dict, target, tinydelta.EncodeOptions{Greedy: *greedy, ForCompression: *forCompression, DecoderRAM: *decoderRAM, MaxInstructionLen: *maxLen, MaxTargetDistance: *maxDistance})
+	patch, err := tinydelta.EncodeWith(dict, target, tinydelta.EncodeOptions{
+		Greedy: *greedy, CoderTables: *coderTables, Window: *window, TwoPass: *twoPass, MaxInstructionLen: *maxLen,
+	})
 	if err != nil {
 		return fail(stderr, err)
 	}
-	if err := writeOutput(outputName(fs, 2), patch, stdout); err != nil {
+	if err := writeOutput(outputName(fs, 2), patch.Bytes, stdout); err != nil {
 		return fail(stderr, err)
+	}
+	if *twoPass {
+		fmt.Fprintf(stderr, "passes %d\n", patch.Passes)
 	}
 	if *verbose {
 		fmt.Fprintf(stderr, "dictionary %d B, target %d B -> patch %d B (%s of target)\n",
-			len(dict), len(target), len(patch), percent(len(patch), len(target)))
+			len(dict), len(target), len(patch.Bytes), percent(len(patch.Bytes), len(target)))
 	}
 	return exitOK
 }
@@ -126,9 +132,10 @@ func decodeCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	fs := flag.NewFlagSet("decode", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	maxSize := fs.Int("max-size", tinydelta.MaxSize, "fail if the target would exceed this many bytes")
+	twoPass := fs.Bool("two-pass", false, "the patch takes two passes (encode -two-pass printed \"passes 2\")")
 	verbose := fs.Bool("v", false, "print sizes to standard error")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "Usage: tinydelta decode [-max-size N] [-v] <dictionary> <patch> [<target>]")
+		fmt.Fprintln(stderr, "Usage: tinydelta decode [-two-pass] [-max-size N] [-v] <dictionary> <patch> [<target>]")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -151,6 +158,13 @@ func decodeCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		}
 		defer f.Close()
 		patch = f
+	}
+	if *twoPass { // first pass: the patch against an empty dictionary gives the patch for the second
+		inner, err := tinydelta.DecodeReader(nil, patch)
+		if err != nil {
+			return fail(stderr, err)
+		}
+		patch = bytes.NewReader(inner)
 	}
 	target, err := tinydelta.DecodeReaderLimit(dict, patch, *maxSize)
 	if err != nil {

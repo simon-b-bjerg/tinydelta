@@ -48,10 +48,7 @@ func TestMaxInstructionLen(t *testing.T) {
 	for _, c := range cases {
 		for _, limit := range []int{1, 5, 31, 32, 100, 1024} {
 			for _, greedy := range []bool{true, false} {
-				patch, err := EncodeWith(c.dict, c.tgt, EncodeOptions{Greedy: greedy, MaxInstructionLen: limit})
-				if err != nil {
-					t.Fatal(err)
-				}
+				patch := mustEncode(t, c.dict, c.tgt, EncodeOptions{Greedy: greedy, MaxInstructionLen: limit})
 				if got, err := Decode(c.dict, patch); err != nil || !bytes.Equal(got, c.tgt) {
 					t.Fatalf("%s, limit %d, greedy %v: round trip failed (err %v)", c.name, limit, greedy, err)
 				}
@@ -78,7 +75,7 @@ func TestMaxInstructionLenUnlimited(t *testing.T) {
 	want := withHeader(encode(dict, tgt, MaxSize))
 	for _, limit := range []int{0, fileSize, MaxSize, MaxSize + 1} {
 		got, err := EncodeWith(dict, tgt, EncodeOptions{MaxInstructionLen: limit})
-		if err != nil || !bytes.Equal(got, want) {
+		if err != nil || !bytes.Equal(got.Bytes, want) {
 			t.Fatalf("limit %d: patch differs from Encode's (err %v)", limit, err)
 		}
 	}
@@ -112,7 +109,7 @@ func targetDistances(t *testing.T, patch []byte) []int {
 	return distances
 }
 
-func TestMaxTargetDistance(t *testing.T) {
+func TestWindow(t *testing.T) {
 	r := rand.New(rand.NewSource(9))
 	block := textFile(r, 700)
 	// Repeats 700 bytes back: a 512-byte window can't reach them.
@@ -121,7 +118,7 @@ func TestMaxTargetDistance(t *testing.T) {
 	unlimited := mustEncode(t, nil, tgt, EncodeOptions{})
 	for _, limit := range []int{1, 16, 512, 1024} {
 		for _, greedy := range []bool{true, false} {
-			patch := mustEncode(t, nil, tgt, EncodeOptions{Greedy: greedy, MaxTargetDistance: limit})
+			patch := mustEncode(t, nil, tgt, EncodeOptions{Greedy: greedy, Window: limit})
 			if got, err := Decode(nil, patch); err != nil || !bytes.Equal(got, tgt) {
 				t.Fatalf("limit %d, greedy %v: round trip failed (err %v)", limit, greedy, err)
 			}
@@ -134,14 +131,14 @@ func TestMaxTargetDistance(t *testing.T) {
 				t.Errorf("limit %d, greedy %v: %d B, not larger than unlimited %d B", limit, greedy, len(patch), len(unlimited))
 			}
 			if !greedy {
-				g := mustEncode(t, nil, tgt, EncodeOptions{Greedy: true, MaxTargetDistance: limit})
+				g := mustEncode(t, nil, tgt, EncodeOptions{Greedy: true, Window: limit})
 				if len(patch) > len(g) {
 					t.Fatalf("limit %d: optimal patch (%d B) larger than greedy (%d B)", limit, len(patch), len(g))
 				}
 			}
 		}
 	}
-	if _, err := EncodeWith(nil, tgt, EncodeOptions{MaxTargetDistance: -1}); err == nil {
-		t.Fatal("negative MaxTargetDistance accepted")
+	if _, err := EncodeWith(nil, tgt, EncodeOptions{Window: -1}); err == nil {
+		t.Fatal("negative Window accepted")
 	}
 }

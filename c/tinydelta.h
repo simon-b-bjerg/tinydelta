@@ -61,7 +61,7 @@ tinydelta_result_t tinydelta_decode(
 #define TINYDELTA_CODER 0
 #endif
 
-/* Table sizes of the three layouts, in bytes (encoder: -decoder-ram). */
+/* Table sizes of the three layouts, in bytes (encoder: -coder-tables). */
 #define TINYDELTA_CODED_TABLES_A 1287u
 #define TINYDELTA_CODED_TABLES_B 777u
 #define TINYDELTA_CODED_TABLES_C 522u

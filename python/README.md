@@ -25,49 +25,46 @@ assert tinydelta.decode(old, patch, max_size=len(new)) == new
 ```
 
 - `encode(dictionary, target, *, greedy=False, max_instruction_len=0,
-  for_compression=False, max_distance=0, decoder_ram=0)` returns a patch
-  that turns `dictionary` into `target`. `greedy` uses the fast greedy
-  encoder instead of the optimal one; `max_instruction_len` limits the
-  bytes any one instruction produces. `for_compression` and
-  `max_distance` are for compression mode, `decoder_ram` for coded
-  patches, below.
-- `decode(dictionary, patch, *, max_size=None)` returns the target.
+  coder_tables=0, window=0, two_pass=False)` returns the smallest
+  `Patch` that turns `dictionary` into `target` and that the device's
+  decoder, described by the options, can decode. A `Patch` is `bytes`,
+  plus `passes`: 1, or 2 for a two-pass patch. `greedy` uses the fast
+  greedy encoder instead of the optimal one; `max_instruction_len`
+  limits the bytes any one instruction produces. The decoder options
+  are below.
+- `decode(dictionary, patch, *, max_size=None, passes=None)` returns the
+  target, decoding a `Patch` in its number of passes (`passes` for plain
+  `bytes`).
   Set `max_size` when the expected size is known: a short patch can
   describe a huge target.
 - Errors raise `tinydelta.Error`; a target over `max_size` raises its
   subclass `tinydelta.TooLargeError`.
 
-### Compression mode
+### The device's decoder
 
-For updates that change much of the file, such as firmware where code
-moved, encode twice and send whichever patch is smaller. The device
-decodes it once or twice with the same decoder, so send the number of
-passes with the patch:
+| option | the decoder | default |
+|---|---|---|
+| `coder_tables=N` | has the coder, with an N-byte tables buffer: allows coded patches, decoded in one pass | 0: no coder |
+| `window=N` | reads its own output only from its N-byte RAM buffer, never from flash (C callback decoder, `target_read` `NULL`) | 0: no limit |
+| `two_pass=True` | can decode twice, storing the intermediate patch | one pass |
 
 ```python
-plain = tinydelta.encode(old, new)
-twice = tinydelta.encode(b"", tinydelta.encode(old, new, for_compression=True))
-patch, passes = (twice, 2) if len(twice) < len(plain) else (plain, 1)
-
-# On the receiving side:
-inner = tinydelta.decode(b"", patch) if passes == 2 else patch
-assert tinydelta.decode(old, inner) == new
+patch = tinydelta.encode(old, new, two_pass=True, window=256)
+send(patch, passes=patch.passes)       # the device needs the number of passes
+assert tinydelta.decode(old, patch) == new
 ```
-
-`max_distance=N` limits how far back a patch reads its own output, so
-the C callback decoder needs no `target_read` with an N-byte buffer.
 
 ### Coded patches
 
-`decoder_ram=N` allows a range-coded patch, decoded in one pass, when the
-decoder can lend N bytes of RAM to its probability tables (522, 777 or
-1287 bytes for the three table layouts; see the
+`coder_tables=N` allows a range-coded patch, decoded in one pass, when
+the decoder has an N-byte buffer for its probability tables (522, 777
+or 1287 bytes for the three table layouts; see the
 [main README](https://github.com/simon-b-bjerg/tinydelta#coded-patches)).
 Firmware patches typically come out about 40% smaller; the smallest
 patch is returned, so a tiny update that codes no smaller stays plain:
 
 ```python
-patch = tinydelta.encode(old, new, decoder_ram=777)
+patch = tinydelta.encode(old, new, coder_tables=777)
 assert tinydelta.decode(old, patch) == new
 ```
 

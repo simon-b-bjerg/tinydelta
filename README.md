@@ -72,8 +72,8 @@ delta tools: firmware (MicroPython builds for four Cortex-M boards,
 microcontroller device trees, 3–20 KB). Every patch was decoded again
 and checked against the target.
 For each update, tinydelta's figure is the smaller of its plain patch
-and its [compression-mode](#compression-mode) patch, the one an update
-server would send.
+and its [two-pass](#two-pass-patches) patch, the one an update server
+would send. [Coded patches](#coded-patches) aren't in it yet.
 
 ![Every pair: tinydelta against open-vcdiff, HPatchLite, detools, bsdiff and zstd](docs/benchmark/pairs.svg)
 
@@ -130,9 +130,10 @@ What you give up:
   that change code, tinydelta's patch is typically 10% larger than
   HPatchLite's and 31% larger than bsdiff's. Both need decoders several
   to thousands of times larger (see the graph above).
-- **Two passes for large changes.** A compression-mode patch is decoded
-  twice, and the device stores the intermediate patch in between (see
-  [below](#compression-mode)).
+- **Two passes, or the coder, for large changes.** The smallest firmware
+  patches take either two passes, with room for the intermediate patch
+  ([Two-pass patches](#two-pass-patches)), or the optional coder, with
+  its code and tables ([Coded patches](#coded-patches)).
 - **Speed was not compared.** The goal is a small decoder, not a fast one.
 - **Small patch reads.** The callback decoder reads instruction headers
   a few bytes at a time; on slow flash, wrap `patch_read` in a small
@@ -155,8 +156,8 @@ microcontroller boards' device trees (STM32F7, STM32H7, LPC4357) between
 `v7.3-dts`. Details per source are in the [summary](docs/benchmark/summary.md). tinydelta uses the
 library's default encoding, as users get it: optimal, but greedy above
 roughly 100 KB, so greedy for the firmware. Each pair is encoded both
-plain and in compression mode (`encode -for-compression`, then again
-against an empty dictionary) and the smaller counts; both are listed on
+plain and as a two-pass patch (`encode -two-pass`) and the smaller
+counts; both are listed on
 their own in the summary, with how often each wins. The other tools run at their
 smallest settings: open-vcdiff with `-target_matches`, xdelta3 `-9 -S
 none`, HPatchLite `hdiffi -c-tuz-4k` (and `-32k`), detools with
@@ -194,44 +195,38 @@ holds the old and new file in memory. Every figure and its source is in
 
 </details>
 
-## Compression mode
+## Two-pass patches
 
-For updates that change a lot, `encode -for-compression`
-(`EncodeOptions.ForCompression`) makes a patch for a second pass. Where
-the new file still lines up with the old one but a few bytes changed
-(moved addresses, branch offsets), format version 2 stores the
-*difference* from the old bytes, so the same shift gives the same byte
-everywhere. That patch is no smaller by itself, but it compresses very
-well, and tinydelta can compress it: encoded again against an empty
-dictionary, its repeats become short copies. Where version 2 doesn't
-pay off, the first pass is an ordinary version 1 patch.
+For updates that change a lot, `encode -two-pass` (`EncodeOptions.TwoPass`)
+may return a patch the device decodes twice. Its first pass, made for
+compression, stores where the new file still lines up with the old one
+but a few bytes changed (moved addresses, branch offsets) as the
+*difference* from the old bytes (format version 2), so the same shift
+gives the same byte everywhere. tinydelta then compresses that patch: the
+second pass encodes it against an empty dictionary, and its repeats
+become short copies.
 
 ```text
 update server:  old + new ──v2──▶ inner ──v1──▶ outer     (sent)
 device:         outer ──v1──▶ inner ──v2──▶ new
 ```
 
-In the benchmark, it pays off on large changes: on firmware updates
-the two-pass patch is the smaller in 96% of them, and picking the
-smaller of the two gives patches about half the size of plain ones
-(2.1× smaller on patches of 1 KB and up). On configuration updates,
-small changes to small files, the plain patch is the smaller in 84% of
-them, typically by a few bytes, and a single pass is all they need. The [benchmark](#benchmark)
-counts the smaller of the two.
+The encoder returns whichever is smaller, plain or two-pass, and says
+which: the CLI prints `passes 1` or `passes 2`, Go's `Patch.Passes` and
+Python's `Patch.passes` carry it. Send it with the patch; it is not part
+of it. In the benchmark, two passes win on 96% of firmware updates and
+about halve them (2.1× smaller on patches of 1 KB and up); on small
+configuration updates the plain patch is the smaller in 84% of them,
+typically by a few bytes. The [benchmark](#benchmark) counts the
+smaller of the two.
 
-Each layer starts with its version byte, and the decoders read both
-versions; only the number of passes, one or two, comes from the
-update's metadata. The device needs room for the inner patch between
-the two passes.
-
-On the update server, make the plain patch and the two-pass one, and
-send the smaller:
+Two passes cost no decoder code, only time and room for the inner patch
+between the passes. Where the decoder can afford the coder,
+[coded patches](#coded-patches) are smaller still, in one pass.
 
 ```sh
-tinydelta encode old.bin new.bin plain.td                    # 1 pass
-tinydelta encode -for-compression old.bin new.bin inner.td
-tinydelta encode /dev/null inner.td twice.td                 # 2 passes
-[ "$(wc -c < twice.td)" -lt "$(wc -c < plain.td)" ] && passes=2 || passes=1
+tinydelta encode -two-pass old.bin new.bin update.td    # prints "passes 1" or "passes 2"
+tinydelta decode -two-pass old.bin update.td new.bin    # for "passes 2"
 ```
 
 <details>
@@ -264,10 +259,9 @@ if (result == TINYDELTA_OK) {
 }
 ```
 
-The final hash of the new firmware covers both passes. Encode a pass
-with `-max-distance 256` (`MaxTargetDistance`) and it never reads its
-own output further back than the buffer holds: its `target_read` can be
-`NULL`.
+The final hash of the new firmware covers both passes. Encode with
+`-window 256` (`EncodeOptions.Window`) and neither pass reads its own
+output further back than the buffer holds: `target_read` can be `NULL`.
 
 </details>
 
@@ -284,9 +278,9 @@ instructions and their meaning are exactly those of a plain patch.
 
 The price is on the device, so it is optional twice over: the C
 decoders only read coded patches when built with `TINYDELTA_CODER = 1`,
-and the encoder only makes one when told how much RAM the decoder can
-lend to the coder's probability tables, for as long as it decodes
-(a local array is fine):
+and the encoder only makes one when told the size of the decoder's
+buffer for the coder's probability tables, needed for as long as it
+decodes (a local array is fine):
 
 | table layout | RAM | firmware patches, sample below |
 |---|---:|---:|
@@ -304,7 +298,7 @@ smaller: a few bytes of coder setup outweigh the gain on a 20-byte
 patch, and the encoder then returns the plain one.
 
 ```sh
-tinydelta encode -decoder-ram 777 old.bin new.bin update.td   # coded if smaller, layout A, B or C as RAM allows
+tinydelta encode -coder-tables 777 old.bin new.bin update.td   # coded if smaller, with tables that fit 777 bytes
 ```
 
 On the device (`TINYDELTA_CODER = 1`, plus `tinydelta_coder.c`):
@@ -314,16 +308,16 @@ uint8_t tables[TINYDELTA_CODED_TABLES_B];   /* memory decoder: 777 B, short-live
 result = tinydelta_decode_coded(p_dict, dict_len, p_patch, patch_len, p_target, target_cap,
                                 tables, sizeof tables, &target_len);
 
-uint8_t work[TINYDELTA_CODED_TABLES_B + 256u]; /* callback decoder: the tables, then the 256 B ring */
-io.p_buffer = work; io.buffer_size = sizeof work; io.page_size = 256u;
+uint8_t page[256];                             /* callback decoder: its buffer, as for plain patches */
+io.p_buffer = page; io.buffer_size = sizeof page; io.page_size = 256u;
+io.p_tables = tables; io.tables_size = sizeof tables;
 result = tinydelta_decode_io(&io, &target_len);
 ```
 
-The callback decoder takes the tables from the front of its buffer and
-uses the rest as the page cache and ring, which must still be a power
-of two. A patch that needs more RAM than the buffer (or a build without
-the coder) is rejected with `TINYDELTA_ERR_VERSION` before anything is
-written. The code it costs is under
+`-coder-tables` is the size of the device's tables buffer
+(`tables_size`): one number links the two. A patch whose tables need
+more than the buffer, or a build without the coder, is rejected with
+`TINYDELTA_ERR_VERSION` before anything is written. The code it costs is under
 [Code size and stack](#code-size-and-stack); the format is under
 [Wire format](#coded-form).
 
@@ -355,7 +349,7 @@ The [benchmark](#benchmark) shows what that costs and buys.
 
 - [Highlights](#highlights)
 - [Benchmark](#benchmark)
-- [Compression mode](#compression-mode)
+- [Two-pass patches](#two-pass-patches)
 - [Coded patches](#coded-patches)
 - [Why another delta format?](#why-another-delta-format)
 - [Installation](#installation)
@@ -434,8 +428,8 @@ patch = tinydelta.encode(old, new)
 assert tinydelta.decode(old, patch, max_size=len(new)) == new
 ```
 
-`encode` also takes `for_compression` and `max_distance`, for
-[compression mode](#compression-mode). The wheels (Linux and Windows,
+`encode` also takes `coder_tables`, `window` and `two_pass`, which
+describe the device's decoder (see [Command-line usage](#command-line-usage)). The wheels (Linux and Windows,
 x86-64 and ARM64, Python 3.9 and later) bundle the command-line tool,
 which the package runs; they also install the `tinydelta` command. See
 [`python/README.md`](python/README.md).
@@ -449,8 +443,8 @@ from a release.
 ## Command-line usage
 
 ```text
-tinydelta encode [-greedy] [-for-compression] [-decoder-ram N] [-max-len N] [-max-distance N] [-v] <dictionary> <target> [<patch>]
-tinydelta decode [-max-size N] [-v] <dictionary> <patch> [<target>]
+tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-max-len N] [-v] <dictionary> <target> [<patch>]
+tinydelta decode [-two-pass] [-max-size N] [-v] <dictionary> <patch> [<target>]
 tinydelta version
 ```
 
@@ -466,11 +460,16 @@ An omitted output file, or `-`, means standard output, and a patch of
 `encode -greedy` trades a few percent of patch size for much faster
 encoding. `encode -max-len N` makes sure no single instruction produces
 more than N target bytes (see [below](#limiting-instruction-length)).
-`encode -for-compression` and `encode -max-distance N` are for patches
-that are compressed or encoded a second time (see
-[Compression mode](#compression-mode)). `encode -decoder-ram N` allows a
-coded patch for a decoder with N bytes of RAM for its tables (see
-[Coded patches](#coded-patches)). `decode -max-size` rejects patches whose output would exceed
+`encode`'s other options describe the device's decoder, and the
+encoder returns the smallest patch it can decode:
+
+| option | the decoder | default |
+|---|---|---|
+| `-coder-tables N` | has the coder, with an N-byte tables buffer (`tables_size`): allows [coded patches](#coded-patches) | 0: no coder |
+| `-window N` | reads its own output only from its N-byte RAM buffer (`buffer_size`, `target_read` `NULL`), never from flash | 0: no limit |
+| `-two-pass` | can decode twice ([Two-pass patches](#two-pass-patches)); prints `passes 1` or `passes 2` | one pass |
+
+`decode -max-size` rejects patches whose output would exceed
 the given size. The exit status is 0 on success, 1 on failure and 2 on
 a usage error.
 
@@ -482,15 +481,12 @@ import "github.com/simon-b-bjerg/tinydelta"
 patch, err := tinydelta.Encode(oldFile, newFile)       // optimizing
 patch, err := tinydelta.EncodeGreedy(oldFile, newFile) // fast
 
-patch, err := tinydelta.EncodeWith(oldFile, newFile, tinydelta.EncodeOptions{
-	MaxInstructionLen: 1024, // no instruction produces more than 1024 bytes
+p, err := tinydelta.EncodeWith(oldFile, newFile, tinydelta.EncodeOptions{
+	CoderTables: 777, // the decoder's coder tables buffer (coded patches)
+	Window:      256, // it reads its output only from a 256-byte RAM buffer
+	TwoPass:     true, // it can decode twice
 })
-patch, err := tinydelta.EncodeWith(oldFile, newFile, tinydelta.EncodeOptions{
-	ForCompression: true, // a patch to encode again (compression mode)
-})
-patch, err := tinydelta.EncodeWith(oldFile, newFile, tinydelta.EncodeOptions{
-	DecoderRAM: 777, // coded if smaller, with tables that fit 777 bytes (coded patches)
-})
+// p.Bytes is the patch, p.Passes 1 or 2
 
 newFile, err := tinydelta.Decode(oldFile, patch)
 newFile, err := tinydelta.DecodeReaderLimit(oldFile, r, maxSize) // from an io.Reader, capped
@@ -500,7 +496,7 @@ newFile, err := tinydelta.DecodeReaderLimit(oldFile, r, maxSize) // from an io.R
 |---|---|
 | `Encode` | Optimizing parse; roughly 100–300 ms for a few KB. Never larger than `EncodeGreedy`'s patch; falls back to greedy above roughly 100 KB to bound memory. |
 | `EncodeGreedy` | One pass with one byte of lookahead; well under a millisecond for a few KB, patches typically a few percent larger. |
-| `EncodeWith` | Either encoder, chosen with `EncodeOptions.Greedy`, with options such as `MaxInstructionLen`, `ForCompression` and `MaxTargetDistance` ([Compression mode](#compression-mode)), and `DecoderRAM` ([Coded patches](#coded-patches)). |
+| `EncodeWith` | The smallest patch the decoder described by `EncodeOptions` can decode (`CoderTables`, `Window`, `TwoPass`, `MaxInstructionLen`, `Greedy`), as a `Patch`: the bytes and the number of passes. |
 | `Decode`, `DecodeReader` | Apply a patch from a byte slice or an `io.Reader`. |
 | `DecodeReaderLimit` | As `DecodeReader`, but fails with `ErrTooLarge` before the target would exceed a size you choose. |
 
@@ -628,8 +624,8 @@ partial-page programming.
 
 The buffer also keeps the last `buffer_size` bytes of the target, so
 `COPY_TARGET` reads from RAM instead of flash. A copy reaching further
-back reads flash through `target_read`. Encode with `-max-distance` set
-to the buffer size (`EncodeOptions.MaxTargetDistance`) and there are no
+back reads flash through `target_read`. Encode with `-window` set to
+the buffer size (`EncodeOptions.Window`) and there are no
 such copies: `target_read` can be `NULL`, and a patch that does reach
 further back is rejected as malformed. On the benchmark, the limit
 typically makes firmware and configuration patches 2% larger with a
@@ -663,7 +659,7 @@ tinydelta_result_t apply_patch(uint32_t dict_len, uint32_t patch_len, uint32_t t
     tinydelta_io_t io = {
         .patch_read = region_read, .p_patch_ctx = (void *)(uintptr_t)PATCH_BASE, .patch_len = patch_len,
         .dict_read = region_read, .p_dict_ctx = (void *)(uintptr_t)DICT_BASE, .dict_len = dict_len,
-        .target_write = region_program, .target_read = region_read,  /* NULL for patches made with -max-distance 256 */
+        .target_write = region_program, .target_read = region_read,  /* NULL for patches made with -window 256 */
         .p_target_ctx = (void *)(uintptr_t)TARGET_BASE, .target_cap = target_cap,
         .p_buffer = page, .buffer_size = FLASH_PAGE, .page_size = FLASH_PAGE,
     };
@@ -813,7 +809,7 @@ else before, between or after them. Decoding needs the **dictionary**
 (the old file) and produces the **target** (the new file).
 
 ```text
-patch = version (1 byte: 0x01, or 0x02 for compression mode) + instructions
+patch = version (1 byte: 0x01, or 0x02 for a two-pass patch's first pass) + instructions
 ```
 
 A decoder rejects a patch whose version byte it doesn't implement, and
@@ -854,7 +850,7 @@ len    = v >> 2        // number of target bytes this instruction produces
 | 3 | `COPY_TARGET` | zigzag `delta` | `len` bytes from the target already produced, starting at `pos + delta` (must be `< pos`), copied byte by byte |
 
 Format version 2, made for patches that are compressed afterwards (see
-[Compression mode](#compression-mode)), is identical except for opcode 3:
+[Two-pass patches](#two-pass-patches)), is identical except for opcode 3:
 
 | opcode | name | followed by | produces |
 |---|---|---|---|
@@ -1016,7 +1012,7 @@ comparison at the cursor so that even 1–3 byte unchanged runs become a
   encoded size. The cursor is what makes this worthwhile: a slightly
   shorter match that keeps the cursor aligned can save more later than
   a longer one that moves it, which is where greedy loses a few percent.
-- **For compression** (`-for-compression`) adds a cover encoder, like
+- **Two-pass** (`-two-pass`) first passes, and coded patches, add a cover encoder, like
   bsdiff's: it finds regions that line up with the dictionary apart from
   a few changed bytes, writes them as `SKIP` and `ADD_DIFF`, and
   realigns with `COPY` between them. It also makes a version 1 patch and
@@ -1036,6 +1032,7 @@ scripts/c-coverage.sh fuzz-corpus   # how much of the C library the fuzzer reach
 scripts/c-size.sh      # Cortex-M code size and stack (needs arm-none-eabi-gcc)
 scripts/c-size-msp430.sh  # MSP430 code size and stack (needs msp430-elf-gcc)
 go test -run '^$' -fuzz '^FuzzEncodeRoundTrip$' -fuzztime 5m .   # fuzz the encoders
+go test -run '^$' -fuzz '^FuzzDecode$' -fuzztime 5m .            # fuzz the decoder
 ```
 
 ### Tests
@@ -1046,11 +1043,12 @@ What is tested, and how:
 |---|---|
 | Go unit tests (`decode_test.go`, `format_test.go`) | each instruction, varint and zigzag edge cases, the 32-bit varint limit, and that malformed patches (truncated, out of range, forward `COPY_TARGET`, huge `ADD`) fail cleanly instead of panicking |
 | Round trips (`interop_test.go`, `limit_test.go`) | both encoders on fixed 3 KB fixtures and random mutations decode back exactly; `MaxInstructionLen` is respected; the optimizing encoder is never worse than greedy |
-| `FuzzEncodeRoundTrip` (Go fuzzing) | derives a target from a fuzzed dictionary with a fuzzed edit script (overwrite, insert, delete, repeat, append); both encoders' patches must decode back to it, decode with an output cap of exactly the target length but fail one byte short, respect `MaxInstructionLen`, and the optimizing patch must not be larger than the greedy one |
+| `FuzzEncodeRoundTrip` (Go fuzzing) | derives a target from a fuzzed dictionary with a fuzzed edit script (overwrite, insert, delete, repeat, append); both encoders' patches must decode back to it, decode with an output cap of exactly the target length but fail one byte short, respect `MaxInstructionLen`, and the optimizing patch must not be larger than the greedy one; coded patches in every layout and every combination of decoder options round-trip |
+| `FuzzDecode` (Go fuzzing) | arbitrary plain and coded patches into the Go decoder: an error, never a panic, and never output past the capacity |
 | `TestCDecoderMatchesGo`, `TestCIODecoderMatchesGo` | the C decoders against the Go decoder on valid, truncated and corrupted patches and too-small output buffers, at several buffer and flash-page sizes; the test driver polices the callback contract (sequential whole-page programming, no reads of unwritten data) |
 | `TestCIODecoderCallbackFailures` | a failing read or write callback stops decoding with `TINYDELTA_ERR_IO` |
 | `TestCIODecoderWithoutTargetRead`, `TestCIODecoderBufferChecks` | the callback decoder decodes patches limited to its buffer without `target_read`, and rejects one that reaches further back, and a bad buffer or page size |
-| `TestTwoPass`, `TestCTwoPass` | [compression mode](#compression-mode) end to end: the outer patch decoded, then the inner one, with the Go decoder and both C decoders |
+| `TestTwoPass`, `TestCTwoPass` | [two-pass patches](#two-pass-patches) end to end: the outer patch decoded, then the inner one, with the Go decoder and both C decoders |
 | `TestVectors`, `TestCVectors` | the Go decoder, the C memory decoder and the C callback decoder (several buffer and page sizes) against every [conformance vector](#conformance-vectors) |
 | C fuzzing ([`c/fuzz/fuzz_decode.c`](c/fuzz/fuzz_decode.c)) | libFuzzer with AddressSanitizer and UndefinedBehaviorSanitizer: every input through an independent reference decoder and all C decoder configurations, which must agree exactly; any memory error, undefined behaviour or breach of the callback contract fails; injected callback failures must give `TINYDELTA_ERR_IO` |
 | `scripts/c-check.sh` | the C library builds with strict warnings as errors |
@@ -1104,7 +1102,7 @@ There are two, one for each side of the format:
 
 | job | runs |
 |---|---|
-| Go tests (Go 1.21 and current) | `gofmt`, `go vet`, `go test ./...` (including the C decoder tests, built with gcc on x86-64); on current Go also 60 s of `FuzzEncodeRoundTrip`, starting from the nightly corpus |
+| Go tests (Go 1.21 and current) | `gofmt`, `go vet`, `go test ./...` (including the C decoder tests, built with gcc on x86-64); on current Go also 60 s of `FuzzEncodeRoundTrip` and 30 s of `FuzzDecode`, starting from the nightly corpus |
 | C decoders fuzzed | `scripts/c-fuzz.sh 60`, starting from the nightly corpus; crashing inputs are hex dumped in the log and uploaded as a build artifact. Then `scripts/c-coverage.sh` reports how much of the C library the corpus reaches, with the lines it never reaches, in the job summary |
 | Go coverage | `go test -cover` over the library and the CLI, per function in the job summary |
 | Update coverage badges | on pushes to `main` only: writes the Go and C coverage figures and the number of conformance vectors for the badges above to the `badges` branch |
@@ -1114,7 +1112,7 @@ There are two, one for each side of the format:
 | C decoders model-checked | `scripts/c-cbmc.sh` (CBMC from Ubuntu's packages), a few minutes |
 | License headers (REUSE) | `reuse lint`: every file carries an SPDX license header, or is covered by [`REUSE.toml`](REUSE.toml) |
 | CodeQL (separate workflow, also weekly) | CodeQL over the Go code and the C library |
-| Nightly fuzzing (separate workflow) | every night on `main`, an hour each of the C fuzzer and `FuzzEncodeRoundTrip`, continuing from the previous night's corpus, kept in the Actions cache; crashing inputs are uploaded as artifacts |
+| Nightly fuzzing (separate workflow) | every night on `main`, an hour each of the C fuzzer and `FuzzEncodeRoundTrip`, and a quarter of that of `FuzzDecode`, continuing from the previous night's corpus, kept in the Actions cache; crashing inputs are uploaded as artifacts |
 | C library on 32-bit ARM | `scripts/c-check.sh` for x86-64 and ARM, the C decoder tests on 32-bit ARM under QEMU, and the Cortex-M code size and stack report (informational) |
 | C library on MSP430 | `scripts/c-check.sh` for 16-bit MSP430 and MSP430X (small and large memory models), the C decoder tests on MSP430X under GNU's MSP430 instruction simulator, and the MSP430 code size and stack report (informational). The toolchain is built from GNU sources by [`scripts/msp430-toolchain.sh`](scripts/msp430-toolchain.sh) and cached |
 
