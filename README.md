@@ -541,13 +541,13 @@ even on Cortex-M0). Reproduce with [`scripts/c-size.sh`](scripts/c-size.sh).
 | part | Cortex-M0 | Cortex-M3 | Cortex-M4 | stack (Cortex-M0) |
 |---|---:|---:|---:|---:|
 | memory decoder | 500 B | 470 B | 470 B | ~110 B |
-| callback decoder | 876 B | 838 B | 836 B | ~185 B\* |
+| callback decoder | 876 B | 836 B | 836 B | ~185 B\* |
 | memory decoder + coder | 1,404 B | 1,332 B | 1,332 B | ~290 B |
-| callback decoder + coder | 1,728 B | 1,688 B | 1,688 B | ~305 B\* |
+| callback decoder + coder | 1,708 B | 1,692 B | 1,696 B | ~305 B\* |
 
 \* Deepest path, excluding your buffer and your callbacks' own stack
 use. With the coder (`TINYDELTA_CODER = 1`), each decoder grows by
-about 230–280 B and links `tinydelta_coder.c`, 624 B on Cortex-M0, 192 B
+about 210–280 B and links `tinydelta_coder.c`, 624 B on Cortex-M0, 192 B
 of which are its constant state tables; its probability tables are in the
 buffer you pass in ([Coded patches](#coded-patches)).
 
@@ -559,9 +559,9 @@ every 32-bit operation takes several 16-bit instructions.
 | part | MSP430 | MSP430X | MSP430X, `-mlarge` | stack (`-mlarge`) |
 |---|---:|---:|---:|---:|
 | memory decoder | 1,104 B | 1,080 B | 1,200 B | ~145 B |
-| callback decoder | 2,390 B | 2,340 B | 2,530 B | ~230 B\* |
+| callback decoder | 2,350 B | 2,298 B | 2,458 B | ~230 B\* |
 | memory decoder + coder | 2,610 B | 2,544 B | 2,812 B | ~290 B |
-| callback decoder + coder | 3,354 B | 3,262 B | 3,552 B | ~335 B\* |
+| callback decoder + coder | 3,354 B | 3,260 B | 3,554 B | ~335 B\* |
 
 ### Results
 
