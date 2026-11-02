@@ -45,7 +45,9 @@ jobs:
           restore-keys: go-fuzz-corpus-
       - name: Fuzz encode/decode round trips (60 s)
         if: matrix.go == 'stable'
-        run: go test -run '^$' -fuzz '^FuzzEncodeRoundTrip$' -fuzztime 60s .
+        run: |
+          go test -run '^$' -fuzz '^FuzzEncodeRoundTrip$' -fuzztime 60s .
+          go test -run '^$' -fuzz '^FuzzDecode$' -fuzztime 30s .
       - name: Hex dump failing fuzz inputs
         if: failure() && matrix.go == 'stable'
         run: |
@@ -153,7 +155,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-24.04, windows-latest] # ubuntu-latest (26.04) has no Python 3.9
         python: ['3.9', '3.x'] # oldest supported and current
     defaults:
       run:

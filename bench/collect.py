@@ -54,8 +54,14 @@ def clone(spec, src):
     after it, and much smaller for a repository as large as Linux."""
     shallow = ["--shallow-since=" + spec["shallow_since"]] if "shallow_since" in spec else []
     if not os.path.isdir(os.path.join(src, ".git")):
+        # A fresh clone brings the tags in its history; fetching every tag
+        # into a shallow clone can fail ("error processing shallow info").
         subprocess.run(["git", "clone", "-q", "--filter=blob:none", "--no-checkout"] + shallow + [spec["repo"], src], check=True)
-    git(src, "fetch", "-q", "--tags", *shallow, "origin")
+        return
+    try:
+        git(src, "fetch", "-q", "--tags", *shallow, "origin")
+    except subprocess.CalledProcessError:
+        git(src, "fetch", "-q", *shallow, "origin")
 
 
 def commits_touching(src, first, last, paths, first_parent=True):

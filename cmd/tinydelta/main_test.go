@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,6 +50,50 @@ func TestEncodeDecodeFiles(t *testing.T) {
 		got, _ := os.ReadFile(out)
 		if !bytes.Equal(got, want) {
 			t.Fatalf("round trip with %v: got %q, want %q", flags, got, want)
+		}
+	}
+}
+
+// TestEncodeOptions checks the decoder options: every combination round
+// trips, -two-pass prints the number of passes, and decode -two-pass
+// decodes such a patch.
+func TestEncodeOptions(t *testing.T) {
+	dir := t.TempDir()
+	r := rand.New(rand.NewSource(7))
+	old := make([]byte, 20000)
+	r.Read(old)
+	for i := 0; i+4 <= len(old); i += 16 { // addresses that all move when code is inserted
+		old[i], old[i+1], old[i+2], old[i+3] = byte(i), byte(i>>8), 0x20, 0
+	}
+	newFile := append(append(append([]byte{}, old[:5000]...), "inserted"...), old[5000:]...)
+	for i := 5008; i+4 <= len(newFile); i += 16 {
+		newFile[i] += 8
+	}
+	dict, target := filepath.Join(dir, "old"), filepath.Join(dir, "new")
+	os.WriteFile(dict, old, 0o644)
+	os.WriteFile(target, newFile, 0o644)
+	for _, flags := range [][]string{{"-window", "256"}, {"-coder-tables", "777"}, {"-two-pass"}, {"-two-pass", "-coder-tables", "522", "-window", "64"}} {
+		patch, out := filepath.Join(dir, "patch"), filepath.Join(dir, "out")
+		res := runCLI(nil, append(append([]string{"encode"}, flags...), dict, target, patch)...)
+		if res.code != exitOK {
+			t.Fatalf("encode %v: %+v", flags, res)
+		}
+		passes := "1"
+		if strings.Contains(strings.Join(flags, " "), "-two-pass") {
+			if !strings.HasPrefix(res.stderr, "passes ") {
+				t.Fatalf("encode %v: no pass count: %q", flags, res.stderr)
+			}
+			passes = strings.TrimSpace(strings.TrimPrefix(res.stderr, "passes "))
+		}
+		decode := []string{"decode"}
+		if passes == "2" {
+			decode = append(decode, "-two-pass")
+		}
+		if res := runCLI(nil, append(decode, dict, patch, out)...); res.code != exitOK {
+			t.Fatalf("decode %v (%s passes): %+v", flags, passes, res)
+		}
+		if got, _ := os.ReadFile(out); !bytes.Equal(got, newFile) {
+			t.Fatalf("%v: round trip differs", flags)
 		}
 	}
 }

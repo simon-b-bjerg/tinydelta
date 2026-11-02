@@ -15,6 +15,9 @@ FLAGS=(-std=c99 -O2 -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 
-"$CC" "${FLAGS[@]}" -c tinydelta_decode.c -o "$out/decode.o"
-"$CC" "${FLAGS[@]}" -c tinydelta_io.c -o "$out/io.o"
-echo "C library builds cleanly with $CC $*"
+for coder in 0 1; do # without and with coded patches (TINYDELTA_CODER)
+  for f in tinydelta_decode tinydelta_io tinydelta_coder; do
+    "$CC" "${FLAGS[@]}" -DTINYDELTA_CODER=$coder -c $f.c -o "$out/$f-$coder.o"
+  done
+done
+echo "C library builds cleanly with $CC $*, with and without TINYDELTA_CODER"

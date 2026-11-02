@@ -28,8 +28,9 @@ results, so the inputs can be rebuilt and checked.
 
 | tool | settings |
 |---|---|
-| tinydelta | per pair, the smaller of the plain patch (`encode`, the library's default: optimal, falling back to greedy above roughly 100 KB, so greedy for these firmware images) and the compression-mode patch (`encode -for-compression`, then `encode` again against an empty dictionary), the one an update server would send. This is the tinydelta in every graph and comparison |
-| tinydelta variants | in the summary only: `encode -greedy`; compression mode with its second pass limited to `-max-distance 1024`; the plain patch limited to `-max-distance 256`, `1024` and `4096`, which the callback decoder decodes without `target_read` with a buffer of that size. Optimal at any size (`TestEncodeUnlimited`, the encoder's memory limit lifted) is available with `run.py --tools ...,tinydelta_optimal`, but is not run by default: it takes a few hundred MB and a minute or more per firmware pair |
+| tinydelta | the coded patch for a decoder with 777 B of coder tables (`encode -coder-tables 777`: the smaller of the plain patch and the coded ones that fit, decoded in one pass), the one an update server would send to a decoder built with the coder. This is the tinydelta in every comparison |
+| tinydelta, plain or two-pass | for a decoder without the coder: per pair, the smaller of the plain patch (`encode`, the library's default: optimal, falling back to greedy above roughly 100 KB, so greedy for these firmware images) and the two-pass patch (`encode -two-pass`). In the trade-off graph next to the coded one, each with its own decoder footprint |
+| tinydelta variants | in the summary and the patch-share graphs: `encode -greedy`; the two-pass patch on its own and with `-window 1024`; coded patches with `-coder-tables 522` and `1287`; the plain patch with `-window 256`, `1024` and `4096` (summary only), which the callback decoder decodes without `target_read` with a buffer of that size. Optimal at any size (`TestEncodeUnlimited`, the encoder's memory limit lifted) is available with `run.py --tools ...,tinydelta_optimal`, but is not run by default: it takes a few hundred MB and a minute or more per firmware pair |
 | open-vcdiff | `encode -target_matches`, its smallest setting |
 | open-vcdiff, zlib-compressed | open-vcdiff's patch compressed afterwards with zlib (DEFLATE) at level 9; the decoder would need zlib too, which the trade-off graph doesn't show |
 | tiny-vcdiff | open-vcdiff with `-interleaved`, the VCDIFF variant that [tiny-vcdiff](https://github.com/jue89/tiny-vcdiff), an embedded decoder, reads; in the trade-off graph only, with tiny-vcdiff's code and RAM |
@@ -67,8 +68,10 @@ commits to `bench-results-preview`, replaced each time. The results:
 
 Every graph is also a PNG, for slides. Every comparison has one baseline,
 "tinydelta" as defined above, as sent. Its footprint is the callback
-decoder with a 256-byte buffer. The summary also lists the plain patch
-and compression mode on their own, and how often compression mode wins.
+decoder with the coder, a 256-byte buffer and 777 B of coder tables; the
+trade-off graph also shows the plain or two-pass patch, at the footprint
+of the callback decoder without the coder and a 256-byte buffer. The
+summary lists every variant on its own, and how often two-pass wins.
 
 Decoder footprints ([`decoders.json`](decoders.json)) are code plus the
 RAM buffers a decoder needs (dictionaries, windows, caches); stack is

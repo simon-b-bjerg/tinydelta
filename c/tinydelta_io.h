@@ -14,8 +14,8 @@
  * last buffer_size bytes of the target, so a COPY_TARGET reaching back at
  * most buffer_size bytes is served from RAM; one reaching further reads
  * flash through target_read. Patches made with
- * EncodeOptions.MaxTargetDistance = buffer_size (CLI: encode
- * -max-distance) never do, and then target_read may be NULL. */
+ * EncodeOptions.Window = buffer_size (CLI: encode -window) never do, and
+ * then target_read may be NULL. */
 #ifndef TINYDELTA_IO_H
 #define TINYDELTA_IO_H
 
@@ -63,6 +63,13 @@ typedef struct {
     uint8_t *p_buffer;
     uint32_t buffer_size;
     uint32_t page_size;
+    /* Coded patches only (TINYDELTA_CODER = 1, README.md "Coded
+     * patches"): the coder's tables, tables_size bytes, for as long as the
+     * patch decodes; the encoder's coder_tables. NULL and 0 for plain
+     * patches only; a coded patch whose tables need more is rejected with
+     * TINYDELTA_ERR_VERSION. */
+    uint8_t *p_tables;
+    uint32_t tables_size;
 } tinydelta_io_t;
 
 /* Applies the patch to the dictionary, writing the target through
