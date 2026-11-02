@@ -20,7 +20,8 @@ typedef uint8_t (*tinydelta_raw_fn_t)(void *p_ctx, uint32_t index);
 /* Reads the next varint of the patch header. */
 typedef tinydelta_result_t (*tinydelta_varint_fn_t)(void *p_ctx, uint32_t *p_value);
 
-/* Bytes of RAM per map entry: start, length, shift, each 32 bits. */
+/* Bytes of RAM per map entry: start, length, shift, each 32 bits (and 8 per
+ * MSP430X data run: start, length). */
 #define TINYDELTA_RELOC_ENTRY_SIZE 12u
 
 /* The map and how to read the raw old image: from p_dict when it is in
@@ -28,6 +29,8 @@ typedef tinydelta_result_t (*tinydelta_varint_fn_t)(void *p_ctx, uint32_t *p_val
 typedef struct {
     const uint8_t *p_entries; /* count entries of TINYDELTA_RELOC_ENTRY_SIZE bytes */
     uint32_t count;
+    const uint8_t *p_runs; /* MSP430X: run_count data runs, 8 bytes each: start and length in 256-byte blocks */
+    uint32_t run_count;
     uint32_t base;         /* the old image's address on the device */
     uint32_t dict_len;     /* the old image's length */
     const uint8_t *p_dict; /* the old image, or NULL to read it through raw */

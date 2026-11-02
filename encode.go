@@ -142,12 +142,19 @@ func EncodeWith(dict, target []byte, opts EncodeOptions) (Patch, error) {
 		full := relocMapFrom(dict, target, opts.Relocation, opts.ImageBase)
 		for _, layout := range layouts {
 			m := full.limitTo(opts.CoderTables - CodedTablesSize(layout))
-			if len(m.entries) == 0 {
+			if m == nil || len(m.entries) == 0 {
 				continue
 			}
-			rd := m.relocate(dict)
-			for _, candidate := range [][]byte{plain(rd, target), withVersion(FormatVersion2, encodeCovers(rd, target, maxLen))} {
-				consider(encodeCodedReloc(candidate, layout, m), 1)
+			// With and without data runs (MSP430X), as either may be smaller.
+			maps := []*relocMap{m}
+			if md := m.withDataRuns(dict, target).limitTo(opts.CoderTables - CodedTablesSize(layout)); md != nil && len(md.data) > 0 {
+				maps = append(maps, md)
+			}
+			for _, m := range maps {
+				rd := m.relocate(dict)
+				for _, candidate := range [][]byte{plain(rd, target), withVersion(FormatVersion2, encodeCovers(rd, target, maxLen))} {
+					consider(encodeCodedReloc(candidate, layout, m), 1)
+				}
 			}
 		}
 	}

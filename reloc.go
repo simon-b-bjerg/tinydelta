@@ -68,6 +68,18 @@ const relocEntrySize = 12
 // relocMinCover is the shortest cover that becomes a map entry.
 const relocMinCover = 64
 
+// MSP430X data runs: parts of the old image, in whole blocks of
+// relocDataBlock bytes, where the rule looks for 4-byte data pointers
+// instead of instructions (constant tables, initial values). The decoder
+// keeps each run in relocRunSize bytes of RAM.
+const (
+	relocDataBlock = 256
+	relocRunSize   = 8
+)
+
+// relocRun is a data run, in blocks of relocDataBlock bytes.
+type relocRun struct{ start, length uint32 }
+
 type relocEntry struct {
 	start, length uint32
 	shift         int32
@@ -77,6 +89,14 @@ type relocMap struct {
 	arch    Relocation
 	base    uint32
 	entries []relocEntry
+	data    []relocRun // MSP430X only
+}
+
+// inData reports whether old-image offset h is in a data run.
+func (m *relocMap) inData(h int) bool {
+	b := int64(h) / relocDataBlock
+	i := sort.Search(len(m.data), func(i int) bool { return int64(m.data[i].start)+int64(m.data[i].length) > b })
+	return h >= 0 && i < len(m.data) && int64(m.data[i].start) <= b
 }
 
 // shiftAt is the shift of old-image offset o, 0 outside every entry.
@@ -97,7 +117,7 @@ func (m *relocMap) addressShift(addr uint32, n int) int64 {
 	return m.shiftAt(int64(addr - m.base))
 }
 
-func (m *relocMap) ramSize() int { return relocEntrySize * len(m.entries) }
+func (m *relocMap) ramSize() int { return relocEntrySize*len(m.entries) + relocRunSize*len(m.data) }
 
 // appendHeader appends the map as the coded header carries it.
 func (m *relocMap) appendHeader(b []byte) []byte {
@@ -109,6 +129,15 @@ func (m *relocMap) appendHeader(b []byte) []byte {
 		b = appendVarint(b, uint64(e.length))
 		b = appendVarint(b, zigzagEncode(int64(e.shift)))
 		end = e.start + e.length
+	}
+	if m.arch == RelocationMSP430X { // data runs, in blocks
+		b = appendVarint(b, uint64(len(m.data)))
+		end = 0
+		for _, r := range m.data {
+			b = appendVarint(b, uint64(r.start-end))
+			b = appendVarint(b, uint64(r.length))
+			end = r.start + r.length
+		}
 	}
 	return b
 }
@@ -154,6 +183,26 @@ func parseRelocMap(arch Relocation, b []byte) (*relocMap, int, error) {
 		m.entries = append(m.entries, relocEntry{uint32(start), uint32(length), int32(zigzagDecode(z))})
 		end = start + length
 	}
+	if arch == RelocationMSP430X {
+		runs, err := next()
+		if err != nil || runs > uint64(len(b)) {
+			return nil, 0, errRelocMap
+		}
+		end = 0
+		for i := uint64(0); i < runs; i++ {
+			gap, err1 := next()
+			length, err2 := next()
+			if err1 != nil || err2 != nil {
+				return nil, 0, errRelocMap
+			}
+			start := end + gap
+			if start+length > 0xFFFFFFFF {
+				return nil, 0, errRelocMap
+			}
+			m.data = append(m.data, relocRun{uint32(start), uint32(length)})
+			end = start + length
+		}
+	}
 	return m, pos, nil
 }
 
@@ -190,8 +239,13 @@ func relocMapFrom(dict, target []byte, arch Relocation, base uint32) *relocMap {
 	return &relocMap{arch: arch, base: base, entries: out}
 }
 
-// limitTo keeps the longest entries that fit ram bytes of decoder RAM.
+// limitTo keeps the longest entries that fit ram bytes of decoder RAM,
+// after the data runs (all kept; nil if they don't fit).
 func (m *relocMap) limitTo(ram int) *relocMap {
+	ram -= relocRunSize * len(m.data)
+	if ram < 0 {
+		return nil
+	}
 	n := ram / relocEntrySize
 	if n >= len(m.entries) {
 		return m
@@ -200,7 +254,51 @@ func (m *relocMap) limitTo(ram int) *relocMap {
 	sort.SliceStable(es, func(i, j int) bool { return es[i].length > es[j].length })
 	es = es[:max(n, 0)]
 	sort.Slice(es, func(i, j int) bool { return es[i].start < es[j].start })
-	return &relocMap{arch: m.arch, base: m.base, entries: es}
+	return &relocMap{arch: m.arch, base: m.base, entries: es, data: m.data}
+}
+
+// withDataRuns picks the MSP430X data runs for an update: the blocks of
+// the old image where relocating 4-byte data pointers makes more of the
+// covered bytes match the target than the instruction rule does. Returns
+// m with them (m itself if none).
+func (m *relocMap) withDataRuns(dict, target []byte) *relocMap {
+	if m.arch != RelocationMSP430X || len(dict) == 0 {
+		return m
+	}
+	code := m.relocate(dict)
+	all := &relocMap{arch: m.arch, base: m.base, entries: m.entries, data: []relocRun{{0, uint32((len(dict) + relocDataBlock - 1) / relocDataBlock)}}}
+	data := all.relocate(dict)
+	// Per block, how many old bytes match the target once each version is
+	// aligned with it on its own (a table whose every pointer moved only
+	// lines up once relocated).
+	score := make([]int, (len(dict)+relocDataBlock-1)/relocDataBlock) // data matches minus code matches
+	for sign, rel := range map[int][]byte{1: data, -1: code} {
+		for _, c := range findCovers(rel, target) {
+			if c.extra > 0 {
+				continue
+			}
+			for k := 0; k < c.length; k++ {
+				if o := c.oldPos + k; rel[o] == target[c.newPos+k] {
+					score[o/relocDataBlock] += sign
+				}
+			}
+		}
+	}
+	var runs []relocRun
+	for b, s := range score {
+		if s <= 2 { // a few bytes don't pay for a run
+			continue
+		}
+		if len(runs) > 0 && runs[len(runs)-1].start+runs[len(runs)-1].length == uint32(b) {
+			runs[len(runs)-1].length++
+			continue
+		}
+		runs = append(runs, relocRun{uint32(b), 1})
+	}
+	if len(runs) == 0 {
+		return m
+	}
+	return &relocMap{arch: m.arch, base: m.base, entries: m.entries, data: runs}
 }
 
 // relocate returns the old image as the decoder sees it: every address
@@ -268,9 +366,9 @@ type msp430xField struct{ lo, shift int }
 
 // msp430xCandidate decodes what looks like an instruction with 20-bit
 // addresses at h: its length in bytes (0 if none) and its address fields.
-func msp430xCandidate(raw []byte, base uint32, h int) (int, [2]msp430xField, int) {
+func msp430xCandidate(m *relocMap, raw []byte, base uint32, h int) (int, [2]msp430xField, int) {
 	var f [2]msp430xField
-	if h < 0 || h+4 > len(raw) || (base+uint32(h))&1 != 0 {
+	if h < 0 || h+4 > len(raw) || (base+uint32(h))&1 != 0 || m.inData(h) {
 		return 0, f, 0
 	}
 	w0 := uint32(raw[h]) | uint32(raw[h+1])<<8
@@ -318,23 +416,49 @@ func msp430xCandidate(raw []byte, base uint32, h int) (int, [2]msp430xField, int
 
 // msp430xValid: a candidate at h counts unless a candidate up to 6 bytes
 // before reaches over h (h is then one of its address words).
-func msp430xValid(raw []byte, base uint32, h int) (int, [2]msp430xField, int) {
-	l, f, k := msp430xCandidate(raw, base, h)
+func msp430xValid(m *relocMap, raw []byte, base uint32, h int) (int, [2]msp430xField, int) {
+	l, f, k := msp430xCandidate(m, raw, base, h)
 	if l == 0 {
 		return 0, f, 0
 	}
 	for back := 2; back <= 6; back += 2 {
-		if lb, _, _ := msp430xCandidate(raw, base, h-back); lb > back {
+		if lb, _, _ := msp430xCandidate(m, raw, base, h-back); lb > back {
 			return 0, f, 0
 		}
 	}
 	return l, f, k
 }
 
+// msp430xDataPointer reports what looks like a 4-byte data pointer at h,
+// in a data run: high half 1-15, pointing into the image, and returns it.
+func msp430xDataPointer(m *relocMap, raw []byte, h int) (uint32, bool) {
+	if h < 0 || h+4 > len(raw) || (m.base+uint32(h))&1 != 0 || !m.inData(h) {
+		return 0, false
+	}
+	v := uint32(raw[h]) | uint32(raw[h+1])<<8 | uint32(raw[h+2])<<16 | uint32(raw[h+3])<<24
+	if v>>16 == 0 || v>>16 > 0xF || v < m.base || uint64(v-m.base) >= uint64(len(raw)) {
+		return 0, false
+	}
+	return v, true
+}
+
 func relocateMSP430X(m *relocMap, raw, out []byte) {
 	n := len(raw)
 	for h := 0; h+4 <= n; h++ {
-		l, fields, k := msp430xValid(raw, m.base, h)
+		if m.inData(h) {
+			// A data pointer counts unless one 2 bytes before overlaps it.
+			if v, ok := msp430xDataPointer(m, raw, h); ok {
+				if _, before := msp430xDataPointer(m, raw, h-2); !before {
+					if s := m.addressShift(v, n); s != 0 {
+						if nv := int64(v) + s; nv >= 0 && nv < 1<<20 {
+							out[h], out[h+1], out[h+2], out[h+3] = byte(nv), byte(nv>>8), byte(nv>>16), byte(nv>>24)
+						}
+					}
+				}
+			}
+			continue
+		}
+		l, fields, k := msp430xValid(m, raw, m.base, h)
 		if l == 0 {
 			continue
 		}

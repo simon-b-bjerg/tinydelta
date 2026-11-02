@@ -75,6 +75,15 @@ func fakeFirmware(r *rand.Rand, arch Relocation, base uint32, functions int) (ol
 			}
 			img = append(img, p[:]...)
 		}
+		if arch == RelocationMSP430X { // and a constant table of 4-byte pointers, as IAR's DATA20_C
+			for k := 0; k < 4; k++ {
+				for i := range fns {
+					var p [4]byte
+					binary.LittleEndian.PutUint32(p[:], base+uint32(starts[(i*7+k)%len(fns)]))
+					img = append(img, p[:]...)
+				}
+			}
+		}
 		return img
 	}
 	old = build(fns, calls)
@@ -122,6 +131,9 @@ func TestRelocationRoundTrip(t *testing.T) {
 		}
 		if reloc.Bytes[1]>>2 != byte(c.arch) {
 			t.Fatalf("%v: relocation not chosen (features 0x%02x)", c.arch, reloc.Bytes[1])
+		}
+		if r, _ := newCodedReader(reloc.Bytes); c.arch == RelocationMSP430X && len(r.reloc.data) == 0 {
+			t.Errorf("%v: no data runs for the pointer table", c.arch)
 		}
 		if len(reloc.Bytes)*2 > len(plain.Bytes) {
 			t.Errorf("%v: %d B with relocation, %d B without; want at most half", c.arch, len(reloc.Bytes), len(plain.Bytes))
@@ -196,7 +208,10 @@ func TestCRelocation(t *testing.T) {
 		}
 		var patches [][]byte
 		for _, layout := range []int{codedLayoutA, codedLayoutB, codedLayoutC} {
-			m := relocMapFrom(old, new, c.arch, c.base)
+			m := relocMapFrom(old, new, c.arch, c.base).withDataRuns(old, new)
+			if c.arch == RelocationMSP430X && len(m.data) == 0 {
+				t.Fatalf("%v: no data runs to test", c.arch)
+			}
 			rd := m.relocate(old)
 			v1, _ := Encode(rd, new)
 			patches = append(patches, encodeCodedReloc(v1, layout, m), encodeCodedReloc(withVersion(FormatVersion2, encodeCovers(rd, new, MaxSize)), layout, m))

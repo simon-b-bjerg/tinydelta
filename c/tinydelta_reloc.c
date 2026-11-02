@@ -38,42 +38,56 @@ static uint32_t load_le32(const uint8_t *p_bytes) {
     return value;
 }
 
+/* Reads a list from the header: a count, then per record its fields as
+ * varints (gap since the previous record's end, length, and for 3 fields a
+ * zigzag shift), stored at *pp_storage as 4-byte start, length[, shift].
+ * TINYDELTA_ERR_VERSION if it doesn't fit the *p_size bytes left. */
+static tinydelta_result_t
+read_list(tinydelta_varint_fn_t varint, void *p_varint_ctx, uint8_t **pp_storage, uint32_t *p_size, uint32_t fields, uint32_t *p_count) {
+    uint32_t end              = 0u;
+    tinydelta_result_t result = varint(p_varint_ctx, p_count);
+
+    for (uint32_t index = 0u; (result == TINYDELTA_OK) && (index < *p_count); index++) {
+        uint32_t record[3] = {0u, 0u, 0u}; /* gap, length, zigzag shift as read */
+
+        if (*p_size < (fields << 2)) {
+            return TINYDELTA_ERR_VERSION; /* doesn't fit the tables buffer */
+        }
+        *p_size -= fields << 2;
+        for (uint32_t field = 0u; (result == TINYDELTA_OK) && (field < fields); field++) {
+            result = varint(p_varint_ctx, &record[field]);
+        }
+        if ((result == TINYDELTA_OK) && !range_within(record[0], record[1], 0xFFFFFFFFu - end)) {
+            result = TINYDELTA_ERR_MALFORMED; /* past 32 bits */
+        }
+        record[0] += end;
+        record[2] = zigzag_decode(record[2]);
+        end       = record[0] + record[1];
+        for (uint32_t field = 0u; field < fields; field++) {
+            store_le32(*pp_storage, record[field]);
+            *pp_storage += 4u;
+        }
+    }
+    return result;
+}
+
 tinydelta_result_t
 tinydelta_reloc_read_map(tinydelta_reloc_t *p_reloc, tinydelta_varint_fn_t varint, void *p_varint_ctx, uint8_t *p_storage, uint32_t storage_size) {
-    uint32_t end              = 0u;
     tinydelta_result_t result = varint(p_varint_ctx, &p_reloc->base);
 
-    if (result == TINYDELTA_OK) {
-        result = varint(p_varint_ctx, &p_reloc->count);
-    }
-    if (result != TINYDELTA_OK) {
-        return result;
-    }
-    if ((p_reloc->count > 0x0FFFFFFFu) || ((p_reloc->count * TINYDELTA_RELOC_ENTRY_SIZE) > storage_size)) { /* no division on 16-bit cores */
-        return TINYDELTA_ERR_VERSION;                                                                       /* the map doesn't fit the tables buffer */
-    }
     p_reloc->p_entries = p_storage;
-    for (uint32_t index = 0u; index < p_reloc->count; index++) {
-        uint32_t entry[3]; /* gap, length, zigzag shift as read */
-
-        for (uint32_t field = 0u; field < 3u; field++) {
-            result = varint(p_varint_ctx, &entry[field]);
-            if (result != TINYDELTA_OK) {
-                return result;
-            }
-        }
-        if (!range_within(entry[0], entry[1], 0xFFFFFFFFu - end)) {
-            return TINYDELTA_ERR_MALFORMED; /* past 32 bits */
-        }
-        entry[0] += end;
-        entry[2] = zigzag_decode(entry[2]);
-        end      = entry[0] + entry[1];
-        for (uint32_t field = 0u; field < 3u; field++) {
-            store_le32(p_storage, entry[field]);
-            p_storage += 4u;
-        }
+    p_reloc->run_count = 0u;
+    if (result == TINYDELTA_OK) {
+        result = read_list(varint, p_varint_ctx, &p_storage, &storage_size, 3u, &p_reloc->count);
     }
-    return TINYDELTA_OK;
+#if TINYDELTA_RELOC == TINYDELTA_RELOC_MSP430X
+    /* Data runs, in blocks of 256 bytes. */
+    p_reloc->p_runs = p_storage;
+    if (result == TINYDELTA_OK) {
+        result = read_list(varint, p_varint_ctx, &p_storage, &storage_size, 2u, &p_reloc->run_count);
+    }
+#endif
+    return result;
 }
 
 /* The shift of an address, if it points into the old image; else 0. */
@@ -177,6 +191,39 @@ void tinydelta_reloc_span(const tinydelta_reloc_t *p_reloc, uint32_t offset, uin
 
 #elif TINYDELTA_RELOC == TINYDELTA_RELOC_MSP430X
 
+/* Whether old-image offset h is in a data run (runs are in 256-byte blocks). */
+static bool in_data(const tinydelta_reloc_t *p_reloc, uint32_t h) {
+    const uint8_t *p_run = p_reloc->p_runs;
+    uint32_t block       = h >> 8;
+
+    for (uint32_t index = 0u; index < p_reloc->run_count; index++) {
+        uint32_t start = load_le32(p_run);
+
+        if (start > block) {
+            break; /* runs are in order */
+        }
+        if ((block - start) < load_le32(p_run + 4u)) {
+            return true;
+        }
+        p_run += 8u;
+    }
+    return false;
+}
+
+/* What looks like a 4-byte data pointer at h, in a data run: high half
+ * 1-15, pointing into the image (0 if none). */
+static uint32_t data_pointer(const tinydelta_reloc_t *p_reloc, uint32_t h) {
+    uint32_t pointer = 0u;
+
+    if (even_fits(p_reloc, h, 4u) && in_data(p_reloc, h)) {
+        pointer = raw16(p_reloc, h) | (raw16(p_reloc, h + 2u) << 16);
+        if (((pointer >> 16) == 0u) || ((pointer >> 16) > 0xFu) || (pointer < p_reloc->base) || ((pointer - p_reloc->base) >= p_reloc->dict_len)) {
+            pointer = 0u;
+        }
+    }
+    return pointer;
+}
+
 /* The length in bytes of what looks like an instruction with 20-bit
  * addresses at h (0 if none). *p_fields gets its address fields, up to
  * two of 8 bits each, the first in the low bits: per field, the position
@@ -187,7 +234,7 @@ static uint32_t msp430x_candidate(const tinydelta_reloc_t *p_reloc, uint32_t h, 
     uint32_t length = 4u;
 
     *p_fields = 0u;
-    if (!even_fits(p_reloc, h, 4u)) {
+    if (!even_fits(p_reloc, h, 4u) || in_data(p_reloc, h)) {
         return 0u;
     }
     w0 = raw16(p_reloc, h);
@@ -234,7 +281,24 @@ void tinydelta_reloc_span(const tinydelta_reloc_t *p_reloc, uint32_t offset, uin
 
     for (uint32_t h = (offset >= 7u) ? (offset - 7u) : 0u; h < end; h++) {
         uint32_t fields;
-        uint32_t size = msp430x_candidate(p_reloc, h, &fields);
+        uint32_t size;
+
+        if (in_data(p_reloc, h)) {
+            /* A data pointer counts unless one 2 bytes before overlaps it. */
+            uint32_t pointer = data_pointer(p_reloc, h);
+
+            if ((pointer != 0u) && ((h < 2u) || (data_pointer(p_reloc, h - 2u) == 0u))) {
+                uint32_t shift = address_shift(p_reloc, pointer);
+
+                pointer += shift;
+                if ((shift != 0u) && (pointer < 0x100000u)) {
+                    put16(&span, h, pointer);
+                    put16(&span, h + 2u, pointer >> 16);
+                }
+            }
+            continue;
+        }
+        size = msp430x_candidate(p_reloc, h, &fields);
 
         /* Not if an instruction up to 6 bytes before reaches over h. */
         for (uint32_t back = 2u; (size != 0u) && (back <= 6u) && (back <= h); back += 2u) {

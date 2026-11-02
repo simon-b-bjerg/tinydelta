@@ -349,7 +349,7 @@ only the map and the few instruction forms that hold addresses.
 | | coded | coded, relocated |
 |---|---:|---:|
 | ARM Thumb: MicroPython for SAMD21, 44 updates, ~185 KB | 151,935 B | **25,992 B (−83%)** |
-| MSP430X, large code model: mbedtls built with `-mlarge`, 17 updates, ~176 KB | 21,773 B | **12,240 B (−44%)** |
+| MSP430X, large code model: mbedtls built with `-mlarge`, 17 updates, ~176 KB | 21,773 B | **9,445 B (−57%)** |
 
 Sums over consecutive builds, the map included; every patch decoded
 again and compared (`reloc_test.go` runs the same on synthetic images,
@@ -361,7 +361,7 @@ The rules, per instruction set (`Relocation` in Go,
 | rule | addresses it moves |
 |---|---|
 | `thumb` (ARM Cortex-M) | `BL` (its relative offset changes by the callee's move less the call site's) and 4-byte-aligned 32-bit pointers into the image (vector table, literal pools, function tables) |
-| `msp430x` (large code model) | the 20-bit address of `CALLA #imm`/`&abs`, `MOVA`/`ADDA`/`CMPA`/`SUBA #imm`, `MOVA &abs`, and the immediate, absolute or indexed operands of extension-word instructions (`MOVX.A #imm,x(Rn)`, `XORX.W addr(Rn),Rd`...) |
+| `msp430x` (large code model) | the 20-bit address of `CALLA #imm`/`&abs`, `MOVA`/`ADDA`/`CMPA`/`SUBA #imm`, `MOVA &abs`, and the immediate, absolute or indexed operands of extension-word instructions (`MOVX.A #imm,x(Rn)`, `XORX.W addr(Rn),Rd`...); and in data blocks the encoder picks (constant tables, initial values), 4-byte pointers into the image |
 
 Which bytes form an address is decided from the raw old image only, a
 few bytes around each position, so the decoder relocates whatever part
@@ -376,8 +376,9 @@ tinydelta encode -coder-tables 1600 -reloc msp430x -base 0x10000 old.bin new.bin
 
 `-base` is the address the image starts at on the device (its link
 address); `-coder-tables` must leave room for the map after the coder's
-tables, 12 bytes per entry. Updates here needed 3–5 entries, so a few
-hundred spare bytes are plenty; the encoder keeps the largest entries
+tables, 12 bytes per entry and, for MSP430X, 8 per data run. Updates
+here needed 3–5 entries and up to about 10 data runs, so a few hundred
+spare bytes are plenty; the encoder keeps the largest entries
 that fit and falls back to an unrelocated patch when that is smaller.
 
 On the device, build with `TINYDELTA_CODER = 1` and
@@ -391,9 +392,10 @@ rejected with `TINYDELTA_ERR_VERSION`.
 
 The cost, from [Code size and stack](#code-size-and-stack): on
 Cortex-M0, about 1 KB more than the coded decoders; on MSP430X
-`-mlarge`, about 2.5 KB more, as most of the relocation code is 32-bit
+`-mlarge`, about 3 KB more, as most of the relocation code is 32-bit
 address arithmetic, several instructions per operation on a 16-bit
-core. RAM: the map in the tables buffer (12 bytes per entry), and in
+core. RAM: the map in the tables buffer (12 bytes per entry, 8 per data
+run), and in
 the callback decoder a 16-byte cache of raw dictionary bytes.
 
 ## Why another delta format?
@@ -643,8 +645,8 @@ every 32-bit operation takes several 16-bit instructions.
 | callback decoder | 2,350 B | 2,298 B | 2,458 B | ~230 B\* |
 | memory decoder + coder | 2,608 B | 2,544 B | 2,808 B | ~290 B |
 | callback decoder + coder | 3,362 B | 3,268 B | 3,562 B | ~335 B\* |
-| memory decoder + coder + MSP430X relocation | 4,854 B | 4,688 B | 5,076 B | – |
-| callback decoder + coder + MSP430X relocation | 5,770 B | 5,568 B | 6,020 B | – |
+| memory decoder + coder + MSP430X relocation | 5,398 B | 5,194 B | 5,582 B | – |
+| callback decoder + coder + MSP430X relocation | 6,314 B | 6,074 B | 6,526 B | – |
 
 ### Results
 
@@ -1057,6 +1059,8 @@ map = base (varint: the old image's address on the device)
     + count × ( gap (varint: start − the previous entry's end, 0 at first)
               + length (varint)
               + shift (varint, zigzag) )
+    + MSP430X only: runs (varint)
+    + runs × ( gap (varint) + length (varint) )     data runs, in 256-byte blocks
 ```
 
 Entries are in order and don't overlap; an old-image offset `o` moves
@@ -1090,6 +1094,13 @@ PC-relative operands (R0 with As or Ad 1) take a word but aren't moved.
 A candidate counts unless one starting 2, 4 or 6 bytes before it is
 longer than that distance. A field's address moves if it points into
 the image and stays below `2^20`.
+
+Inside a data run (an offset `h` with `h / 256` in a run), there are no
+instructions: at each even `h`, a 32-bit little-endian value whose high
+half is 1–15 and which points into the image is a data pointer, unless
+the value at `h − 2` is one too; it moves like a field's address. The
+encoder picks the runs: the 256-byte blocks where data pointers make
+more of the old image match the new.
 
 ### Stability
 
