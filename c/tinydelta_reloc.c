@@ -275,6 +275,59 @@ static uint32_t msp430x_candidate(const tinydelta_reloc_t *p_reloc, uint32_t h, 
     return length;
 }
 
+/* How many words before a candidate msp430x_starts decodes. */
+#define MSP430X_SYNC_WORDS 8u
+
+/* 2 if a source operand with mode as on register reg takes a word. */
+static uint32_t operand_word(uint32_t as, uint32_t reg) {
+    return ((((as == 1u) && (reg != 3u)) || ((as == 3u) && (reg == 0u))) ? 2u : 0u);
+}
+
+/* The length in bytes of any instruction at h, if it is one (0 at odd
+ * positions and in data runs). */
+static uint32_t msp430x_length(const tinydelta_reloc_t *p_reloc, uint32_t h) {
+    uint32_t length = 2u;
+    uint32_t w;
+
+    if (!even_fits(p_reloc, h, 2u) || in_data(p_reloc, h)) {
+        return 0u;
+    }
+    w = raw16(p_reloc, h);
+    if (((w & 0xF800u) == 0x1800u) && even_fits(p_reloc, h, 4u)) { /* extension word */
+        length = 4u;
+        w      = raw16(p_reloc, h + 2u);
+    }
+    if (w >= 0x4000u) { /* two operands */
+        length += operand_word((w >> 4) & 3u, (w >> 8) & 0xFu) + ((w >> 6) & 2u);
+    } else if (w < 0x1000u) { /* MSP430X address instructions */
+        length += ((0x0FCCu >> ((w >> 4) & 0xFu)) & 1u) * 2u;
+    } else if (w < 0x1300u) { /* one operand */
+        length += operand_word((w >> 4) & 3u, w & 0xFu);
+    } else if (w < 0x1400u) { /* RETI, CALLA */
+        length += ((0x0B20u >> ((w >> 4) & 0xFu)) & 1u) * 2u;
+    } else {
+        /* jumps, PUSHM, POPM: one word */
+    }
+    return length;
+}
+
+/* Whether decoding instructions from MSP430X_SYNC_WORDS words before h
+ * reaches h as an instruction, not as an operand word of one before. */
+static bool msp430x_starts(const tinydelta_reloc_t *p_reloc, uint32_t h) {
+    uint32_t covered = 0u; /* bit i: the word i words on is an operand */
+    uint32_t sync    = 2u * MSP430X_SYNC_WORDS;
+
+    for (uint32_t back = sync; back > 0u; back -= 2u) {
+        if (((covered & 1u) == 0u) && (back <= h)) {
+            uint32_t length = msp430x_length(p_reloc, h - back);
+
+            covered |= ((1u << (length >> 1)) - 1u) & ~1u;
+        }
+        covered >>= 1;
+    }
+    return ((covered & 1u) == 0u);
+}
+
 void tinydelta_reloc_span(const tinydelta_reloc_t *p_reloc, uint32_t offset, uint8_t *p_out, uint32_t length) {
     span_t span  = {offset, length, p_out};
     uint32_t end = offset + length;
@@ -299,14 +352,8 @@ void tinydelta_reloc_span(const tinydelta_reloc_t *p_reloc, uint32_t offset, uin
             continue;
         }
         size = msp430x_candidate(p_reloc, h, &fields);
-
-        /* Not if an instruction up to 6 bytes before reaches over h. */
-        for (uint32_t back = 2u; (size != 0u) && (back <= 6u) && (back <= h); back += 2u) {
-            uint32_t unused;
-
-            if (msp430x_candidate(p_reloc, h - back, &unused) > back) {
-                size = 0u;
-            }
+        if ((size != 0u) && !msp430x_starts(p_reloc, h)) {
+            size = 0u;
         }
         if (size != 0u) {
             uint32_t w0 = raw16(p_reloc, h);

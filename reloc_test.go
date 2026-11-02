@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -270,5 +271,16 @@ func TestCRelocation(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "p"), p.Bytes, 0o644)
 	if msg, err := cCommand(plainCoder, filepath.Join(dir, "d"), filepath.Join(dir, "p"), filepath.Join(dir, "o"), fmt.Sprint(cCapacity)).CombinedOutput(); err == nil || string(bytes.TrimSpace(msg)) != "-4" {
 		t.Errorf("decoder without relocation: %v %s, want -4 (VERSION)", err, msg)
+	}
+}
+
+func TestRelocationStats(t *testing.T) {
+	r := rand.New(rand.NewSource(75))
+	old, new := fakeFirmware(r, RelocationMSP430X, 0x10000, 60)
+	s := RelocationStats(old, new, RelocationMSP430X, 0x10000)
+	for _, want := range []string{"map: ", "left to the patch:", "differing 16-bit words:", "by 4 KB of the new image", "by the words around them"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("RelocationStats lacks %q:\n%s", want, s)
+		}
 	}
 }

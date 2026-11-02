@@ -74,8 +74,10 @@ MISRA_DEVIATIONS=(
 for config in "${CONFIGS[@]}"; do
   read -ra coder <<<"$config"
   unused=() # 2.5 (advisory) unused macros: a build without the coder or a
-  # relocation rule leaves their macros unused
+  # relocation rule leaves their macros unused, and the Thumb rule the
+  # MSP430X rule's
   [[ "$config" != *TINYDELTA_RELOC* ]] && unused=(--suppress=misra-c2012-2.5)
+  [[ "$config" == *TINYDELTA_RELOC=1* ]] && unused=(--suppress='misra-c2012-2.5:*tinydelta_reloc.c')
   cppcheck --addon=misra --enable=style --std=c99 -I. "${coder[@]}" --quiet --error-exitcode=1 --cppcheck-build-dir="$work" \
     "${MISRA_DEVIATIONS[@]}" "${unused[@]}" "${FILES[@]}"
 done

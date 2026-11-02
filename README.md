@@ -349,7 +349,7 @@ only the map and the few instruction forms that hold addresses.
 | | coded | coded, relocated |
 |---|---:|---:|
 | ARM Thumb: MicroPython for SAMD21, 44 updates, ~185 KB | 151,935 B | **25,992 B (−83%)** |
-| MSP430X, large code model: mbedtls built with `-mlarge`, 17 updates, ~176 KB | 21,773 B | **9,445 B (−57%)** |
+| MSP430X, large code model: mbedtls built with `-mlarge`, 17 updates, ~176 KB | 21,773 B | **6,206 B (−71%)** |
 
 Sums over consecutive builds, the map included; every patch decoded
 again and compared (`reloc_test.go` runs the same on synthetic images,
@@ -381,6 +381,13 @@ here needed 3–5 entries and up to about 10 data runs, so a few hundred
 spare bytes are plenty; the encoder keeps the largest entries
 that fit and falls back to an unrelocated patch when that is smaller.
 
+To see what relocation leaves to the patch for a pair of images,
+`tinydelta relocstats -reloc msp430x -base 0x10000 old.bin new.bin`
+prints the map, how many bytes it changed, the bytes still different
+and the most common instruction contexts around them. It prints
+counts, offsets and instruction words only, so it can be shared where
+the images can't.
+
 On the device, build with `TINYDELTA_CODER = 1` and
 `TINYDELTA_RELOC = TINYDELTA_RELOC_MSP430X` (or `_THUMB`), and add
 `tinydelta_reloc.c`. Nothing else changes: the tables buffer you
@@ -392,7 +399,7 @@ rejected with `TINYDELTA_ERR_VERSION`.
 
 The cost, from [Code size and stack](#code-size-and-stack): on
 Cortex-M0, about 1 KB more than the coded decoders; on MSP430X
-`-mlarge`, about 3 KB more, as most of the relocation code is 32-bit
+`-mlarge`, about 3.5 KB more, as most of the relocation code is 32-bit
 address arithmetic, several instructions per operation on a 16-bit
 core. RAM: the map in the tables buffer (12 bytes per entry, 8 per data
 run), and in
@@ -645,8 +652,8 @@ every 32-bit operation takes several 16-bit instructions.
 | callback decoder | 2,350 B | 2,298 B | 2,458 B | ~230 B\* |
 | memory decoder + coder | 2,608 B | 2,544 B | 2,808 B | ~290 B |
 | callback decoder + coder | 3,362 B | 3,268 B | 3,562 B | ~335 B\* |
-| memory decoder + coder + MSP430X relocation | 5,398 B | 5,194 B | 5,582 B | – |
-| callback decoder + coder + MSP430X relocation | 6,314 B | 6,074 B | 6,526 B | – |
+| memory decoder + coder + MSP430X relocation | 5,934 B | 5,740 B | 6,138 B | – |
+| callback decoder + coder + MSP430X relocation | 6,850 B | 6,620 B | 7,082 B | – |
 
 ### Results
 
@@ -1091,8 +1098,13 @@ from the first word:
 | `0x18??`–`0x1F??` then a word ≥ `0x4000` (extension word, two-operand instruction) | 4 + 2 per operand word | source word (As 1 except R0 and R3, or As 3 with R0), bits 10-7; then destination word (Ad 1 except R0), bits 3-0 |
 
 PC-relative operands (R0 with As or Ad 1) take a word but aren't moved.
-A candidate counts unless one starting 2, 4 or 6 bytes before it is
-longer than that distance. A field's address moves if it points into
+A candidate counts if it is where an instruction starts: decoding
+instruction lengths from 8 words before it (any MSP430/MSP430X
+instruction: its extension word, operand words, the address
+instructions' second word) reaches it as an instruction and not as an
+operand word. Small operands such as `#0x0084` look like `MOVA #imm`,
+so looking only at candidates before would drop the instruction after
+them. A field's address moves if it points into
 the image and stays below `2^20`.
 
 Inside a data run (an offset `h` with `h / 256` in a run), there are no

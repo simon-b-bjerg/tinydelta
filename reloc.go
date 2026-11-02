@@ -236,11 +236,34 @@ func relocMapFrom(dict, target []byte, arch Relocation, base uint32) *relocMap {
 		}
 		out = append(out, e)
 	}
-	return &relocMap{arch: arch, base: base, entries: out}
+	return (&relocMap{arch: arch, base: base, entries: out}).filled(len(dict))
+}
+
+// filled makes the entries contiguous: each reaches to the next one's
+// start, the last to the end of the image (n bytes), as code between two
+// regions that moved has moved too. Neighbours with the same shift merge.
+func (m *relocMap) filled(n int) *relocMap {
+	var es []relocEntry
+	for i, e := range m.entries {
+		end := uint32(n)
+		if i+1 < len(m.entries) {
+			end = m.entries[i+1].start
+		}
+		if end > e.start {
+			e.length = end - e.start
+		}
+		if len(es) > 0 && es[len(es)-1].shift == e.shift && es[len(es)-1].start+es[len(es)-1].length == e.start {
+			es[len(es)-1].length += e.length
+			continue
+		}
+		es = append(es, e)
+	}
+	return &relocMap{arch: m.arch, base: m.base, entries: es, data: m.data}
 }
 
 // limitTo keeps the longest entries that fit ram bytes of decoder RAM,
-// after the data runs (all kept; nil if they don't fit).
+// after the data runs (all kept; nil if they don't fit), and stretches
+// them over the ones dropped.
 func (m *relocMap) limitTo(ram int) *relocMap {
 	ram -= relocRunSize * len(m.data)
 	if ram < 0 {
@@ -254,7 +277,12 @@ func (m *relocMap) limitTo(ram int) *relocMap {
 	sort.SliceStable(es, func(i, j int) bool { return es[i].length > es[j].length })
 	es = es[:max(n, 0)]
 	sort.Slice(es, func(i, j int) bool { return es[i].start < es[j].start })
-	return &relocMap{arch: m.arch, base: m.base, entries: es, data: m.data}
+	end := uint32(0)
+	if len(m.entries) > 0 {
+		last := m.entries[len(m.entries)-1]
+		end = last.start + last.length
+	}
+	return (&relocMap{arch: m.arch, base: m.base, entries: es, data: m.data}).filled(int(end))
 }
 
 // withDataRuns picks the MSP430X data runs for an update: the blocks of
@@ -414,17 +442,58 @@ func msp430xCandidate(m *relocMap, raw []byte, base uint32, h int) (int, [2]msp4
 	return 0, f, 0
 }
 
-// msp430xValid: a candidate at h counts unless a candidate up to 6 bytes
-// before reaches over h (h is then one of its address words).
+// msp430xSyncWords: how many words before a candidate msp430xValid decodes
+// to tell instructions from the operand words of instructions before.
+const msp430xSyncWords = 8
+
+// msp430xLength is the length in bytes of any instruction at h, if it is
+// one (0 at odd positions and in data runs).
+func msp430xLength(m *relocMap, raw []byte, base uint32, h int) int {
+	if h < 0 || h+2 > len(raw) || (base+uint32(h))&1 != 0 || m.inData(h) {
+		return 0
+	}
+	operand := func(as, reg uint32) int { // a source operand word
+		if (as == 1 && reg != 3) || (as == 3 && reg == 0) {
+			return 2
+		}
+		return 0
+	}
+	length, w := 2, uint32(raw[h])|uint32(raw[h+1])<<8
+	if w&0xF800 == 0x1800 && h+4 <= len(raw) { // extension word
+		length, w = 4, uint32(raw[h+2])|uint32(raw[h+3])<<8
+	}
+	switch {
+	case w >= 0x4000: // two operands
+		length += operand(w>>4&3, w>>8&0xF) + int(w>>6&2)
+	case w < 0x1000: // MSP430X address instructions
+		length += int(0x0FCC>>(w>>4&0xF)&1) * 2
+	case w < 0x1300: // one operand
+		length += operand(w>>4&3, w&0xF)
+	case w < 0x1400: // RETI, CALLA
+		length += int(0x0B20>>(w>>4&0xF)&1) * 2
+	}
+	return length
+}
+
+// msp430xValid: a candidate at h counts if decoding instructions from
+// msp430xSyncWords words before reaches h as an instruction, not as an
+// operand word of one before.
 func msp430xValid(m *relocMap, raw []byte, base uint32, h int) (int, [2]msp430xField, int) {
 	l, f, k := msp430xCandidate(m, raw, base, h)
 	if l == 0 {
 		return 0, f, 0
 	}
-	for back := 2; back <= 6; back += 2 {
-		if lb, _, _ := msp430xCandidate(m, raw, base, h-back); lb > back {
-			return 0, f, 0
+	covered := uint32(0) // bit i: the word i words on is an operand
+	for i := msp430xSyncWords; i > 0; i-- {
+		if covered&1 == 0 {
+			if n := msp430xLength(m, raw, base, h-2*i); n > 0 {
+				covered |= (1<<(n>>1) - 1) &^ 1
+			}
 		}
+		covered >>= 1
+	}
+	if covered&1 != 0 {
+		return 0, f, 0
 	}
 	return l, f, k
 }

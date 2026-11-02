@@ -66,6 +66,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "encode":
 		return encodeCommand(args[1:], stdout, stderr)
+	case "relocstats":
+		return relocstatsCommand(args[1:], stdout, stderr)
 	case "decode":
 		return decodeCommand(args[1:], stdin, stdout, stderr)
 	case "version", "-version", "--version":
@@ -79,6 +81,38 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "tinydelta: unknown command %q\n\n%s", args[0], usageText)
 		return exitUsage
 	}
+}
+
+// relocstatsCommand prints what relocation leaves to the patch of an
+// update (experimental; see tinydelta.RelocationStats).
+func relocstatsCommand(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("relocstats", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	reloc := fs.String("reloc", "msp430x", "instruction set: thumb or msp430x")
+	base := fs.String("base", "0", "the address the image starts at on the device")
+	if err := fs.Parse(args); err != nil {
+		return parseExit(err)
+	}
+	if fs.NArg() != 2 {
+		fmt.Fprintln(stderr, "Usage: tinydelta relocstats -reloc thumb|msp430x -base ADDR <old image> <new image>")
+		return exitUsage
+	}
+	rule := map[string]tinydelta.Relocation{"thumb": tinydelta.RelocationThumb, "msp430x": tinydelta.RelocationMSP430X}[*reloc]
+	imageBase, err := strconv.ParseUint(*base, 0, 32)
+	if rule == tinydelta.RelocationNone || err != nil {
+		fmt.Fprintln(stderr, "tinydelta: relocstats: -reloc thumb|msp430x and -base ADDR")
+		return exitUsage
+	}
+	dict, err := os.ReadFile(fs.Arg(0))
+	if err != nil {
+		return fail(stderr, err)
+	}
+	target, err := os.ReadFile(fs.Arg(1))
+	if err != nil {
+		return fail(stderr, err)
+	}
+	fmt.Fprint(stdout, tinydelta.RelocationStats(dict, target, rule, uint32(imageBase)))
+	return 0
 }
 
 func encodeCommand(args []string, stdout, stderr io.Writer) int {
