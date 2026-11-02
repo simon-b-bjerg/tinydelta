@@ -14,23 +14,24 @@ RAM, flash) against what it saves on the air.
 
 | idea | decoder cost | firmware (ARM) | firmware (MSP430X) | configuration | verdict |
 |---|---|---:|---:|---:|---|
-| [Predicted difference byte](#1-predicted-difference-byte) | ~120 B code (Cortex-M0), ~270 B (MSP430X), 4 states + 4 B | **−7.3%** | **−9.0%** | 0 | **do it** |
-| … plus [16-bit carry](#2-carry-within-16-bit-words) in ADD_DIFF | a few instructions | −7.3% | **−9.9%** | 0 | do it, with 1 |
+| [Predicted difference byte](#1-predicted-difference-byte) | ~120 B code (Cortex-M0), ~270 B (MSP430X), ~10 B RAM | **−7.2%** | **−9.0%** | 0 | **do it** |
+| … plus [16-bit carry](#2-carry-within-16-bit-words) in ADD_DIFF | a few instructions | 0 | **−0.9%** more | 0 | maybe, for MSP430 |
 | [Short header and flush](#3-short-header-and-flush) | none to a few bytes | 0 | 0 | **−2.0%** | do it |
-| [Trained starting states](#4-trained-starting-states) | 777 B flash (or 267 B) | −2.1% | −2.1% | **−6.3%** (with 3) | worth it for small files, best trained on your own |
-| Difference tables per lane | +765 B RAM | −6.6% | −3.2% | 0 | no: 1 does better for 4 B |
-| Matched literal (LZMA-style) | +510 B RAM | −0.1% | +0.1% | −0.1% | no |
-| Thumb branch filter (xz BCJ) | a filter on dictionary reads | +3.2% | +1.9% | 0 | no |
+| [Trained starting states](#4-trained-starting-states) | 777 B flash (or 267 B) | −2.3% | −2.1% | **−6.3%** (with 3) | worth it for small files, best trained on your own |
+| Difference tables per lane | +765 B RAM | −5.3% | −3.2% | 0 | no: 1 does better for 4 B |
+| Matched literal (LZMA-style) | +510 B RAM | 0 | +0.1% | −0.1% | no |
+| Thumb branch filter (xz BCJ) | a filter on dictionary reads | +10.1% | +1.9% | 0 | no |
 | Repeated-delta flag (LZMA rep0) | 1 state | 0 | 0 | +2.4% | no |
-| Folding short unchanged runs into ADD_DIFF | none (encoder) | +0.2% or worse | +0.2% or worse | −0.1% | no |
+| Folding short unchanged runs into ADD_DIFF | none (encoder) | +0.3% or worse | +0.2% or worse | −0.1% | no |
 | Cover switch margin, retuned for the coder | none (encoder) | 4 and 8 within 0.2% | – | – | no |
 
+The firmware columns use each chip's better lane width (see 1).
 Percentages are against today's coded patch (layout B, 777 B tables, the
 better of instruction sets 1 and 2 per update); 0 means within ±0.1%.
 
 ## Data and method
 
-- **Firmware, ARM:** 10 consecutive MicroPython builds' updates for two
+- **Firmware, ARM:** 44 updates, consecutive MicroPython builds for two
   SAMD21 boards (Cortex-M0+, about 185 KB), from the benchmark corpus.
 - **Firmware, MSP430X:** mbedtls 2.28's crypto (AES, GCM, SHA-256, ECDSA,
   RSA, X.509, PK; about 176 KB) built with `msp430-elf-gcc` 14.2,
@@ -63,16 +64,17 @@ the byte follows through the difference table as today. The bit's state
 is chosen by the lane and by whether that lane's last prediction hit:
 4 states for 16-bit lanes, 8 for 32-bit.
 
-| | ARM, 10 updates | MSP430X, 17 updates |
+| | ARM, 44 updates | MSP430X, 17 updates |
 |---|---:|---:|
-| today | 44,019 B | 21,748 B |
-| 32-bit lanes | 40,319 B (−8.4%) | 19,942 B (−8.3%) |
-| 16-bit lanes | 40,786 B (−7.3%) | 19,786 B (−9.0%) |
-| no lanes | 45,004 B (+2.2%) | 21,892 B (+0.7%) |
+| today | 151,879 B | 21,748 B |
+| 32-bit lanes | 140,934 B (−7.2%) | 19,942 B (−8.3%) |
+| 16-bit lanes | 142,478 B (−6.2%) | 19,786 B (−9.0%) |
+| no lanes | 154,135 B (+1.5%) | 21,892 B (+0.7%) |
 
-The lanes matter: without them the prediction is worse than none.
-16-bit lanes do about as well on ARM as 32-bit ones and better on
-MSP430X, so 16-bit lanes are the one choice for both.
+The lanes matter: without them the prediction is worse than none. Each
+chip prefers its own word size: 32-bit lanes on ARM, 16-bit on MSP430X.
+The lane width can be a header bit the encoder sets after trying both;
+in the decoder it is only a mask (position & 1 or & 3).
 
 Cost in the decoder, measured with a prototype of the C coder: about
 **+120 B of code on Cortex-M0** (coder +108 B, each decoder +12–16 B, to
@@ -92,9 +94,9 @@ same move gives two different patterns. With a carry from the low byte
 into the high byte of each 16-bit word (by output position), the
 pattern is the same either way.
 
-On its own it does little (ARM +0.1%, MSP430X −0.5%), but with the
-prediction it brings MSP430X from −9.0% to **−9.9%**, and leaves ARM
-the same (−7.3%). Carries across 32-bit words do no better.
+On its own it does little (ARM +0.2%, MSP430X −0.5%); with the
+prediction it brings MSP430X from −9.0% to −9.9% and leaves ARM where
+it was. A small extra for 16-bit targets only. Carries across 32-bit words do no better.
 
 Cost: a carry variable in the ADD_DIFF loop, a few instructions. It
 changes what ADD_DIFF means, so it would be a features bit too (or come
@@ -129,8 +131,8 @@ trees only) saves that learning:
 
 | | firmware, ARM | firmware, MSP430X | configuration |
 |---|---:|---:|---:|
-| even odds | 43,962 B | 21,665 B | 3,404 B |
-| trained, all states | 43,024 B (−2.1%) | 21,217 B (−2.1%) | – |
+| even odds | 151,643 B | 21,665 B | 3,404 B |
+| trained, all states | 148,098 B (−2.3%) | 21,217 B (−2.1%) | – |
 | trained on configuration, with the short header (3) | – | – | 3,191 B (−6.3%), coded in 45 of 126 updates |
 
 Each update was coded with states trained on the *other* items (leave
@@ -151,8 +153,8 @@ misdecoding it.
 ## What didn't help
 
 - **Difference tables per lane** (four ADD_DIFF tables by position mod 4):
-  −6.6% on ARM, but for 765 B more RAM; the predicted byte does better
-  for 4 bytes.
+  −5.3% on ARM, but for 765 B more RAM; the predicted byte does better
+  for a few bytes.
 - **Matched literal:** coding ADD literals with the old byte at the
   cursor as context, as LZMA does after a match. Under 0.2% either way:
   where tinydelta adds literals, the old byte says little about the new.
@@ -186,8 +188,9 @@ misdecoding it.
 ## Proposed next step
 
 One small format addition, "coded patches, version 2": the predicted
-difference byte with 16-bit lanes and the 16-bit carry (1 and 2), and
-the short header and flush (3). About 120–270 B more decoder code and
-about 10 bytes of RAM, for patches 7% (ARM) to 10% (MSP430X) smaller on
-firmware and 2% on configuration. Trained starting states (4) as a
+difference byte (1), with a header bit for 16- or 32-bit lanes, and the
+short header and flush (3); the 16-bit carry (2) only if MSP430 data
+confirms its 1%. About 120–270 B more decoder code and about 10 bytes
+of RAM, for firmware patches about 7% (ARM) to 9% (MSP430X) smaller and
+configuration patches 2% smaller. Trained starting states (4) as a
 separate, optional table, once there is device data to train on.
