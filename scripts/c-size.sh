@@ -15,15 +15,23 @@ text() { arm-none-eabi-size "$1" | awk 'NR == 2 { print $1 }'; }
 echo "| part | Cortex-M0 | Cortex-M3 | Cortex-M4 |"
 echo "|---|---|---|---|"
 # name:file:extra flags.
-# Coded patches (TINYDELTA_CODER=1) add the coder and grow each decoder.
+# Coded patches (TINYDELTA_CODER=1) add the coder and grow each decoder;
+# relocation (TINYDELTA_RELOC=1 Thumb, 2 MSP430X) adds tinydelta_reloc.c.
 for part in decode:tinydelta_decode: io:tinydelta_io: \
             decode-coded:tinydelta_decode:-DTINYDELTA_CODER=1 io-coded:tinydelta_io:-DTINYDELTA_CODER=1 \
-            coder:tinydelta_coder:-DTINYDELTA_CODER=1; do
+            coder:tinydelta_coder:-DTINYDELTA_CODER=1 \
+            "decode-thumb:tinydelta_decode:-DTINYDELTA_CODER=1 -DTINYDELTA_RELOC=1" \
+            "io-thumb:tinydelta_io:-DTINYDELTA_CODER=1 -DTINYDELTA_RELOC=1" \
+            "reloc-thumb:tinydelta_reloc:-DTINYDELTA_CODER=1 -DTINYDELTA_RELOC=1" \
+            "decode-msp430x:tinydelta_decode:-DTINYDELTA_CODER=1 -DTINYDELTA_RELOC=2" \
+            "io-msp430x:tinydelta_io:-DTINYDELTA_CODER=1 -DTINYDELTA_RELOC=2" \
+            "reloc-msp430x:tinydelta_reloc:-DTINYDELTA_CODER=1 -DTINYDELTA_RELOC=2"; do
   IFS=: read -r name file extra <<< "$part"
+  read -ra flags <<< "$extra"
   row="| $file.c${extra:+, $extra} |"
   for cpu in cortex-m0 cortex-m3 cortex-m4; do
     (cd "$out" && "$CC" -std=c99 -Os -mcpu="$cpu" -mthumb -fstack-usage \
-      -Wall -Wextra -Werror ${extra:+"$extra"} -I"$OLDPWD" -c "$OLDPWD/$file.c" -o "${name}_$cpu.o")
+      -Wall -Wextra -Werror "${flags[@]}" -I"$OLDPWD" -c "$OLDPWD/$file.c" -o "${name}_$cpu.o")
     row="$row $(text "$out/${name}_$cpu.o") B |"
   done
   echo "$row"

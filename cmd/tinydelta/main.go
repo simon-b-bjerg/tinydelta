@@ -3,7 +3,7 @@
 
 // Command tinydelta creates and applies tinydelta patches.
 //
-//	tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-max-len N] [-v] <dictionary> <target> [<patch>]
+//	tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-reloc thumb|msp430x -base ADDR] [-max-len N] [-v] <dictionary> <target> [<patch>]
 //	tinydelta decode [-two-pass] [-max-size N] [-v] <dictionary> <patch> [<target>]
 //	tinydelta version
 //
@@ -19,6 +19,7 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"strconv"
 
 	"github.com/simon-b-bjerg/tinydelta"
 )
@@ -35,7 +36,7 @@ MIT License: https://github.com/simon-b-bjerg/tinydelta/blob/main/LICENSE
 const usageText = `tinydelta creates and applies compact binary patches.
 
 Usage:
-  tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-max-len N] [-v] <dictionary> <target> [<patch>]
+  tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-reloc thumb|msp430x -base ADDR] [-max-len N] [-v] <dictionary> <target> [<patch>]
   tinydelta decode [-two-pass] [-max-size N] [-v] <dictionary> <patch> [<target>]
   tinydelta version
 
@@ -87,10 +88,12 @@ func encodeCommand(args []string, stdout, stderr io.Writer) int {
 	coderTables := fs.Int("coder-tables", 0, "the decoder's coder tables buffer, in bytes (C: tables_size): allows a\ncoded patch whose tables fit (522, 777 or 1287 bytes; 0: no coder)")
 	window := fs.Int("window", 0, "keep copies from the target already produced within this many bytes, so\nthe decoder reads them from its RAM buffer only (C: buffer_size, with\ntarget_read NULL; 0 means no limit)")
 	twoPass := fs.Bool("two-pass", false, "allow a patch the device decodes twice (decode -two-pass); prints the\nnumber of passes, 1 or 2, to standard error")
+	reloc := fs.String("reloc", "", "firmware images: the decoder relocates addresses for this instruction set\n(C: TINYDELTA_RELOC): thumb (ARM Cortex-M) or msp430x (large code model);\nneeds -coder-tables, with 12 bytes more per map entry")
+	base := fs.String("base", "0", "with -reloc: the address the image starts at on the device, e.g. 0x10000")
 	maxLen := fs.Int("max-len", 0, "limit the target bytes any one instruction produces\n(0 means no limit)")
 	verbose := fs.Bool("v", false, "print sizes to standard error")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "Usage: tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-max-len N] [-v] <dictionary> <target> [<patch>]")
+		fmt.Fprintln(stderr, "Usage: tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-reloc thumb|msp430x -base ADDR] [-max-len N] [-v] <dictionary> <target> [<patch>]")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -98,6 +101,22 @@ func encodeCommand(args []string, stdout, stderr io.Writer) int {
 	}
 	if fs.NArg() < 2 || fs.NArg() > 3 || *maxLen < 0 {
 		fs.Usage()
+		return exitUsage
+	}
+	relocation := tinydelta.RelocationNone
+	switch *reloc {
+	case "":
+	case "thumb":
+		relocation = tinydelta.RelocationThumb
+	case "msp430x":
+		relocation = tinydelta.RelocationMSP430X
+	default:
+		fmt.Fprintf(stderr, "tinydelta: -reloc %q: want thumb or msp430x\n", *reloc)
+		return exitUsage
+	}
+	imageBase, err := strconv.ParseUint(*base, 0, 32)
+	if err != nil {
+		fmt.Fprintf(stderr, "tinydelta: -base %q: want an address such as 0x10000\n", *base)
 		return exitUsage
 	}
 
@@ -111,6 +130,7 @@ func encodeCommand(args []string, stdout, stderr io.Writer) int {
 	}
 	patch, err := tinydelta.EncodeWith(dict, target, tinydelta.EncodeOptions{
 		Greedy: *greedy, CoderTables: *coderTables, Window: *window, TwoPass: *twoPass, MaxInstructionLen: *maxLen,
+		Relocation: relocation, ImageBase: uint32(imageBase),
 	})
 	if err != nil {
 		return fail(stderr, err)

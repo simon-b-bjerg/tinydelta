@@ -15,23 +15,27 @@ set -euo pipefail
 cd "$(dirname "$0")/../c"
 CLANG="${CLANG:-clang}"
 CLANG_TIDY="${CLANG_TIDY:-clang-tidy}"
-FILES=(tinydelta_decode.c tinydelta_io.c tinydelta_coder.c)
+FILES=(tinydelta_decode.c tinydelta_io.c tinydelta_coder.c tinydelta_reloc.c)
 log="$(mktemp)"
 work="$(mktemp -d)" # cppcheck's working files, so none land in c/
 trap 'rm -rf "$log" "$work"' EXIT
 FLAGS=(-std=c99 -I.)
-CODER=(-DTINYDELTA_CODER=0 -DTINYDELTA_CODER=1) # every analyzer runs without and with coded patches
+# Every analyzer runs on each build: without and with coded patches, and
+# with each relocation rule.
+CONFIGS=("-DTINYDELTA_CODER=0" "-DTINYDELTA_CODER=1" "-DTINYDELTA_CODER=1 -DTINYDELTA_RELOC=1" "-DTINYDELTA_CODER=1 -DTINYDELTA_RELOC=2")
 
-for coder in "${CODER[@]}"; do
+for config in "${CONFIGS[@]}"; do
+  read -ra coder <<<"$config"
   for f in "${FILES[@]}"; do
-    gcc "${FLAGS[@]}" "$coder" -O2 -fanalyzer -Wall -Wextra -Werror -c "$f" -o /dev/null
+    gcc "${FLAGS[@]}" "${coder[@]}" -O2 -fanalyzer -Wall -Wextra -Werror -c "$f" -o /dev/null
   done
 done
 echo "gcc -fanalyzer: no findings"
 
-for coder in "${CODER[@]}"; do
+for config in "${CONFIGS[@]}"; do
+  read -ra coder <<<"$config"
   for f in "${FILES[@]}"; do
-    "$CLANG" "${FLAGS[@]}" "$coder" --analyze -Xanalyzer -analyzer-werror \
+    "$CLANG" "${FLAGS[@]}" "${coder[@]}" --analyze -Xanalyzer -analyzer-werror \
       -Xanalyzer -analyzer-output=text -o /dev/null "$f"
   done
 done
@@ -39,8 +43,9 @@ echo "clang --analyze: no findings"
 
 # Findings go to stdout; stderr only counts suppressed system-header
 # warnings, so it is shown only if clang-tidy fails.
-for coder in "${CODER[@]}"; do
-  if ! "$CLANG_TIDY" --quiet "${FILES[@]}" -- "${FLAGS[@]}" "$coder" 2>"$log"; then
+for config in "${CONFIGS[@]}"; do
+  read -ra coder <<<"$config"
+  if ! "$CLANG_TIDY" --quiet "${FILES[@]}" -- "${FLAGS[@]}" "${coder[@]}" 2>"$log"; then
     cat "$log" >&2
     exit 1
   fi
@@ -66,10 +71,12 @@ MISRA_DEVIATIONS=(
   --suppress='misra-c2012-11.5:*tinydelta_decode.c'
   --suppress='misra-c2012-11.5:*tinydelta_io.c'
 )
-for coder in "${CODER[@]}"; do
-  unused=() # 2.5 (advisory) unused macros: without the coder, its macros go unused
-  [ "$coder" = -DTINYDELTA_CODER=0 ] && unused=(--suppress=misra-c2012-2.5)
-  cppcheck --addon=misra --enable=style --std=c99 -I. "$coder" --quiet --error-exitcode=1 --cppcheck-build-dir="$work" \
+for config in "${CONFIGS[@]}"; do
+  read -ra coder <<<"$config"
+  unused=() # 2.5 (advisory) unused macros: a build without the coder or a
+  # relocation rule leaves their macros unused
+  [[ "$config" != *TINYDELTA_RELOC* ]] && unused=(--suppress=misra-c2012-2.5)
+  cppcheck --addon=misra --enable=style --std=c99 -I. "${coder[@]}" --quiet --error-exitcode=1 --cppcheck-build-dir="$work" \
     "${MISRA_DEVIATIONS[@]}" "${unused[@]}" "${FILES[@]}"
 done
 echo "cppcheck MISRA C:2012: no findings beyond the listed deviations"

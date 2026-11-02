@@ -67,7 +67,8 @@ class Patch(bytes):
 
 
 def encode(dictionary, target, *, greedy=False, max_instruction_len=0,
-           coder_tables=0, window=0, two_pass=False):
+           coder_tables=0, window=0, two_pass=False, relocation=None,
+           image_base=0):
     """Returns the smallest Patch that turns dictionary into target (both
     bytes-like) and that the device's decoder, described by the options,
     can decode.
@@ -79,6 +80,10 @@ def encode(dictionary, target, *, greedy=False, max_instruction_len=0,
     within that many bytes, so the decoder reads them from its RAM buffer
     only (buffer_size in C, with target_read NULL).
     two_pass allows a patch the device decodes twice (Patch.passes).
+    relocation, for firmware images, is the instruction set whose addresses
+    the decoder relocates ("thumb" or "msp430x", TINYDELTA_RELOC in C),
+    with image_base the address the image starts at on the device; it
+    needs coder_tables, with 12 bytes more per map entry.
 
     greedy uses the fast greedy encoder instead of the optimal one (patches
     are typically a few percent larger). max_instruction_len, if above 0,
@@ -90,6 +95,8 @@ def encode(dictionary, target, *, greedy=False, max_instruction_len=0,
         raise ValueError("window must be 0 (no limit) or more")
     if coder_tables < 0:
         raise ValueError("coder_tables must be 0 (no coder) or more")
+    if relocation not in (None, "thumb", "msp430x"):
+        raise ValueError('relocation must be None, "thumb" or "msp430x"')
     with tempfile.TemporaryDirectory(prefix="tinydelta-") as work:
         dict_file = _write(work, "dictionary", dictionary)
         target_file = _write(work, "target", target)
@@ -99,6 +106,8 @@ def encode(dictionary, target, *, greedy=False, max_instruction_len=0,
             args.append("-greedy")
         if two_pass:
             args.append("-two-pass")
+        if relocation:
+            args += ["-reloc", relocation, "-base", str(image_base)]
         result = _run(args + [dict_file, target_file])
         passes = 1
         for line in result.stderr.decode("utf-8", "replace").splitlines():

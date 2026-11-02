@@ -15,7 +15,9 @@ import (
 //
 //	byte 0     0x80 | instruction set (0x81: version 1's, 0x82: version 2's)
 //	byte 1     features: bits 0-1 the table layout (codedLayoutC/B/A), bits
-//	           2-7 reserved, 0
+//	           2-3 the relocation rule (Relocation; 0 none), bits 4-7
+//	           reserved, 0
+//	map        with a relocation rule only: the relocation map (reloc.go)
 //	varint     n, the length of the uncoded instruction stream in bytes
 //	rest       the range-coded instruction stream
 //
@@ -386,13 +388,21 @@ func codeByte(m *codedModel, w *codedWalker, b byte, bitFn func(i int, bit uint3
 
 // encodeCoded range-codes plain, a version-1 or version-2 patch, with a
 // table layout.
-func encodeCoded(plain []byte, layout int) []byte {
+func encodeCoded(plain []byte, layout int) []byte { return encodeCodedReloc(plain, layout, nil) }
+
+// encodeCodedReloc is encodeCoded with a relocation map (nil for none):
+// plain must then be a patch against the relocated dictionary.
+func encodeCodedReloc(plain []byte, layout int, reloc *relocMap) []byte {
 	version, stream := plain[0], plain[headerLen:]
 	m, w, e := newCodedModel(layout), newCodedWalker(version), newRangeEncoder()
 	for _, b := range stream {
 		codeByte(m, w, b, func(i int, bit uint32) (uint32, error) { e.bit(m, i, bit); return bit, nil })
 	}
 	out := []byte{codedFlag | version, byte(layout)}
+	if reloc != nil {
+		out[1] |= byte(reloc.arch) << 2
+		out = reloc.appendHeader(out)
+	}
 	out = appendVarint(out, uint64(len(stream)))
 	return append(out, e.finish()...)
 }
@@ -401,6 +411,7 @@ func encodeCoded(plain []byte, layout int) []byte {
 // first, decoding as it is read: memory stays bounded by what the caller
 // keeps, whatever stream length the header claims.
 type codedReader struct {
+	reloc   *relocMap // the relocation map, nil without
 	version byte
 	started bool // the version byte has been read
 	m       *codedModel
@@ -416,19 +427,28 @@ func newCodedReader(patch []byte) (*codedReader, error) {
 		return nil, errors.New("tinydelta: coded patch has no features byte")
 	}
 	version, features := patch[0]&^codedFlag, int(patch[1])
-	layout := features & 3
-	if features&^3 != 0 || layout == 0 {
+	layout, arch := features&3, Relocation(features>>2&3)
+	if features&^0xF != 0 || layout == 0 || arch > RelocationMSP430X {
 		return nil, fmt.Errorf("%w: coded patch features 0x%02x", ErrUnsupportedVersion, features)
 	}
-	n, used := readVarint(patch[2:])
+	pos := 2
+	var reloc *relocMap
+	if arch != RelocationNone {
+		m, used, err := parseRelocMap(arch, patch[pos:])
+		if err != nil {
+			return nil, err
+		}
+		reloc, pos = m, pos+used
+	}
+	n, used := readVarint(patch[pos:])
 	if used < 0 {
 		return nil, errors.New("tinydelta: coded patch: bad stream length")
 	}
-	d, err := newRangeDecoder(patch[2+used:])
+	d, err := newRangeDecoder(patch[pos+used:])
 	if err != nil {
 		return nil, fmt.Errorf("tinydelta: coded patch: %w", err)
 	}
-	return &codedReader{version: version, m: newCodedModel(layout), w: newCodedWalker(version), d: d, left: n}, nil
+	return &codedReader{reloc: reloc, version: version, m: newCodedModel(layout), w: newCodedWalker(version), d: d, left: n}, nil
 }
 
 func (r *codedReader) Read(p []byte) (int, error) {

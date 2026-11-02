@@ -63,6 +63,19 @@ type EncodeOptions struct {
 	// it. 0 means no limit beyond MaxSize. The patch format and the
 	// decoders are unchanged.
 	MaxInstructionLen int
+
+	// Relocation, for firmware images: the rule by which the decoder
+	// finds addresses in the old image (RelocationThumb,
+	// RelocationMSP430X). The encoder then also tries coded patches that
+	// carry a map of how code moved, against which the decoder relocates
+	// every address it finds before patching (reloc.go). Needs
+	// CoderTables: the map takes 12 bytes of that RAM per entry, and the
+	// decoder has to be built with the same rule (TINYDELTA_RELOC).
+	Relocation Relocation
+
+	// ImageBase is the address the old image's first byte is at on the
+	// device, for Relocation: 0x10000 or wherever the firmware is linked.
+	ImageBase uint32
 }
 
 // Patch is EncodeWith's result.
@@ -93,6 +106,8 @@ func EncodeWith(dict, target []byte, opts EncodeOptions) (Patch, error) {
 		return Patch{}, fmt.Errorf("tinydelta: negative Window %d", opts.Window)
 	case opts.CoderTables < 0:
 		return Patch{}, fmt.Errorf("tinydelta: negative CoderTables %d", opts.CoderTables)
+	case opts.Relocation < RelocationNone || opts.Relocation > RelocationMSP430X:
+		return Patch{}, fmt.Errorf("tinydelta: unknown Relocation %d", int(opts.Relocation))
 	}
 	window := MaxSize
 	if opts.Window > 0 && opts.Window < MaxSize {
@@ -120,6 +135,19 @@ func EncodeWith(dict, target []byte, opts EncodeOptions) (Patch, error) {
 		for _, candidate := range [][]byte{best.Bytes, withVersion(FormatVersion2, encodeCovers(dict, target, maxLen))} {
 			for _, layout := range layouts {
 				consider(encodeCoded(candidate, layout), 1)
+			}
+		}
+	}
+	if opts.Relocation != RelocationNone && len(layouts) > 0 {
+		full := relocMapFrom(dict, target, opts.Relocation, opts.ImageBase)
+		for _, layout := range layouts {
+			m := full.limitTo(opts.CoderTables - CodedTablesSize(layout))
+			if len(m.entries) == 0 {
+				continue
+			}
+			rd := m.relocate(dict)
+			for _, candidate := range [][]byte{plain(rd, target), withVersion(FormatVersion2, encodeCovers(rd, target, maxLen))} {
+				consider(encodeCodedReloc(candidate, layout, m), 1)
 			}
 		}
 	}

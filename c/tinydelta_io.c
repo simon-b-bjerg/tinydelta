@@ -5,6 +5,7 @@
 #include "tinydelta_io.h"
 #include "tinydelta_coder.h"
 #include "tinydelta_internal.h"
+#include "tinydelta_reloc.h"
 
 /* The callback decoder's state while it runs. The target position counts
  * every byte produced; the buffer holds the last buffer_size of them, at
@@ -21,6 +22,13 @@ typedef struct {
     bool b_coded;            /* instruction-stream bytes come from the coder */
     uint32_t stream_left;    /* coded: instruction-stream bytes still to come */
     tinydelta_coder_t coder; /* coded: the range decoder, reading patch bytes */
+#endif
+#if TINYDELTA_RELOC != 0
+    bool b_reloc;            /* the patch carries a relocation map */
+    tinydelta_reloc_t reloc; /* its map, reading the dictionary through raw_cache */
+    uint32_t raw_start;      /* dictionary offset of raw_cache[0] */
+    uint32_t raw_len;        /* bytes in raw_cache */
+    uint8_t raw_cache[16];   /* raw dictionary bytes around what relocates */
 #endif
 } io_decoder_t;
 
@@ -134,11 +142,37 @@ static tinydelta_result_t produced(io_decoder_t *p_decoder, uint32_t length) {
     return write_page(p_decoder);
 }
 
+#if TINYDELTA_RELOC != 0
+/* The relocation map's source of raw dictionary bytes: dict_read, 16 bytes
+ * at a time, as relocating looks at a few bytes around each position. */
+static tinydelta_result_t io_raw_dict(void *p_ctx, uint32_t index, uint8_t *p_byte) {
+    io_decoder_t *p_decoder    = (io_decoder_t *)p_ctx; /* Cast: the context is always the decoder. */
+    const tinydelta_io_t *p_io = p_decoder->p_io;
+
+    if ((index < p_decoder->raw_start) || ((index - p_decoder->raw_start) >= p_decoder->raw_len)) {
+        p_decoder->raw_start = (index >= 4u) ? (index - 4u) : 0u;
+        p_decoder->raw_len   = min_u32((uint32_t)sizeof(p_decoder->raw_cache), p_io->dict_len - p_decoder->raw_start);
+        if (p_io->dict_read(p_io->p_dict_ctx, p_decoder->raw_start, p_decoder->raw_cache, p_decoder->raw_len) != TINYDELTA_CALLBACK_OK) {
+            p_decoder->raw_len = 0u;
+            return TINYDELTA_ERR_IO;
+        }
+    }
+    *p_byte = p_decoder->raw_cache[index - p_decoder->raw_start];
+    return TINYDELTA_OK;
+}
+
+static tinydelta_result_t io_header_varint(void *p_ctx, uint32_t *p_value) {
+    return io_read_varint((io_decoder_t *)p_ctx, TINYDELTA_FIELD_CONTINUED, p_value); /* Cast: the context is always the decoder. */
+}
+#endif
+
 /* Produces length bytes into the ring, a page at a time: read from offset
  * in a read callback's data, or with read NULL the next instruction-stream
- * bytes (ADD's literals). With b_add_diff (ADD_DIFF), each byte read also
- * gets the next instruction-stream byte added. */
-static tinydelta_result_t read_to_target(io_decoder_t *p_decoder, tinydelta_read_fn_t read, void *p_ctx, uint32_t offset, uint32_t length, bool b_add_diff) {
+ * bytes (ADD's literals). b_dict says read is the dictionary's, whose
+ * bytes relocate with a relocation map. With b_add_diff (ADD_DIFF), each
+ * byte read also gets the next instruction-stream byte added. */
+static tinydelta_result_t
+read_to_target(io_decoder_t *p_decoder, tinydelta_read_fn_t read, void *p_ctx, uint32_t offset, uint32_t length, bool b_dict, bool b_add_diff) {
     while (length > 0u) {
         uint32_t chunk    = page_room(p_decoder, length);
         uint8_t *p_output = write_position(p_decoder);
@@ -147,6 +181,16 @@ static tinydelta_result_t read_to_target(io_decoder_t *p_decoder, tinydelta_read
         if ((read != NULL) && (read(p_ctx, offset, p_output, chunk) != TINYDELTA_CALLBACK_OK)) {
             return TINYDELTA_ERR_IO;
         }
+#if TINYDELTA_RELOC != 0
+        if (b_dict && p_decoder->b_reloc) {
+            result = tinydelta_reloc_span(&p_decoder->reloc, offset, p_output, chunk);
+            if (result != TINYDELTA_OK) {
+                return result;
+            }
+        }
+#else
+        (void)b_dict;
+#endif
         for (uint32_t index = 0u; ((read == NULL) || b_add_diff) && (index < chunk); index++) {
             uint8_t byte;
 
@@ -184,12 +228,12 @@ static tinydelta_result_t io_decode_copy(io_decoder_t *p_decoder, uint32_t lengt
         return TINYDELTA_ERR_MALFORMED;
     }
     p_decoder->cursor = address;
-    return read_to_target(p_decoder, p_io->dict_read, p_io->p_dict_ctx, address, length, false);
+    return read_to_target(p_decoder, p_io->dict_read, p_io->p_dict_ctx, address, length, true, false);
 }
 
 /* ADD: literal bytes, taken from the instruction stream. */
 static tinydelta_result_t io_decode_add(io_decoder_t *p_decoder, uint32_t length) {
-    return read_to_target(p_decoder, NULL, NULL, 0u, length, false);
+    return read_to_target(p_decoder, NULL, NULL, 0u, length, false, false);
 }
 
 /* SKIP: dictionary bytes at the cursor. */
@@ -199,7 +243,7 @@ static tinydelta_result_t io_decode_skip(io_decoder_t *p_decoder, uint32_t lengt
     if (!range_within(p_decoder->cursor, length, p_io->dict_len)) {
         return TINYDELTA_ERR_MALFORMED;
     }
-    return read_to_target(p_decoder, p_io->dict_read, p_io->p_dict_ctx, p_decoder->cursor, length, false);
+    return read_to_target(p_decoder, p_io->dict_read, p_io->p_dict_ctx, p_decoder->cursor, length, true, false);
 }
 
 /* COPY_TARGET within the ring: byte by byte, so a source overlapping the
@@ -250,7 +294,7 @@ static tinydelta_result_t io_decode_copy_target(io_decoder_t *p_decoder, uint32_
     }
     /* The source is more than a ring back, so it lies before the current
      * page: already written, the whole way. */
-    return read_to_target(p_decoder, p_io->target_read, p_io->p_target_ctx, address, length, false);
+    return read_to_target(p_decoder, p_io->target_read, p_io->p_target_ctx, address, length, false, false);
 }
 
 /* ADD_DIFF (version 2): dictionary bytes at the cursor, each plus the next
@@ -261,7 +305,7 @@ static tinydelta_result_t io_decode_add_diff(io_decoder_t *p_decoder, uint32_t l
     if (!range_within(p_decoder->cursor, length, p_io->dict_len)) {
         return TINYDELTA_ERR_MALFORMED;
     }
-    return read_to_target(p_decoder, p_io->dict_read, p_io->p_dict_ctx, p_decoder->cursor, length, true);
+    return read_to_target(p_decoder, p_io->dict_read, p_io->p_dict_ctx, p_decoder->cursor, length, true, true);
 }
 
 /* ---- Entry point -------------------------------------------------------- */
@@ -286,8 +330,29 @@ static tinydelta_result_t io_start_coded(io_decoder_t *p_decoder, uint8_t *p_ver
     }
     layout = features & TINYDELTA_CODED_LAYOUT_MASK;
     needed = tinydelta_coder_tables_size(layout);
-    if (((features & ~TINYDELTA_CODED_LAYOUT_MASK) != 0u) || (needed == 0u) || (p_io->p_tables == NULL) || (p_io->tables_size < needed)) {
+    if (((features & ~(TINYDELTA_CODED_LAYOUT_MASK | TINYDELTA_CODED_RELOC_MASK)) != 0u) || (needed == 0u) || (p_io->p_tables == NULL) ||
+        (p_io->tables_size < needed)) {
         return TINYDELTA_ERR_VERSION; /* a feature this build or its tables lack */
+    }
+    if ((features & TINYDELTA_CODED_RELOC_MASK) != 0u) {
+#if TINYDELTA_RELOC != 0
+        if ((features >> TINYDELTA_CODED_RELOC_SHIFT) != (uint8_t)TINYDELTA_RELOC) { /* Cast: the rule number fits a byte. */
+            return TINYDELTA_ERR_VERSION;                                            /* relocation for another instruction set */
+        }
+        p_decoder->reloc.p_dict    = NULL;
+        p_decoder->reloc.raw       = io_raw_dict;
+        p_decoder->reloc.p_raw_ctx = p_decoder;
+        p_decoder->reloc.dict_len  = p_io->dict_len;
+        p_decoder->raw_start       = 0u;
+        p_decoder->raw_len         = 0u;
+        p_decoder->b_reloc         = true;
+        result = tinydelta_reloc_read_map(&p_decoder->reloc, io_header_varint, p_decoder, p_io->p_tables + needed, p_io->tables_size - needed);
+        if (result != TINYDELTA_OK) {
+            return result;
+        }
+#else
+        return TINYDELTA_ERR_VERSION; /* built without relocation */
+#endif
     }
     result = io_read_varint(p_decoder, TINYDELTA_FIELD_CONTINUED, &p_decoder->stream_left); /* stored as is: not coded yet */
     if (result != TINYDELTA_OK) {
@@ -336,6 +401,9 @@ tinydelta_result_t tinydelta_decode_io(const tinydelta_io_t *p_io, uint32_t *p_t
     if (result != TINYDELTA_OK) {
         return result;
     }
+#if TINYDELTA_RELOC != 0
+    decoder.b_reloc = false;
+#endif
 #if TINYDELTA_CODER
     decoder.b_coded = false;
     if ((version == (TINYDELTA_CODED_FLAG | TINYDELTA_FORMAT_VERSION)) || (version == (TINYDELTA_CODED_FLAG | TINYDELTA_FORMAT_VERSION_2))) {

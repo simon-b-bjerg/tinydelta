@@ -77,6 +77,9 @@ func DecodeReaderLimit(dict []byte, r io.Reader, maxOutput int) (target []byte, 
 		if err != nil {
 			return nil, err
 		}
+		if plain.reloc != nil {
+			dict = plain.reloc.relocate(dict) // the old image as the patch was made against
+		}
 		return DecodeReaderLimit(dict, plain, maxOutput)
 	}
 	if version != FormatVersion && version != FormatVersion2 {

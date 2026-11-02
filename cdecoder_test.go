@@ -82,7 +82,7 @@ const cDriver = `#include <stdio.h>
 	uint32_t cap = (uint32_t)atol(argv[4]);
 	uint8_t *o = malloc(cap ? cap : 1);
 #if TINYDELTA_CODER
-	static uint8_t tables[TINYDELTA_CODED_TABLES_A];
+	static uint8_t tables[TINYDELTA_CODED_TABLES_A + 64u * 12u]; /* and a relocation map's entries */
 	tinydelta_result_t rc = tinydelta_decode_coded(d, dn, p, pn, o, cap, tables, sizeof tables, &on);
 #else
 	tinydelta_result_t rc = tinydelta_decode(d, dn, p, pn, o, cap, &on);

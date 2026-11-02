@@ -333,6 +333,68 @@ more than the buffer, or a build without the coder, is rejected with
 [Code size and stack](#code-size-and-stack); the format is under
 [Wire format](#coded-form).
 
+## Relocation
+
+For firmware, a coded patch can also carry a **relocation map**: how
+each part of the old image moved. When code is added or removed, every
+call, branch and pointer into the code after it changes, though nothing
+about it changed in the source. A plain or coded patch spends most of
+its bytes on these: where each changed address is, and its new bytes.
+With relocation, the decoder finds those addresses in the old image
+itself and moves them through the map before applying the patch, so
+the patch carries only what really changed. This is the idea behind
+Google's Courgette for Chrome updates, made small: no disassembler,
+only the map and the few instruction forms that hold addresses.
+
+| | coded | coded, relocated |
+|---|---:|---:|
+| ARM Thumb: MicroPython for SAMD21, 44 updates, ~185 KB | 151,935 B | **25,992 B (−83%)** |
+| MSP430X, large code model: mbedtls built with `-mlarge`, 17 updates, ~176 KB | 21,773 B | **12,240 B (−44%)** |
+
+Sums over consecutive builds, the map included; every patch decoded
+again and compared (`reloc_test.go` runs the same on synthetic images,
+and the C decoders against Go).
+
+The rules, per instruction set (`Relocation` in Go,
+`TINYDELTA_RELOC` in C):
+
+| rule | addresses it moves |
+|---|---|
+| `thumb` (ARM Cortex-M) | `BL` (its relative offset changes by the callee's move less the call site's) and 4-byte-aligned 32-bit pointers into the image (vector table, literal pools, function tables) |
+| `msp430x` (large code model) | the 20-bit address of `CALLA #imm`/`&abs`, `MOVA`/`ADDA`/`CMPA`/`SUBA #imm`, `MOVA &abs`, and the immediate, absolute or indexed operands of extension-word instructions (`MOVX.A #imm,x(Rn)`, `XORX.W addr(Rn),Rd`...) |
+
+Which bytes form an address is decided from the raw old image only, a
+few bytes around each position, so the decoder relocates whatever part
+of the old image it reads, in any order and in any chunk size. A wrong
+guess (data that looks like an instruction) costs a few bytes of patch,
+never correctness: the encoder makes the same guess and the patch
+corrects it like any other difference.
+
+```sh
+tinydelta encode -coder-tables 1600 -reloc msp430x -base 0x10000 old.bin new.bin update.td
+```
+
+`-base` is the address the image starts at on the device (its link
+address); `-coder-tables` must leave room for the map after the coder's
+tables, 12 bytes per entry. Updates here needed 3–5 entries, so a few
+hundred spare bytes are plenty; the encoder keeps the largest entries
+that fit and falls back to an unrelocated patch when that is smaller.
+
+On the device, build with `TINYDELTA_CODER = 1` and
+`TINYDELTA_RELOC = TINYDELTA_RELOC_MSP430X` (or `_THUMB`), and add
+`tinydelta_reloc.c`. Nothing else changes: the tables buffer you
+already pass holds the map too, and the decoders relocate dictionary
+bytes as they read them (the callback decoder through `dict_read`, 16
+bytes at a time around what it relocates). A patch for another
+instruction set, or one whose map doesn't fit the tables buffer, is
+rejected with `TINYDELTA_ERR_VERSION`.
+
+The cost, from [Code size and stack](#code-size-and-stack): on
+Cortex-M0, about 1.1 KB more than the coded decoders; on MSP430X
+`-mlarge`, about 3 KB more, as most of the relocation code is 32-bit
+address arithmetic. This first version is written for clarity, not
+size; that is the next thing to work on.
+
 ## Why another delta format?
 
 Established formats were not designed for a decoder that has to fit in a
@@ -363,6 +425,7 @@ The [benchmark](#benchmark) shows what that costs and buys.
 - [Benchmark](#benchmark)
 - [Two-pass patches](#two-pass-patches)
 - [Coded patches](#coded-patches)
+- [Relocation](#relocation)
 - [Why another delta format?](#why-another-delta-format)
 - [Installation](#installation)
   - [Command-line tool](#command-line-tool)
@@ -386,6 +449,7 @@ The [benchmark](#benchmark) shows what that costs and buys.
   - [Rules](#rules)
   - [Example](#example)
   - [Coded form](#coded-form)
+  - [Relocation map](#relocation-map)
   - [Stability](#stability)
   - [Conformance vectors](#conformance-vectors)
 - [How the encoder works](#how-the-encoder-works)
@@ -455,7 +519,7 @@ from a release.
 ## Command-line usage
 
 ```text
-tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-max-len N] [-v] <dictionary> <target> [<patch>]
+tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-reloc thumb|msp430x -base ADDR] [-max-len N] [-v] <dictionary> <target> [<patch>]
 tinydelta decode [-two-pass] [-max-size N] [-v] <dictionary> <patch> [<target>]
 tinydelta version
 ```
@@ -480,6 +544,7 @@ encoder returns the smallest patch it can decode:
 | `-coder-tables N` | has the coder, with an N-byte tables buffer (`tables_size`): allows [coded patches](#coded-patches) | 0: no coder |
 | `-window N` | reads its own output only from its N-byte RAM buffer (`buffer_size`, `target_read` `NULL`), never from flash | 0: no limit |
 | `-two-pass` | can decode twice ([Two-pass patches](#two-pass-patches)); prints `passes 1` or `passes 2` | one pass |
+| `-reloc R -base ADDR` | relocates addresses for instruction set R (`TINYDELTA_RELOC`) in an image at ADDR: allows [relocated patches](#relocation) | no relocation |
 
 `decode -max-size` rejects patches whose output would exceed
 the given size. The exit status is 0 on success, 1 on failure and 2 on
@@ -497,6 +562,7 @@ p, err := tinydelta.EncodeWith(oldFile, newFile, tinydelta.EncodeOptions{
 	CoderTables: 777, // the decoder's coder tables buffer (coded patches)
 	Window:      256, // it reads its output only from a 256-byte RAM buffer
 	TwoPass:     true, // it can decode twice
+	// Firmware: Relocation: tinydelta.RelocationMSP430X, ImageBase: 0x10000
 })
 // p.Bytes is the patch, p.Passes 1 or 2
 
@@ -508,7 +574,7 @@ newFile, err := tinydelta.DecodeReaderLimit(oldFile, r, maxSize) // from an io.R
 |---|---|
 | `Encode` | Optimizing parse; roughly 100–300 ms for a few KB. Never larger than `EncodeGreedy`'s patch; falls back to greedy above roughly 100 KB to bound memory. |
 | `EncodeGreedy` | One pass with one byte of lookahead; well under a millisecond for a few KB, patches typically a few percent larger. |
-| `EncodeWith` | The smallest patch the decoder described by `EncodeOptions` can decode (`CoderTables`, `Window`, `TwoPass`, `MaxInstructionLen`, `Greedy`), as a `Patch`: the bytes and the number of passes. |
+| `EncodeWith` | The smallest patch the decoder described by `EncodeOptions` can decode (`CoderTables`, `Window`, `TwoPass`, `Relocation` and `ImageBase`, `MaxInstructionLen`, `Greedy`), as a `Patch`: the bytes and the number of passes. |
 | `Decode`, `DecodeReader` | Apply a patch from a byte slice or an `io.Reader`. |
 | `DecodeReaderLimit` | As `DecodeReader`, but fails with `ErrTooLarge` before the target would exceed a size you choose. |
 
@@ -554,8 +620,10 @@ even on Cortex-M0). Reproduce with [`scripts/c-size.sh`](scripts/c-size.sh).
 |---|---:|---:|---:|---:|
 | memory decoder | 500 B | 470 B | 470 B | ~110 B |
 | callback decoder | 876 B | 836 B | 836 B | ~185 B\* |
-| memory decoder + coder | 1,404 B | 1,332 B | 1,332 B | ~290 B |
-| callback decoder + coder | 1,708 B | 1,692 B | 1,696 B | ~305 B\* |
+| memory decoder + coder | 1,416 B | 1,340 B | 1,340 B | ~290 B |
+| callback decoder + coder | 1,716 B | 1,700 B | 1,700 B | ~305 B\* |
+| memory decoder + coder + Thumb relocation | 2,424 B | 2,332 B | 2,332 B | – |
+| callback decoder + coder + Thumb relocation | 2,804 B | 2,724 B | 2,728 B | – |
 
 \* Deepest path, excluding your buffer and your callbacks' own stack
 use. With the coder (`TINYDELTA_CODER = 1`), each decoder grows by
@@ -572,8 +640,10 @@ every 32-bit operation takes several 16-bit instructions.
 |---|---:|---:|---:|---:|
 | memory decoder | 1,104 B | 1,080 B | 1,200 B | ~145 B |
 | callback decoder | 2,350 B | 2,298 B | 2,458 B | ~230 B\* |
-| memory decoder + coder | 2,610 B | 2,544 B | 2,812 B | ~290 B |
-| callback decoder + coder | 3,354 B | 3,260 B | 3,554 B | ~335 B\* |
+| memory decoder + coder | 2,608 B | 2,544 B | 2,808 B | ~290 B |
+| callback decoder + coder | 3,362 B | 3,268 B | 3,562 B | ~335 B\* |
+| memory decoder + coder + MSP430X relocation | 5,346 B | 5,178 B | 5,554 B | – |
+| callback decoder + coder + MSP430X relocation | 6,270 B | 6,064 B | 6,532 B | – |
 
 ### Results
 
@@ -914,13 +984,15 @@ range-coded ([Coded patches](#coded-patches)):
 
 ```text
 coded patch = 0x80 | version (0x81 or 0x82)
-            + features (1 byte: bits 0-1 the table layout, 1-3; bits 2-7 are 0)
+            + features (1 byte: bits 0-1 the table layout, 1-3; bits 2-3 the
+                        relocation rule, 0 for none; bits 4-7 are 0)
+            + [relocation map, with a rule]
             + n (varint: the length of the instruction stream, uncoded)
             + the coded stream
 ```
 
-A features byte with layout 0 or any of bits 2-7 set is unsupported,
-like an unknown version. Decoding yields the instruction stream's bytes
+A features byte with layout 0, rule 3 or any of bits 4-7 set is
+unsupported, like an unknown version. Decoding yields the instruction stream's bytes
 one at a time, `n` of them, and the instructions are decoded from them
 exactly as from a plain patch's.
 
@@ -972,6 +1044,51 @@ node, starting at 1, becomes `2 × node + b`, and the next bit uses the
 state at `base + node − 1`. A decoder that needs a coded byte past the
 end of the patch, or finds the stream's bytes run out mid-instruction,
 has a malformed patch.
+
+### Relocation map
+
+With a relocation rule (features bits 2-3: 1 Thumb, 2 MSP430X), the
+coded header carries the map before `n`:
+
+```text
+map = base (varint: the old image's address on the device)
+    + count (varint)
+    + count × ( gap (varint: start − the previous entry's end, 0 at first)
+              + length (varint)
+              + shift (varint, zigzag) )
+```
+
+Entries are in order and don't overlap; an old-image offset `o` moves
+by the `shift` of the entry with `start ≤ o < start + length`, by 0
+outside every entry. The instructions then apply to the relocated old
+image: the raw old image with every address the rule finds replaced.
+An address `a` points into the image if `base ≤ a < base + length of
+the old image`; it becomes `a + shift(a − base)`.
+
+**Thumb.** At each even address `h` where the halfword is
+`0xF000`–`0xF7FF` and the next `0xF800`–`0xFFFF` (a `BL`): its 22-bit
+field `f` (the low 11 bits of each halfword, first one high) gives the
+offset `2f`, sign-extended from 23 bits; the callee is at `h + 4 +
+offset`. The new offset is `offset + shift(callee) − shift(h)` (the
+callee's shift counts only if it is in the image), stored back if it
+differs, is even and fits 23 bits. Then each 4-byte-aligned 32-bit
+little-endian word that no `BL` overlaps is moved if it points into the
+image.
+
+**MSP430X.** At each even `h`, a candidate instruction and its 20-bit
+address fields, each the low 16 bits from a word and the high 4 bits
+from the first word:
+
+| first word | length | fields: low word at, high bits at |
+|---|---:|---|
+| `0x13B?`, `0x138?` (`CALLA #imm`/`&abs`), `0x0?6?` (`MOVA Rs,&abs`) | 4 | `h+2`, bits 3-0 |
+| `0x0?8?`–`0x0?B?` (`MOVA`/`CMPA`/`ADDA`/`SUBA #imm`), `0x0?2?` (`MOVA &abs`) | 4 | `h+2`, bits 11-8 |
+| `0x18??`–`0x1F??` then a word ≥ `0x4000` (extension word, two-operand instruction) | 4 + 2 per operand word | source word (As 1 except R0 and R3, or As 3 with R0), bits 10-7; then destination word (Ad 1 except R0), bits 3-0 |
+
+PC-relative operands (R0 with As or Ad 1) take a word but aren't moved.
+A candidate counts unless one starting 2, 4 or 6 bytes before it is
+longer than that distance. A field's address moves if it points into
+the image and stays below `2^20`.
 
 ### Stability
 

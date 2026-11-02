@@ -172,5 +172,19 @@ class CommandLine(unittest.TestCase):
         self.assertTrue(out.stdout.startswith(b"tinydelta "))
 
 
+class Relocation(unittest.TestCase):
+    def test_msp430x(self):
+        # Two MSP430X "images": calls (CALLA #imm) to a function that moved by 0x40.
+        def image(target):
+            call = bytes([0xB0 | (target >> 16), 0x13, target & 0xFF, (target >> 8) & 0xFF])
+            return (call + bytes(range(64)) * 4) * 40
+
+        old, new = image(0x10400), image(0x10440)
+        patch = tinydelta.encode(old, new, coder_tables=2000, relocation="msp430x", image_base=0x10000)
+        self.assertEqual(tinydelta.decode(old, patch), new)
+        with self.assertRaises(ValueError):
+            tinydelta.encode(old, new, relocation="arm")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -66,6 +66,25 @@ tinydelta_result_t tinydelta_decode(
 #define TINYDELTA_CODED_TABLES_B 777u
 #define TINYDELTA_CODED_TABLES_C 522u
 
+/* ---- Relocation ------------------------------------------------------------
+ * A coded patch for firmware may carry a map of how code moved; the decoder
+ * then relocates every address it finds in the old image through it (README.md,
+ * "Relocation"). TINYDELTA_RELOC picks the instruction set whose addresses it
+ * knows: TINYDELTA_RELOC_THUMB (ARM Cortex-M) or TINYDELTA_RELOC_MSP430X
+ * (MSP430X, large code model); 0, the default, for none. Needs
+ * TINYDELTA_CODER. The map takes TINYDELTA_RELOC_ENTRY_SIZE (12) bytes per
+ * entry of the tables buffer, after the coder's tables. A patch for another
+ * instruction set is rejected with TINYDELTA_ERR_VERSION. */
+
+#define TINYDELTA_RELOC_THUMB   1
+#define TINYDELTA_RELOC_MSP430X 2
+#ifndef TINYDELTA_RELOC
+#define TINYDELTA_RELOC 0
+#endif
+#if (TINYDELTA_RELOC != 0) && !TINYDELTA_CODER
+#error "TINYDELTA_RELOC needs TINYDELTA_CODER"
+#endif
+
 #if TINYDELTA_CODER
 /* tinydelta_decode for plain and coded patches: p_tables holds tables_size
  * bytes for a coded patch's tables (unused for a plain patch). A coded

@@ -20,17 +20,25 @@ TARGETS=("msp430:-mcpu=msp430" "msp430x:-mcpu=msp430x" "msp430x-large:-mcpu=msp4
 echo "| part | MSP430 | MSP430X | MSP430X, -mlarge |"
 echo "|---|---|---|---|"
 # name:file:extra flags.
-# Coded patches (TINYDELTA_CODER=1) add the coder and grow each decoder.
+# Coded patches (TINYDELTA_CODER=1) add the coder and grow each decoder;
+# relocation (TINYDELTA_RELOC=1 Thumb, 2 MSP430X) adds tinydelta_reloc.c.
 for part in decode:tinydelta_decode: io:tinydelta_io: \
             decode-coded:tinydelta_decode:-DTINYDELTA_CODER=1 io-coded:tinydelta_io:-DTINYDELTA_CODER=1 \
-            coder:tinydelta_coder:-DTINYDELTA_CODER=1; do
+            coder:tinydelta_coder:-DTINYDELTA_CODER=1 \
+            "decode-thumb:tinydelta_decode:-DTINYDELTA_CODER=1 -DTINYDELTA_RELOC=1" \
+            "io-thumb:tinydelta_io:-DTINYDELTA_CODER=1 -DTINYDELTA_RELOC=1" \
+            "reloc-thumb:tinydelta_reloc:-DTINYDELTA_CODER=1 -DTINYDELTA_RELOC=1" \
+            "decode-msp430x:tinydelta_decode:-DTINYDELTA_CODER=1 -DTINYDELTA_RELOC=2" \
+            "io-msp430x:tinydelta_io:-DTINYDELTA_CODER=1 -DTINYDELTA_RELOC=2" \
+            "reloc-msp430x:tinydelta_reloc:-DTINYDELTA_CODER=1 -DTINYDELTA_RELOC=2"; do
   IFS=: read -r name file extra <<< "$part"
+  read -ra defines <<< "$extra"
   row="| $file.c${extra:+, $extra} |"
   for target in "${TARGETS[@]}"; do
     cpu="${target%%:*}"
     read -ra flags <<< "${target#*:}"
     (cd "$out" && "$CC" -std=c99 -Os "${flags[@]}" -fstack-usage \
-      -Wall -Wextra -Werror ${extra:+"$extra"} -I"$OLDPWD" -c "$OLDPWD/$file.c" -o "${name}_$cpu.o")
+      -Wall -Wextra -Werror "${defines[@]}" -I"$OLDPWD" -c "$OLDPWD/$file.c" -o "${name}_$cpu.o")
     row="$row $(text "$out/${name}_$cpu.o") B |"
   done
   echo "$row"
