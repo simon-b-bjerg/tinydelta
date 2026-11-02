@@ -8,8 +8,11 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/simon-b-bjerg/tinydelta"
 )
 
 type result struct {
@@ -177,4 +180,42 @@ func itoa(n int) string {
 		return string(rune('0' + n))
 	}
 	return itoa(n/10) + string(rune('0'+n%10))
+}
+
+// encodeOptionNames is every EncodeOptions field's name in the CLI and in
+// the Python wrapper. TestEncodeOptionsEverywhere fails when a field is
+// added without them, so the three stay in step.
+var encodeOptionNames = map[string]struct{ flag, python string }{
+	"Greedy":            {"greedy", "greedy"},
+	"Window":            {"window", "window"},
+	"CoderTables":       {"coder-tables", "coder_tables"},
+	"TwoPass":           {"two-pass", "two_pass"},
+	"MaxInstructionLen": {"max-len", "max_instruction_len"},
+}
+
+func TestEncodeOptionsEverywhere(t *testing.T) {
+	var usage bytes.Buffer
+	run([]string{"encode", "-h"}, nil, &usage, &usage)
+	python, err := os.ReadFile(filepath.Join("..", "..", "python", "src", "tinydelta", "__init__.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := reflect.TypeOf(tinydelta.EncodeOptions{})
+	for i := 0; i < fields.NumField(); i++ {
+		name := fields.Field(i).Name
+		n, ok := encodeOptionNames[name]
+		if !ok {
+			t.Errorf("EncodeOptions.%s has no CLI flag or Python keyword in encodeOptionNames", name)
+			continue
+		}
+		if !strings.Contains(usage.String(), "-"+n.flag+" ") && !strings.Contains(usage.String(), "-"+n.flag+"\n") {
+			t.Errorf("EncodeOptions.%s: encode has no -%s flag", name, n.flag)
+		}
+		if !strings.Contains(string(python), n.python+"=") || !strings.Contains(string(python), `"-`+n.flag+`"`) {
+			t.Errorf("EncodeOptions.%s: Python encode() lacks %s= or doesn't pass -%s", name, n.python, n.flag)
+		}
+	}
+	if len(encodeOptionNames) != fields.NumField() {
+		t.Errorf("encodeOptionNames has %d entries, EncodeOptions %d fields", len(encodeOptionNames), fields.NumField())
+	}
 }
