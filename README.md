@@ -123,6 +123,8 @@ What that compression costs on the device:
 | HPatchLite + tinyuz | ~2.2 KB | 4–32 KB dictionary | – |
 | detools + heatshrink | 1,948 B | 640 B state† | ~0.5 KB |
 | tiny-vcdiff (open-vcdiff's format) | 3,881 B | 3,221 B | ~150 B |
+| xdelta3 (VCDIFF) | 11,267 B | 1.3 KB state + the old file + its target window | – |
+| zstd `--patch-from` | 20,396 B | 96 KB context + the old file | – |
 | bsdiff (bzip2) | – | 2.3–3.7 MB | – |
 
 \* One 256-byte flash page; any power of two works, and a small buffer
@@ -201,7 +203,10 @@ MicroPython image with each decoder linked into a small test program, with
 `--gc-sections`; detools as a sequential patch with heatshrink only, at
 its default settings (larger windows need more RAM): its 640-byte state
 struct counts as RAM, and its `detools_apply_patch_callbacks` wrapper
-adds a 512-byte read buffer. bsdiff: bzip2's own figures for 900 KB blocks; bspatch also
+adds a 512-byte read buffer. zstd 1.5.7 and xdelta3: decoder only, in
+their smallest configurations, linked for Cortex-M0 around
+`ZSTD_decompress` and `xd3_decode_memory`; both keep the old file in
+memory. bsdiff: bzip2's own figures for 900 KB blocks; bspatch also
 holds the old and new file in memory. Every figure and its source is in
 [`bench/decoders.json`](bench/decoders.json).
 
