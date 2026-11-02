@@ -19,7 +19,7 @@ import subprocess
 import sys
 import tempfile
 
-__all__ = ["encode", "decode", "Error", "TooLargeError", "MAX_SIZE", "binary_path", "__version__"]
+__all__ = ["encode", "decode", "Patch", "Error", "TooLargeError", "MAX_SIZE", "binary_path", "__version__"]
 
 __version__ = "0.0.0.dev0"  # replaced in release wheels
 
@@ -53,52 +53,85 @@ def binary_path():
     return path
 
 
+class Patch(bytes):
+    """A patch, as encode returns it: the patch bytes, plus passes, how
+    many times the device decodes it: 1, or 2 for a two-pass patch
+    (two_pass), which is decoded against an empty dictionary first and
+    the result then against the dictionary. Send passes with the patch;
+    it is not part of it. decode reads it from a Patch."""
+
+    def __new__(cls, data, passes=1):
+        patch = super().__new__(cls, data)
+        patch.passes = passes
+        return patch
+
+
 def encode(dictionary, target, *, greedy=False, max_instruction_len=0,
-           for_compression=False, max_distance=0):
-    """Returns a patch that turns dictionary into target (both bytes-like).
+           coder_tables=0, window=0, two_pass=False):
+    """Returns the smallest Patch that turns dictionary into target (both
+    bytes-like) and that the device's decoder, described by the options,
+    can decode.
+
+    coder_tables, if above 0, is the decoder's buffer for the coder's
+    tables (tables_size in C): it allows a coded patch, decoded in one
+    pass, whose tables fit (522, 777 or 1287 bytes).
+    window, if above 0, keeps copies from the target already produced
+    within that many bytes, so the decoder reads them from its RAM buffer
+    only (buffer_size in C, with target_read NULL).
+    two_pass allows a patch the device decodes twice (Patch.passes).
 
     greedy uses the fast greedy encoder instead of the optimal one (patches
     are typically a few percent larger). max_instruction_len, if above 0,
     limits the target bytes any one instruction produces.
-
-    for_compression makes the first pass of compression mode: a patch to
-    encode again against an empty dictionary, which shrinks it when a
-    change touches much of the file (format version 2 where that pays
-    off). max_distance, if above 0, limits how far back the patch reads
-    its own output, so a decoder only needs a buffer that large; see the
-    README.
     """
     if max_instruction_len < 0:
         raise ValueError("max_instruction_len must be 0 (no limit) or more")
-    if max_distance < 0:
-        raise ValueError("max_distance must be 0 (no limit) or more")
+    if window < 0:
+        raise ValueError("window must be 0 (no limit) or more")
+    if coder_tables < 0:
+        raise ValueError("coder_tables must be 0 (no coder) or more")
     with tempfile.TemporaryDirectory(prefix="tinydelta-") as work:
         dict_file = _write(work, "dictionary", dictionary)
         target_file = _write(work, "target", target)
-        args = ["encode", "-max-len", str(max_instruction_len), "-max-distance", str(max_distance)]
+        args = ["encode", "-max-len", str(max_instruction_len), "-window", str(window),
+                "-coder-tables", str(coder_tables)]
         if greedy:
             args.append("-greedy")
-        if for_compression:
-            args.append("-for-compression")
-        return _run(args + [dict_file, target_file])
+        if two_pass:
+            args.append("-two-pass")
+        result = _run(args + [dict_file, target_file])
+        passes = 1
+        for line in result.stderr.decode("utf-8", "replace").splitlines():
+            if line.startswith("passes "):
+                passes = int(line.split()[1])
+        return Patch(result.stdout, passes)
 
 
-def decode(dictionary, patch, *, max_size=None):
+def decode(dictionary, patch, *, max_size=None, passes=None):
     """Applies patch to dictionary (both bytes-like) and returns the target.
+
+    passes is how many times the patch is decoded, 1 or 2 (a two-pass
+    patch); by default a Patch's own passes, else 1.
 
     max_size, if given, is the largest target accepted, in bytes; a patch
     that would produce more raises TooLargeError before producing it. Set it
     whenever the expected size is known: a short patch can describe a huge
     target. A malformed patch raises Error.
     """
+    if passes is None:
+        passes = getattr(patch, "passes", 1)
+    if passes not in (1, 2):
+        raise ValueError("passes must be 1 or 2")
     args = ["decode"]
+    if passes == 2:
+        args.append("-two-pass")
     if max_size is not None:
         if max_size < 1:
             raise ValueError("max_size must be at least 1, or None for no limit")
         args += ["-max-size", str(min(max_size, MAX_SIZE))]
     with tempfile.TemporaryDirectory(prefix="tinydelta-") as work:
         dict_file = _write(work, "dictionary", dictionary)
-        return _run(args + [dict_file, "-"], stdin=bytes(patch))
+        return _run(args + [dict_file, "-"], stdin=bytes(patch)).stdout
 
 
 def _write(directory, name, data):
@@ -119,4 +152,4 @@ def _run(args, stdin=b""):
         if "size limit exceeded" in message:
             raise TooLargeError(message)
         raise Error(message or "tinydelta exited with status %d" % result.returncode)
-    return result.stdout
+    return result

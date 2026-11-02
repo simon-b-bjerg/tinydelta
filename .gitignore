@@ -13,3 +13,6 @@ __pycache__/
 /wheels/
 bench/.cache/
 /results/
+
+# go build ./cmd/tinydelta output.
+/tinydelta

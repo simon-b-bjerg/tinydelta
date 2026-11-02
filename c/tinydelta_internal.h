@@ -19,6 +19,13 @@
 
 #define TINYDELTA_HEADER_LEN 1u
 
+/* A coded patch's first byte: this flag plus the instruction set's version;
+ * then the features byte, whose low 2 bits are the table layout (1-3) and
+ * whose other bits are 0; then a varint, the length of the uncoded
+ * instruction stream; then the coded stream. */
+#define TINYDELTA_CODED_FLAG        0x80u
+#define TINYDELTA_CODED_LAYOUT_MASK 0x03u
+
 /* ---- Instructions -------------------------------------------------------
  * Every instruction starts with one varint: the opcode in its low bits, the
  * number of target bytes the instruction produces (its length) above them.

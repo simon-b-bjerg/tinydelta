@@ -1,35 +1,38 @@
 # tinydelta patch sizes
 
-Tools: tinydelta (tinydelta v0.0.0-20261101133731-dc26ed70865a); openvcdiff (open-vcdiff 868f459a8d815125c2457f8c74b12493853100f9); xdelta3 (Xdelta version 3.0.11); bsdiff (bsdiff 4.3-23); detools (detools 0.53.0); hpatchlite (HPatchLite v1.0.2); zstd (Zstandard CLI (64-bit) v1.5.7)
+Tools: tinydelta (tinydelta v0.0.0-20261101231348-4345e5bc6698); openvcdiff (open-vcdiff 868f459a8d815125c2457f8c74b12493853100f9); xdelta3 (Xdelta version 3.0.11); bsdiff (bsdiff 4.3-23); detools (detools 0.53.0); hpatchlite (HPatchLite v1.0.2); zstd (Zstandard CLI (64-bit) v1.5.7)
 
-Ratio = tinydelta's patch size / the other tool's; below 1, tinydelta is smaller. Geometric mean is the right average for ratios; "smaller" is the share of pairs where tinydelta is smaller. tinydelta is, per pair, the smaller of its plain patch (the library default) and its compression-mode patch, the one an update server would send. Both are listed on their own in the patch-size tables.
+Ratio = tinydelta's patch size / the other tool's; below 1, tinydelta is smaller. Geometric mean is the right average for ratios; "smaller" is the share of pairs where tinydelta is smaller. tinydelta is its coded patch with 777 B of coder tables: per pair, the smaller of the plain patch and the coded ones that fit, as the encoder sends it. Every variant is listed on its own in the patch-size tables.
 
 ## firmware, 185–364 KB, 1 commit apart
 
 96 pairs from micropython/stm32-NUCLEO_F091RC, micropython/stm32-PYBV11, micropython_samd/samd-ADAFRUIT_TRINKET_M0, micropython_samd/samd-SEEED_XIAO_SAMD21; median target 207,492 bytes.
 
-Compression mode is the smaller in 93% of these pairs.
+Two-pass is the smaller in 93% of these pairs.
 
 | tinydelta vs | geo. mean | median | p10-p90 | tinydelta smaller |
 |---|---:|---:|---:|---:|
-| open-vcdiff | 0.18 | 0.16 | 0.14-0.29 | 100% |
-| open-vcdiff, zlib-compressed | 0.25 | 0.24 | 0.22-0.33 | 100% |
-| xdelta3 | 0.30 | 0.29 | 0.23-0.40 | 100% |
-| bsdiff | 1.15 | 1.56 | 0.26-1.63 | 15% |
-| detools (heatshrink) | 0.43 | 0.86 | 0.02-0.95 | 98% |
-| HPatchLite, 4 KB dict. | 1.02 | 1.15 | 0.69-1.24 | 23% |
-| HPatchLite, 32 KB dict. | 1.05 | 1.19 | 0.70-1.29 | 16% |
-| zstd --patch-from | 0.72 | 0.73 | 0.56-0.95 | 93% |
+| open-vcdiff | 0.12 | 0.10 | 0.08-0.27 | 100% |
+| open-vcdiff, zlib-compressed | 0.17 | 0.15 | 0.12-0.28 | 100% |
+| xdelta3 | 0.20 | 0.18 | 0.14-0.31 | 100% |
+| bsdiff | 0.76 | 0.94 | 0.25-1.06 | 71% |
+| detools (heatshrink) | 0.29 | 0.53 | 0.02-0.64 | 100% |
+| HPatchLite, 4 KB dict. | 0.67 | 0.70 | 0.56-0.79 | 100% |
+| HPatchLite, 32 KB dict. | 0.69 | 0.73 | 0.59-0.82 | 100% |
+| zstd --patch-from | 0.47 | 0.46 | 0.39-0.57 | 100% |
 
 Patch size as a share of the target (median, p10-p90):
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta | 3.14% | 0.03% | 4.84% |
+| tinydelta, coded, 777 B tables | 1.97% | 0.03% | 3.17% |
+| tinydelta, plain or two-pass | 3.14% | 0.03% | 4.84% |
 | tinydelta, plain | 8.52% | 0.04% | 10.86% |
 | tinydelta, plain (greedy) | 8.52% | 0.04% | 10.86% |
-| tinydelta, compression mode, decoded twice | 3.14% | 0.03% | 4.84% |
-| tinydelta, compression mode, decoded twice, 1 KB window | 3.34% | 0.03% | 5.28% |
+| tinydelta, two-pass | 3.14% | 0.03% | 4.84% |
+| tinydelta, two-pass, 1 KB window | 3.34% | 0.03% | 5.28% |
+| tinydelta, coded, 522 B tables | 2.10% | 0.03% | 3.32% |
+| tinydelta, coded, 1287 B tables | 1.97% | 0.03% | 3.16% |
 | tinydelta, plain, copies at most 256 B back | 8.68% | 0.04% | 11.12% |
 | tinydelta, plain, copies at most 1 KB back | 8.62% | 0.04% | 11.01% |
 | tinydelta, plain, copies at most 4 KB back | 8.55% | 0.04% | 10.92% |
@@ -46,11 +49,14 @@ Patch size in bytes (median, p10-p90), what goes over the air:
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta | 7,539 | 62 | 10,713 |
+| tinydelta, coded, 777 B tables | 4,436 | 60 | 7,224 |
+| tinydelta, plain or two-pass | 7,539 | 62 | 10,713 |
 | tinydelta, plain | 18,770 | 74 | 30,521 |
 | tinydelta, plain (greedy) | 18,770 | 74 | 30,521 |
-| tinydelta, compression mode, decoded twice | 7,539 | 63 | 10,713 |
-| tinydelta, compression mode, decoded twice, 1 KB window | 8,236 | 63 | 11,542 |
+| tinydelta, two-pass | 7,539 | 62 | 10,713 |
+| tinydelta, two-pass, 1 KB window | 8,236 | 63 | 11,542 |
+| tinydelta, coded, 522 B tables | 4,756 | 60 | 7,678 |
+| tinydelta, coded, 1287 B tables | 4,430 | 60 | 7,214 |
 | tinydelta, plain, copies at most 256 B back | 19,112 | 74 | 31,037 |
 | tinydelta, plain, copies at most 1 KB back | 18,952 | 74 | 30,758 |
 | tinydelta, plain, copies at most 4 KB back | 18,818 | 74 | 30,576 |
@@ -67,28 +73,31 @@ Patch size in bytes (median, p10-p90), what goes over the air:
 
 80 pairs from micropython/stm32-NUCLEO_F091RC, micropython/stm32-PYBV11, micropython_samd/samd-ADAFRUIT_TRINKET_M0, micropython_samd/samd-SEEED_XIAO_SAMD21; median target 207,492 bytes.
 
-Compression mode is the smaller in 100% of these pairs.
+Two-pass is the smaller in 100% of these pairs.
 
 | tinydelta vs | geo. mean | median | p10-p90 | tinydelta smaller |
 |---|---:|---:|---:|---:|
-| open-vcdiff | 0.19 | 0.19 | 0.16-0.21 | 100% |
-| open-vcdiff, zlib-compressed | 0.28 | 0.28 | 0.24-0.32 | 100% |
-| xdelta3 | 0.37 | 0.37 | 0.31-0.45 | 100% |
-| bsdiff | 1.52 | 1.53 | 1.44-1.57 | 0% |
-| detools (heatshrink) | 0.98 | 1.00 | 0.89-1.05 | 48% |
-| HPatchLite, 4 KB dict. | 1.21 | 1.24 | 1.09-1.31 | 0% |
-| HPatchLite, 32 KB dict. | 1.25 | 1.28 | 1.12-1.34 | 0% |
-| zstd --patch-from | 0.86 | 0.87 | 0.73-0.97 | 94% |
+| open-vcdiff | 0.12 | 0.12 | 0.09-0.16 | 100% |
+| open-vcdiff, zlib-compressed | 0.18 | 0.17 | 0.14-0.23 | 100% |
+| xdelta3 | 0.24 | 0.24 | 0.18-0.28 | 100% |
+| bsdiff | 0.97 | 0.97 | 0.88-1.11 | 62% |
+| detools (heatshrink) | 0.63 | 0.64 | 0.56-0.70 | 100% |
+| HPatchLite, 4 KB dict. | 0.78 | 0.79 | 0.69-0.86 | 100% |
+| HPatchLite, 32 KB dict. | 0.80 | 0.81 | 0.71-0.90 | 100% |
+| zstd --patch-from | 0.55 | 0.55 | 0.49-0.61 | 100% |
 
 Patch size as a share of the target (median, p10-p90):
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta | 6.01% | 4.13% | 7.76% |
+| tinydelta, coded, 777 B tables | 3.89% | 2.53% | 5.09% |
+| tinydelta, plain or two-pass | 6.01% | 4.13% | 7.76% |
 | tinydelta, plain | 12.01% | 9.81% | 14.09% |
 | tinydelta, plain (greedy) | 12.01% | 9.81% | 14.09% |
-| tinydelta, compression mode, decoded twice | 6.01% | 4.13% | 7.76% |
-| tinydelta, compression mode, decoded twice, 1 KB window | 6.38% | 4.51% | 8.20% |
+| tinydelta, two-pass | 6.01% | 4.13% | 7.76% |
+| tinydelta, two-pass, 1 KB window | 6.38% | 4.51% | 8.20% |
+| tinydelta, coded, 522 B tables | 4.04% | 2.68% | 5.28% |
+| tinydelta, coded, 1287 B tables | 3.87% | 2.52% | 5.06% |
 | tinydelta, plain, copies at most 256 B back | 12.19% | 9.98% | 14.39% |
 | tinydelta, plain, copies at most 1 KB back | 12.13% | 9.92% | 14.28% |
 | tinydelta, plain, copies at most 4 KB back | 12.06% | 9.86% | 14.15% |
@@ -105,11 +114,14 @@ Patch size in bytes (median, p10-p90), what goes over the air:
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta | 13,988 | 8,624 | 18,823 |
+| tinydelta, coded, 777 B tables | 8,794 | 5,040 | 14,564 |
+| tinydelta, plain or two-pass | 13,988 | 8,624 | 18,823 |
 | tinydelta, plain | 25,406 | 19,598 | 39,346 |
 | tinydelta, plain (greedy) | 25,406 | 19,598 | 39,346 |
-| tinydelta, compression mode, decoded twice | 13,988 | 8,624 | 18,823 |
-| tinydelta, compression mode, decoded twice, 1 KB window | 14,888 | 9,337 | 20,439 |
+| tinydelta, two-pass | 13,988 | 8,624 | 18,823 |
+| tinydelta, two-pass, 1 KB window | 14,888 | 9,337 | 20,439 |
+| tinydelta, coded, 522 B tables | 9,150 | 5,335 | 14,971 |
+| tinydelta, coded, 1287 B tables | 8,746 | 5,023 | 14,492 |
 | tinydelta, plain, copies at most 256 B back | 25,947 | 19,895 | 40,581 |
 | tinydelta, plain, copies at most 1 KB back | 25,732 | 19,756 | 40,058 |
 | tinydelta, plain, copies at most 4 KB back | 25,515 | 19,627 | 39,650 |
@@ -126,28 +138,31 @@ Patch size in bytes (median, p10-p90), what goes over the air:
 
 180 pairs from defconfig/at91_dt_defconfig, defconfig/bcm2835_defconfig, defconfig/lpc32xx_defconfig, defconfig/shmobile_defconfig, defconfig/sunxi_defconfig, defconfig/u8500_defconfig, dtb_mcu/lpc4357-ea4357-devkit, dtb_mcu/stm32f746-disco, dtb_mcu/stm32f769-disco, dtb_mcu/stm32h743i-disco, dtb_mcu/stm32h750i-art-pi; median target 4,885 bytes.
 
-Compression mode is the smaller in 11% of these pairs.
+Two-pass is the smaller in 11% of these pairs.
 
 | tinydelta vs | geo. mean | median | p10-p90 | tinydelta smaller |
 |---|---:|---:|---:|---:|
-| open-vcdiff | 0.34 | 0.34 | 0.24-0.50 | 100% |
-| open-vcdiff, zlib-compressed | 0.35 | 0.34 | 0.21-0.54 | 100% |
-| xdelta3 | 0.24 | 0.24 | 0.10-0.54 | 100% |
-| bsdiff | 0.13 | 0.12 | 0.05-0.43 | 99% |
-| detools (heatshrink) | 0.17 | 0.15 | 0.08-0.45 | 100% |
-| HPatchLite, 4 KB dict. | 0.59 | 0.59 | 0.40-0.87 | 91% |
-| HPatchLite, 32 KB dict. | 0.59 | 0.58 | 0.40-0.87 | 91% |
-| zstd --patch-from | 0.51 | 0.54 | 0.25-0.96 | 92% |
+| open-vcdiff | 0.33 | 0.34 | 0.23-0.48 | 100% |
+| open-vcdiff, zlib-compressed | 0.34 | 0.33 | 0.21-0.53 | 100% |
+| xdelta3 | 0.24 | 0.24 | 0.10-0.51 | 100% |
+| bsdiff | 0.13 | 0.12 | 0.05-0.39 | 100% |
+| detools (heatshrink) | 0.17 | 0.15 | 0.08-0.44 | 100% |
+| HPatchLite, 4 KB dict. | 0.57 | 0.59 | 0.40-0.78 | 97% |
+| HPatchLite, 32 KB dict. | 0.57 | 0.58 | 0.40-0.81 | 97% |
+| zstd --patch-from | 0.50 | 0.53 | 0.25-0.86 | 96% |
 
 Patch size as a share of the target (median, p10-p90):
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta | 0.35% | 0.14% | 2.04% |
+| tinydelta, coded, 777 B tables | 0.35% | 0.14% | 2.00% |
+| tinydelta, plain or two-pass | 0.35% | 0.14% | 2.04% |
 | tinydelta, plain | 0.35% | 0.14% | 2.06% |
 | tinydelta, plain (greedy) | 0.38% | 0.15% | 2.27% |
-| tinydelta, compression mode, decoded twice | 0.39% | 0.18% | 2.08% |
-| tinydelta, compression mode, decoded twice, 1 KB window | 0.39% | 0.18% | 2.08% |
+| tinydelta, two-pass | 0.35% | 0.14% | 2.04% |
+| tinydelta, two-pass, 1 KB window | 0.35% | 0.14% | 2.05% |
+| tinydelta, coded, 522 B tables | 0.35% | 0.14% | 2.00% |
+| tinydelta, coded, 1287 B tables | 0.35% | 0.14% | 1.99% |
 | tinydelta, plain, copies at most 256 B back | 0.35% | 0.14% | 2.11% |
 | tinydelta, plain, copies at most 1 KB back | 0.35% | 0.14% | 2.07% |
 | tinydelta, plain, copies at most 4 KB back | 0.35% | 0.14% | 2.06% |
@@ -164,11 +179,14 @@ Patch size in bytes (median, p10-p90), what goes over the air:
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta | 24 | 7 | 149 |
+| tinydelta, coded, 777 B tables | 24 | 7 | 143 |
+| tinydelta, plain or two-pass | 24 | 7 | 149 |
 | tinydelta, plain | 24 | 7 | 149 |
 | tinydelta, plain (greedy) | 26 | 7 | 154 |
-| tinydelta, compression mode, decoded twice | 26 | 9 | 152 |
-| tinydelta, compression mode, decoded twice, 1 KB window | 26 | 9 | 152 |
+| tinydelta, two-pass | 24 | 7 | 149 |
+| tinydelta, two-pass, 1 KB window | 24 | 7 | 157 |
+| tinydelta, coded, 522 B tables | 24 | 7 | 143 |
+| tinydelta, coded, 1287 B tables | 24 | 7 | 136 |
 | tinydelta, plain, copies at most 256 B back | 24 | 7 | 157 |
 | tinydelta, plain, copies at most 1 KB back | 24 | 7 | 157 |
 | tinydelta, plain, copies at most 4 KB back | 24 | 7 | 150 |
@@ -185,28 +203,31 @@ Patch size in bytes (median, p10-p90), what goes over the air:
 
 136 pairs from defconfig/at91_dt_defconfig, defconfig/bcm2835_defconfig, defconfig/lpc32xx_defconfig, defconfig/shmobile_defconfig, defconfig/sunxi_defconfig, defconfig/u8500_defconfig, dtb_mcu/lpc4357-ea4357-devkit, dtb_mcu/stm32f746-disco, dtb_mcu/stm32f769-disco, dtb_mcu/stm32h743i-disco; median target 4,868 bytes.
 
-Compression mode is the smaller in 22% of these pairs.
+Two-pass is the smaller in 22% of these pairs.
 
 | tinydelta vs | geo. mean | median | p10-p90 | tinydelta smaller |
 |---|---:|---:|---:|---:|
-| open-vcdiff | 0.41 | 0.44 | 0.27-0.55 | 100% |
-| open-vcdiff, zlib-compressed | 0.56 | 0.57 | 0.42-0.70 | 100% |
-| xdelta3 | 0.53 | 0.56 | 0.37-0.71 | 100% |
-| bsdiff | 0.36 | 0.34 | 0.19-0.85 | 99% |
-| detools (heatshrink) | 0.44 | 0.44 | 0.29-0.79 | 100% |
-| HPatchLite, 4 KB dict. | 0.73 | 0.70 | 0.58-1.08 | 81% |
-| HPatchLite, 32 KB dict. | 0.74 | 0.70 | 0.58-1.10 | 81% |
-| zstd --patch-from | 0.88 | 0.87 | 0.66-1.20 | 65% |
+| open-vcdiff | 0.39 | 0.43 | 0.25-0.55 | 100% |
+| open-vcdiff, zlib-compressed | 0.53 | 0.56 | 0.41-0.65 | 100% |
+| xdelta3 | 0.50 | 0.53 | 0.37-0.67 | 100% |
+| bsdiff | 0.34 | 0.34 | 0.19-0.74 | 100% |
+| detools (heatshrink) | 0.42 | 0.42 | 0.29-0.68 | 100% |
+| HPatchLite, 4 KB dict. | 0.70 | 0.67 | 0.58-0.93 | 96% |
+| HPatchLite, 32 KB dict. | 0.70 | 0.67 | 0.58-0.95 | 96% |
+| zstd --patch-from | 0.84 | 0.86 | 0.65-1.07 | 81% |
 
 Patch size as a share of the target (median, p10-p90):
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta | 2.14% | 0.91% | 5.72% |
+| tinydelta, coded, 777 B tables | 2.10% | 0.91% | 5.24% |
+| tinydelta, plain or two-pass | 2.14% | 0.91% | 5.72% |
 | tinydelta, plain | 2.14% | 0.91% | 6.48% |
 | tinydelta, plain (greedy) | 2.32% | 0.94% | 7.16% |
-| tinydelta, compression mode, decoded twice | 2.19% | 0.98% | 5.72% |
-| tinydelta, compression mode, decoded twice, 1 KB window | 2.19% | 0.98% | 5.72% |
+| tinydelta, two-pass | 2.14% | 0.91% | 5.72% |
+| tinydelta, two-pass, 1 KB window | 2.15% | 0.91% | 5.92% |
+| tinydelta, coded, 522 B tables | 2.10% | 0.91% | 5.24% |
+| tinydelta, coded, 1287 B tables | 2.03% | 0.91% | 4.95% |
 | tinydelta, plain, copies at most 256 B back | 2.15% | 0.92% | 6.88% |
 | tinydelta, plain, copies at most 1 KB back | 2.15% | 0.91% | 6.74% |
 | tinydelta, plain, copies at most 4 KB back | 2.14% | 0.91% | 6.57% |
@@ -223,11 +244,14 @@ Patch size in bytes (median, p10-p90), what goes over the air:
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta | 122 | 46 | 918 |
+| tinydelta, coded, 777 B tables | 120 | 46 | 766 |
+| tinydelta, plain or two-pass | 122 | 46 | 918 |
 | tinydelta, plain | 124 | 46 | 1,050 |
 | tinydelta, plain (greedy) | 134 | 48 | 1,139 |
-| tinydelta, compression mode, decoded twice | 124 | 48 | 918 |
-| tinydelta, compression mode, decoded twice, 1 KB window | 124 | 48 | 920 |
+| tinydelta, two-pass | 122 | 46 | 918 |
+| tinydelta, two-pass, 1 KB window | 124 | 46 | 927 |
+| tinydelta, coded, 522 B tables | 120 | 46 | 790 |
+| tinydelta, coded, 1287 B tables | 118 | 46 | 747 |
 | tinydelta, plain, copies at most 256 B back | 126 | 46 | 1,092 |
 | tinydelta, plain, copies at most 1 KB back | 125 | 46 | 1,070 |
 | tinydelta, plain, copies at most 4 KB back | 124 | 46 | 1,065 |
@@ -244,28 +268,31 @@ Patch size in bytes (median, p10-p90), what goes over the air:
 
 24 pairs from dtb/imx8mp-evk, dtb/k3-am625-sk, dtb/rk3588-rock-5b; median target 62,786 bytes.
 
-Compression mode is the smaller in 67% of these pairs.
+Two-pass is the smaller in 67% of these pairs.
 
 | tinydelta vs | geo. mean | median | p10-p90 | tinydelta smaller |
 |---|---:|---:|---:|---:|
-| open-vcdiff | 0.22 | 0.25 | 0.12-0.32 | 100% |
-| open-vcdiff, zlib-compressed | 0.36 | 0.33 | 0.28-0.49 | 100% |
-| xdelta3 | 0.32 | 0.31 | 0.20-0.46 | 100% |
-| bsdiff | 0.44 | 0.80 | 0.12-1.20 | 50% |
-| detools (heatshrink) | 0.14 | 0.33 | 0.02-0.70 | 100% |
-| HPatchLite, 4 KB dict. | 0.77 | 1.00 | 0.46-1.18 | 50% |
-| HPatchLite, 32 KB dict. | 0.78 | 1.05 | 0.46-1.22 | 46% |
-| zstd --patch-from | 0.70 | 0.74 | 0.49-1.04 | 83% |
+| open-vcdiff | 0.18 | 0.20 | 0.10-0.32 | 100% |
+| open-vcdiff, zlib-compressed | 0.30 | 0.29 | 0.23-0.42 | 100% |
+| xdelta3 | 0.27 | 0.26 | 0.21-0.40 | 100% |
+| bsdiff | 0.38 | 0.59 | 0.13-1.00 | 88% |
+| detools (heatshrink) | 0.12 | 0.25 | 0.02-0.56 | 100% |
+| HPatchLite, 4 KB dict. | 0.65 | 0.72 | 0.46-0.90 | 100% |
+| HPatchLite, 32 KB dict. | 0.66 | 0.75 | 0.46-0.94 | 96% |
+| zstd --patch-from | 0.60 | 0.59 | 0.51-0.78 | 100% |
 
 Patch size as a share of the target (median, p10-p90):
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta | 0.72% | 0.03% | 2.45% |
+| tinydelta, coded, 777 B tables | 0.52% | 0.03% | 1.95% |
+| tinydelta, plain or two-pass | 0.72% | 0.03% | 2.45% |
 | tinydelta, plain | 1.47% | 0.03% | 4.82% |
 | tinydelta, plain (greedy) | 1.58% | 0.03% | 4.82% |
-| tinydelta, compression mode, decoded twice | 0.72% | 0.03% | 2.45% |
-| tinydelta, compression mode, decoded twice, 1 KB window | 0.77% | 0.03% | 2.60% |
+| tinydelta, two-pass | 0.72% | 0.03% | 2.45% |
+| tinydelta, two-pass, 1 KB window | 0.77% | 0.03% | 2.60% |
+| tinydelta, coded, 522 B tables | 0.56% | 0.03% | 2.13% |
+| tinydelta, coded, 1287 B tables | 0.52% | 0.03% | 1.94% |
 | tinydelta, plain, copies at most 256 B back | 1.63% | 0.03% | 5.32% |
 | tinydelta, plain, copies at most 1 KB back | 1.47% | 0.03% | 5.01% |
 | tinydelta, plain, copies at most 4 KB back | 1.47% | 0.03% | 4.90% |
@@ -282,11 +309,14 @@ Patch size in bytes (median, p10-p90), what goes over the air:
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta | 458 | 20 | 1,899 |
+| tinydelta, coded, 777 B tables | 305 | 21 | 1,563 |
+| tinydelta, plain or two-pass | 458 | 20 | 1,899 |
 | tinydelta, plain | 718 | 21 | 4,830 |
 | tinydelta, plain (greedy) | 774 | 23 | 4,830 |
-| tinydelta, compression mode, decoded twice | 458 | 20 | 1,899 |
-| tinydelta, compression mode, decoded twice, 1 KB window | 458 | 20 | 2,080 |
+| tinydelta, two-pass | 458 | 20 | 1,899 |
+| tinydelta, two-pass, 1 KB window | 458 | 20 | 2,080 |
+| tinydelta, coded, 522 B tables | 324 | 21 | 1,665 |
+| tinydelta, coded, 1287 B tables | 304 | 21 | 1,543 |
 | tinydelta, plain, copies at most 256 B back | 795 | 22 | 5,297 |
 | tinydelta, plain, copies at most 1 KB back | 719 | 22 | 5,017 |
 | tinydelta, plain, copies at most 4 KB back | 719 | 22 | 4,903 |
@@ -303,28 +333,31 @@ Patch size in bytes (median, p10-p90), what goes over the air:
 
 14 pairs from dtb/imx8mp-evk, dtb/rk3588-rock-5b; median target 62,802 bytes.
 
-Compression mode is the smaller in 100% of these pairs.
+Two-pass is the smaller in 100% of these pairs.
 
 | tinydelta vs | geo. mean | median | p10-p90 | tinydelta smaller |
 |---|---:|---:|---:|---:|
-| open-vcdiff | 0.21 | 0.23 | 0.14-0.30 | 100% |
-| open-vcdiff, zlib-compressed | 0.48 | 0.49 | 0.34-0.66 | 100% |
-| xdelta3 | 0.45 | 0.48 | 0.32-0.61 | 100% |
-| bsdiff | 1.13 | 1.13 | 1.10-1.17 | 0% |
-| detools (heatshrink) | 0.70 | 0.71 | 0.63-0.82 | 100% |
-| HPatchLite, 4 KB dict. | 1.12 | 1.17 | 1.02-1.22 | 7% |
-| HPatchLite, 32 KB dict. | 1.16 | 1.20 | 1.05-1.25 | 7% |
-| zstd --patch-from | 0.99 | 1.04 | 0.77-1.20 | 43% |
+| open-vcdiff | 0.15 | 0.16 | 0.11-0.23 | 100% |
+| open-vcdiff, zlib-compressed | 0.36 | 0.35 | 0.28-0.50 | 100% |
+| xdelta3 | 0.34 | 0.34 | 0.27-0.45 | 100% |
+| bsdiff | 0.85 | 0.85 | 0.75-0.96 | 100% |
+| detools (heatshrink) | 0.53 | 0.53 | 0.50-0.61 | 100% |
+| HPatchLite, 4 KB dict. | 0.84 | 0.86 | 0.82-0.92 | 100% |
+| HPatchLite, 32 KB dict. | 0.87 | 0.89 | 0.84-0.95 | 100% |
+| zstd --patch-from | 0.74 | 0.75 | 0.64-0.88 | 100% |
 
 Patch size as a share of the target (median, p10-p90):
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta | 2.49% | 1.98% | 3.97% |
+| tinydelta, coded, 777 B tables | 1.82% | 1.61% | 2.97% |
+| tinydelta, plain or two-pass | 2.49% | 1.98% | 3.97% |
 | tinydelta, plain | 5.04% | 3.73% | 5.35% |
 | tinydelta, plain (greedy) | 5.04% | 3.73% | 5.35% |
-| tinydelta, compression mode, decoded twice | 2.49% | 1.98% | 3.97% |
-| tinydelta, compression mode, decoded twice, 1 KB window | 2.53% | 2.19% | 4.05% |
+| tinydelta, two-pass | 2.49% | 1.98% | 3.97% |
+| tinydelta, two-pass, 1 KB window | 2.53% | 2.19% | 4.05% |
+| tinydelta, coded, 522 B tables | 1.89% | 1.71% | 3.04% |
+| tinydelta, coded, 1287 B tables | 1.78% | 1.59% | 2.89% |
 | tinydelta, plain, copies at most 256 B back | 5.51% | 3.75% | 5.91% |
 | tinydelta, plain, copies at most 1 KB back | 5.20% | 3.76% | 5.49% |
 | tinydelta, plain, copies at most 4 KB back | 5.13% | 3.75% | 5.43% |
@@ -341,11 +374,14 @@ Patch size in bytes (median, p10-p90), what goes over the air:
 
 | tool | median | p10 | p90 |
 |---|---:|---:|---:|
-| tinydelta | 2,170 | 1,476 | 2,537 |
+| tinydelta, coded, 777 B tables | 1,753 | 1,034 | 2,053 |
+| tinydelta, plain or two-pass | 2,170 | 1,476 | 2,537 |
 | tinydelta, plain | 3,307 | 2,364 | 5,687 |
 | tinydelta, plain (greedy) | 3,307 | 2,364 | 5,687 |
-| tinydelta, compression mode, decoded twice | 2,170 | 1,476 | 2,537 |
-| tinydelta, compression mode, decoded twice, 1 KB window | 2,374 | 1,484 | 2,632 |
+| tinydelta, two-pass | 2,170 | 1,476 | 2,537 |
+| tinydelta, two-pass, 1 KB window | 2,374 | 1,484 | 2,632 |
+| tinydelta, coded, 522 B tables | 1,840 | 1,064 | 2,164 |
+| tinydelta, coded, 1287 B tables | 1,718 | 1,018 | 2,020 |
 | tinydelta, plain, copies at most 256 B back | 3,476 | 2,417 | 6,326 |
 | tinydelta, plain, copies at most 1 KB back | 3,364 | 2,392 | 5,876 |
 | tinydelta, plain, copies at most 4 KB back | 3,317 | 2,378 | 5,804 |

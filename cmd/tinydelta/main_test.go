@@ -5,10 +5,14 @@ package main
 
 import (
 	"bytes"
+	"math/rand"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/simon-b-bjerg/tinydelta"
 )
 
 type result struct {
@@ -49,6 +53,50 @@ func TestEncodeDecodeFiles(t *testing.T) {
 		got, _ := os.ReadFile(out)
 		if !bytes.Equal(got, want) {
 			t.Fatalf("round trip with %v: got %q, want %q", flags, got, want)
+		}
+	}
+}
+
+// TestEncodeOptions checks the decoder options: every combination round
+// trips, -two-pass prints the number of passes, and decode -two-pass
+// decodes such a patch.
+func TestEncodeOptions(t *testing.T) {
+	dir := t.TempDir()
+	r := rand.New(rand.NewSource(7))
+	old := make([]byte, 20000)
+	r.Read(old)
+	for i := 0; i+4 <= len(old); i += 16 { // addresses that all move when code is inserted
+		old[i], old[i+1], old[i+2], old[i+3] = byte(i), byte(i>>8), 0x20, 0
+	}
+	newFile := append(append(append([]byte{}, old[:5000]...), "inserted"...), old[5000:]...)
+	for i := 5008; i+4 <= len(newFile); i += 16 {
+		newFile[i] += 8
+	}
+	dict, target := filepath.Join(dir, "old"), filepath.Join(dir, "new")
+	os.WriteFile(dict, old, 0o644)
+	os.WriteFile(target, newFile, 0o644)
+	for _, flags := range [][]string{{"-window", "256"}, {"-coder-tables", "777"}, {"-two-pass"}, {"-two-pass", "-coder-tables", "522", "-window", "64"}} {
+		patch, out := filepath.Join(dir, "patch"), filepath.Join(dir, "out")
+		res := runCLI(nil, append(append([]string{"encode"}, flags...), dict, target, patch)...)
+		if res.code != exitOK {
+			t.Fatalf("encode %v: %+v", flags, res)
+		}
+		passes := "1"
+		if strings.Contains(strings.Join(flags, " "), "-two-pass") {
+			if !strings.HasPrefix(res.stderr, "passes ") {
+				t.Fatalf("encode %v: no pass count: %q", flags, res.stderr)
+			}
+			passes = strings.TrimSpace(strings.TrimPrefix(res.stderr, "passes "))
+		}
+		decode := []string{"decode"}
+		if passes == "2" {
+			decode = append(decode, "-two-pass")
+		}
+		if res := runCLI(nil, append(decode, dict, patch, out)...); res.code != exitOK {
+			t.Fatalf("decode %v (%s passes): %+v", flags, passes, res)
+		}
+		if got, _ := os.ReadFile(out); !bytes.Equal(got, newFile) {
+			t.Fatalf("%v: round trip differs", flags)
 		}
 	}
 }
@@ -132,4 +180,42 @@ func itoa(n int) string {
 		return string(rune('0' + n))
 	}
 	return itoa(n/10) + string(rune('0'+n%10))
+}
+
+// encodeOptionNames is every EncodeOptions field's name in the CLI and in
+// the Python wrapper. TestEncodeOptionsEverywhere fails when a field is
+// added without them, so the three stay in step.
+var encodeOptionNames = map[string]struct{ flag, python string }{
+	"Greedy":            {"greedy", "greedy"},
+	"Window":            {"window", "window"},
+	"CoderTables":       {"coder-tables", "coder_tables"},
+	"TwoPass":           {"two-pass", "two_pass"},
+	"MaxInstructionLen": {"max-len", "max_instruction_len"},
+}
+
+func TestEncodeOptionsEverywhere(t *testing.T) {
+	var usage bytes.Buffer
+	run([]string{"encode", "-h"}, nil, &usage, &usage)
+	python, err := os.ReadFile(filepath.Join("..", "..", "python", "src", "tinydelta", "__init__.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := reflect.TypeOf(tinydelta.EncodeOptions{})
+	for i := 0; i < fields.NumField(); i++ {
+		name := fields.Field(i).Name
+		n, ok := encodeOptionNames[name]
+		if !ok {
+			t.Errorf("EncodeOptions.%s has no CLI flag or Python keyword in encodeOptionNames", name)
+			continue
+		}
+		if !strings.Contains(usage.String(), "-"+n.flag+" ") && !strings.Contains(usage.String(), "-"+n.flag+"\n") {
+			t.Errorf("EncodeOptions.%s: encode has no -%s flag", name, n.flag)
+		}
+		if !strings.Contains(string(python), n.python+"=") || !strings.Contains(string(python), `"-`+n.flag+`"`) {
+			t.Errorf("EncodeOptions.%s: Python encode() lacks %s= or doesn't pass -%s", name, n.python, n.flag)
+		}
+	}
+	if len(encodeOptionNames) != fields.NumField() {
+		t.Errorf("encodeOptionNames has %d entries, EncodeOptions %d fields", len(encodeOptionNames), fields.NumField())
+	}
 }

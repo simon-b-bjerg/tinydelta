@@ -12,6 +12,6 @@ cd "$(dirname "$0")/.."
 out="$1"
 shift
 CLANG="${CLANG:-clang}"
-flags=(-std=c99 -g -fsanitize=fuzzer -Ic "$@")
+flags=(-std=c99 -g -fsanitize=fuzzer -Ic -DTINYDELTA_CODER=1 "$@")
 
-"$CLANG" "${flags[@]}" c/fuzz/fuzz_decode.c c/tinydelta_decode.c c/tinydelta_io.c -o "$out"
+"$CLANG" "${flags[@]}" c/fuzz/fuzz_decode.c c/tinydelta_decode.c c/tinydelta_io.c c/tinydelta_coder.c -o "$out"

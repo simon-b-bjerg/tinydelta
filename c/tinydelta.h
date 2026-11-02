@@ -36,7 +36,9 @@ typedef enum {
                                      (tinydelta_decode_io only) */
     TINYDELTA_ERR_VERSION   = -4  /* the patch's version byte is neither 1
                                      nor 2: a newer format version, or not
-                                     a patch */
+                                     a patch; or a coded patch this build
+                                     (TINYDELTA_CODER) or buffer can't
+                                     decode */
 } tinydelta_result_t;
 
 /* Applies the patch to the dictionary and writes the target into
@@ -46,5 +48,37 @@ typedef enum {
  * reads the patch once, front to back. */
 tinydelta_result_t tinydelta_decode(
     const uint8_t *p_dict, uint32_t dict_len, const uint8_t *p_patch, uint32_t patch_len, uint8_t *p_target, uint32_t target_cap, uint32_t *p_target_len);
+
+/* ---- Coded patches -------------------------------------------------------
+ * A coded patch (first byte 0x81 or 0x82) is a version 1 or 2 patch whose
+ * instruction stream is range-coded, decoded in one pass. Its decoder needs
+ * RAM for probability tables, the size of the patch's table layout, for as
+ * long as it decodes: a buffer that may live on the stack. Built with
+ * TINYDELTA_CODER = 1 only; otherwise coded patches are rejected with
+ * TINYDELTA_ERR_VERSION. */
+
+#ifndef TINYDELTA_CODER
+#define TINYDELTA_CODER 0
+#endif
+
+/* Table sizes of the three layouts, in bytes (encoder: -coder-tables). */
+#define TINYDELTA_CODED_TABLES_A 1287u
+#define TINYDELTA_CODED_TABLES_B 777u
+#define TINYDELTA_CODED_TABLES_C 522u
+
+#if TINYDELTA_CODER
+/* tinydelta_decode for plain and coded patches: p_tables holds tables_size
+ * bytes for a coded patch's tables (unused for a plain patch). A coded
+ * patch whose layout needs more is rejected with TINYDELTA_ERR_VERSION. */
+tinydelta_result_t tinydelta_decode_coded(const uint8_t *p_dict,
+                                          uint32_t dict_len,
+                                          const uint8_t *p_patch,
+                                          uint32_t patch_len,
+                                          uint8_t *p_target,
+                                          uint32_t target_cap,
+                                          uint8_t *p_tables,
+                                          uint32_t tables_size,
+                                          uint32_t *p_target_len);
+#endif
 
 #endif

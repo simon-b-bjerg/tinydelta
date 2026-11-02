@@ -3,10 +3,8 @@
  */
 
 #include "tinydelta_io.h"
+#include "tinydelta_coder.h"
 #include "tinydelta_internal.h"
-
-/* ADD_DIFF reads its difference bytes through this stack buffer. */
-#define DIFF_CHUNK 16u
 
 /* The callback decoder's state while it runs. The target position counts
  * every byte produced; the buffer holds the last buffer_size of them, at
@@ -19,43 +17,87 @@ typedef struct {
     uint32_t target_pos;  /* target bytes produced so far */
     uint32_t written_len; /* target bytes passed to target_write */
     uint32_t cursor;      /* dictionary read position */
+#if TINYDELTA_CODER
+    bool b_coded;            /* instruction-stream bytes come from the coder */
+    uint32_t stream_left;    /* coded: instruction-stream bytes still to come */
+    tinydelta_coder_t coder; /* coded: the range decoder, reading patch bytes */
+#endif
 } io_decoder_t;
 
 static uint32_t min_u32(uint32_t first, uint32_t second) {
     return (first < second) ? first : second;
 }
 
-/* ---- Patch reading ------------------------------------------------------ */
+/* ---- Patch bytes ------------------------------------------------------------
+ * Every instruction-stream byte comes through io_byte: the next patch byte,
+ * or for a coded patch the next byte the coder decodes from them. */
 
-/* Reads the varint at the current patch position, with one patch_read of
- * at most VARINT_MAX_BYTES bytes. */
-static tinydelta_result_t io_read_varint(io_decoder_t *p_decoder, uint32_t *p_value) {
+/* The next patch byte as stored (also the coder's source): one patch_read
+ * of one byte. Wrap patch_read in a small buffer if single-byte reads are
+ * slow (README.md, "Callback decoder"). */
+static tinydelta_result_t io_raw_byte(void *p_ctx, uint8_t *p_byte) {
+    io_decoder_t *p_decoder    = (io_decoder_t *)p_ctx; /* Cast: the context is always the decoder. */
     const tinydelta_io_t *p_io = p_decoder->p_io;
-    uint8_t bytes[VARINT_MAX_BYTES];
-    uint32_t available = min_u32(p_io->patch_len - p_decoder->patch_pos, VARINT_MAX_BYTES);
-    uint32_t used;
-    tinydelta_result_t result;
 
-    if (available == 0u) {
+    if (p_decoder->patch_pos >= p_io->patch_len) {
         return TINYDELTA_ERR_MALFORMED;
     }
-    if (p_io->patch_read(p_io->p_patch_ctx, p_decoder->patch_pos, bytes, available) != TINYDELTA_CALLBACK_OK) {
+    if (p_io->patch_read(p_io->p_patch_ctx, p_decoder->patch_pos, p_byte, 1u) != TINYDELTA_CALLBACK_OK) {
         return TINYDELTA_ERR_IO;
     }
-    result = varint_parse(bytes, available, p_value, &used);
-    if (result == TINYDELTA_OK) {
-        p_decoder->patch_pos += used;
-    }
-    return result;
+    p_decoder->patch_pos++;
+    return TINYDELTA_OK;
 }
 
-/* ---- Target buffer ------------------------------------------------------
- * Target bytes are produced straight into the buffer, at most up to the end
+/* The next instruction-stream byte, a field of the given kind. */
+static tinydelta_result_t io_byte(io_decoder_t *p_decoder, tinydelta_field_t field, uint8_t *p_byte) {
+#if TINYDELTA_CODER
+    if (p_decoder->b_coded) {
+        if (p_decoder->stream_left == 0u) {
+            return TINYDELTA_ERR_MALFORMED;
+        }
+        p_decoder->stream_left--;
+        return tinydelta_coder_byte(&p_decoder->coder, field, p_byte);
+    }
+#else
+    (void)field;
+#endif
+    return io_raw_byte(p_decoder, p_byte);
+}
+
+/* Reads a varint; first is its first byte's kind. */
+static tinydelta_result_t io_read_varint(io_decoder_t *p_decoder, tinydelta_field_t first, uint32_t *p_value) {
+    tinydelta_field_t field = first;
+    uint32_t value          = 0u;
+
+    for (uint32_t shift = 0u; shift < (VARINT_MAX_BYTES * VARINT_BITS_PER_BYTE); shift += VARINT_BITS_PER_BYTE) {
+        uint8_t byte;
+        tinydelta_result_t result = io_byte(p_decoder, field, &byte);
+
+        if (result != TINYDELTA_OK) {
+            return result;
+        }
+        if ((shift == ((VARINT_MAX_BYTES - 1u) * VARINT_BITS_PER_BYTE)) && (byte > VARINT_LAST_BYTE_MAX)) {
+            return TINYDELTA_ERR_MALFORMED; /* more than 32 bits */
+        }
+        /* Cast: widens the byte, so the shift (at most 28) stays in 32 bits. */
+        value |= ((uint32_t)byte & VARINT_VALUE_MASK) << shift;
+        if ((byte & VARINT_CONTINUES) == 0u) {
+            *p_value = value;
+            return TINYDELTA_OK;
+        }
+        field = TINYDELTA_FIELD_CONTINUED;
+    }
+    return TINYDELTA_ERR_MALFORMED; /* unreachable: a 5th byte with more to come exceeds 0x0F */
+}
+
+/* ---- Target ring ------------------------------------------------------------
+ * Target bytes are produced straight into the ring, at most up to the end
  * of the current page at a time. Pages never wrap around the end of the
- * buffer, because page_size divides buffer_size.
+ * ring, because page_size divides the ring's size.
  */
 
-/* Where the next target byte goes in the buffer. */
+/* Where the next target byte goes in the ring. */
 static uint8_t *write_position(const io_decoder_t *p_decoder) {
     return p_decoder->p_io->p_buffer + (p_decoder->target_pos & p_decoder->buffer_mask);
 }
@@ -66,11 +108,11 @@ static uint32_t page_room(const io_decoder_t *p_decoder, uint32_t length) {
 }
 
 /* Writes the bytes produced since the last write: always within one page,
- * so contiguous in the buffer. */
+ * so contiguous in the ring. */
 static tinydelta_result_t write_page(io_decoder_t *p_decoder) {
     const tinydelta_io_t *p_io = p_decoder->p_io;
     uint32_t length            = p_decoder->target_pos - p_decoder->written_len;
-    const uint8_t *p_page      = p_io->p_buffer + (p_decoder->written_len & p_decoder->buffer_mask);
+    const uint8_t *p_page      = p_decoder->p_io->p_buffer + (p_decoder->written_len & p_decoder->buffer_mask);
 
     if (length == 0u) {
         return TINYDELTA_OK;
@@ -92,33 +134,28 @@ static tinydelta_result_t produced(io_decoder_t *p_decoder, uint32_t length) {
     return write_page(p_decoder);
 }
 
-/* Reads length bytes from offset in a read callback's data straight into
- * the buffer, a page at a time. With b_add_diff (ADD_DIFF), each byte also
- * gets the next patch byte added, DIFF_CHUNK bytes at a time. */
+/* Produces length bytes into the ring, a page at a time: read from offset
+ * in a read callback's data, or with read NULL the next instruction-stream
+ * bytes (ADD's literals). With b_add_diff (ADD_DIFF), each byte read also
+ * gets the next instruction-stream byte added. */
 static tinydelta_result_t read_to_target(io_decoder_t *p_decoder, tinydelta_read_fn_t read, void *p_ctx, uint32_t offset, uint32_t length, bool b_add_diff) {
-    const tinydelta_io_t *p_io = p_decoder->p_io;
-    uint8_t diff[DIFF_CHUNK];
-
     while (length > 0u) {
         uint32_t chunk    = page_room(p_decoder, length);
         uint8_t *p_output = write_position(p_decoder);
         tinydelta_result_t result;
 
-        if (b_add_diff) {
-            chunk = min_u32(chunk, DIFF_CHUNK);
-        }
-        if (read(p_ctx, offset, p_output, chunk) != TINYDELTA_CALLBACK_OK) {
+        if ((read != NULL) && (read(p_ctx, offset, p_output, chunk) != TINYDELTA_CALLBACK_OK)) {
             return TINYDELTA_ERR_IO;
         }
-        if (b_add_diff) {
-            if (p_io->patch_read(p_io->p_patch_ctx, p_decoder->patch_pos, diff, chunk) != TINYDELTA_CALLBACK_OK) {
-                return TINYDELTA_ERR_IO;
+        for (uint32_t index = 0u; ((read == NULL) || b_add_diff) && (index < chunk); index++) {
+            uint8_t byte;
+
+            result = io_byte(p_decoder, (read == NULL) ? TINYDELTA_FIELD_LITERAL : TINYDELTA_FIELD_DIFF, &byte);
+            if (result != TINYDELTA_OK) {
+                return result;
             }
-            for (uint32_t index = 0u; index < chunk; index++) {
-                /* Cast: the sum wraps modulo 256, as the format defines. */
-                p_output[index] = (uint8_t)(p_output[index] + diff[index]);
-            }
-            p_decoder->patch_pos += chunk;
+            /* Cast: the sum wraps modulo 256, as the format defines. */
+            p_output[index] = (read == NULL) ? byte : (uint8_t)(p_output[index] + byte);
         }
         result = produced(p_decoder, chunk);
         if (result != TINYDELTA_OK) {
@@ -137,7 +174,7 @@ static tinydelta_result_t io_decode_copy(io_decoder_t *p_decoder, uint32_t lengt
     const tinydelta_io_t *p_io = p_decoder->p_io;
     uint32_t delta;
     uint32_t address;
-    tinydelta_result_t result = io_read_varint(p_decoder, &delta);
+    tinydelta_result_t result = io_read_varint(p_decoder, TINYDELTA_FIELD_DELTA, &delta);
 
     if (result != TINYDELTA_OK) {
         return result;
@@ -150,16 +187,9 @@ static tinydelta_result_t io_decode_copy(io_decoder_t *p_decoder, uint32_t lengt
     return read_to_target(p_decoder, p_io->dict_read, p_io->p_dict_ctx, address, length, false);
 }
 
-/* ADD: literal bytes, taken from the patch. */
+/* ADD: literal bytes, taken from the instruction stream. */
 static tinydelta_result_t io_decode_add(io_decoder_t *p_decoder, uint32_t length) {
-    const tinydelta_io_t *p_io = p_decoder->p_io;
-    uint32_t start             = p_decoder->patch_pos;
-
-    if (!range_within(start, length, p_io->patch_len)) {
-        return TINYDELTA_ERR_MALFORMED;
-    }
-    p_decoder->patch_pos += length;
-    return read_to_target(p_decoder, p_io->patch_read, p_io->p_patch_ctx, start, length, false);
+    return read_to_target(p_decoder, NULL, NULL, 0u, length, false);
 }
 
 /* SKIP: dictionary bytes at the cursor. */
@@ -172,18 +202,18 @@ static tinydelta_result_t io_decode_skip(io_decoder_t *p_decoder, uint32_t lengt
     return read_to_target(p_decoder, p_io->dict_read, p_io->p_dict_ctx, p_decoder->cursor, length, false);
 }
 
-/* COPY_TARGET within the buffer: byte by byte, so a source overlapping the
+/* COPY_TARGET within the ring: byte by byte, so a source overlapping the
  * bytes being written (a short repeating run) works. */
-static tinydelta_result_t copy_in_buffer(io_decoder_t *p_decoder, uint32_t distance, uint32_t length) {
-    uint8_t *p_buffer = p_decoder->p_io->p_buffer;
+static tinydelta_result_t copy_in_ring(io_decoder_t *p_decoder, uint32_t distance, uint32_t length) {
+    uint8_t *p_ring = p_decoder->p_io->p_buffer;
 
     while (length > 0u) {
         uint32_t chunk = page_room(p_decoder, length);
         tinydelta_result_t result;
 
         for (uint32_t offset = 0u; offset < chunk; offset++) {
-            uint32_t position                           = p_decoder->target_pos + offset;
-            p_buffer[position & p_decoder->buffer_mask] = p_buffer[(position - distance) & p_decoder->buffer_mask];
+            uint32_t position                         = p_decoder->target_pos + offset;
+            p_ring[position & p_decoder->buffer_mask] = p_ring[(position - distance) & p_decoder->buffer_mask];
         }
         result = produced(p_decoder, chunk);
         if (result != TINYDELTA_OK) {
@@ -195,14 +225,14 @@ static tinydelta_result_t copy_in_buffer(io_decoder_t *p_decoder, uint32_t dista
 }
 
 /* COPY_TARGET (version 1): earlier target bytes at target position + delta.
- * From the buffer when they are at most buffer_size bytes back, else
- * through target_read. */
+ * From the ring when they are at most its size back, else through
+ * target_read. */
 static tinydelta_result_t io_decode_copy_target(io_decoder_t *p_decoder, uint32_t length) {
     const tinydelta_io_t *p_io = p_decoder->p_io;
     uint32_t delta;
     uint32_t address;
     uint32_t distance;
-    tinydelta_result_t result = io_read_varint(p_decoder, &delta);
+    tinydelta_result_t result = io_read_varint(p_decoder, TINYDELTA_FIELD_DELTA, &delta);
 
     if (result != TINYDELTA_OK) {
         return result;
@@ -212,23 +242,23 @@ static tinydelta_result_t io_decode_copy_target(io_decoder_t *p_decoder, uint32_
         return TINYDELTA_ERR_MALFORMED; /* must be earlier output */
     }
     distance = p_decoder->target_pos - address;
-    if (distance <= p_io->buffer_size) {
-        return copy_in_buffer(p_decoder, distance, length);
+    if (distance <= (p_decoder->buffer_mask + 1u)) {
+        return copy_in_ring(p_decoder, distance, length);
     }
     if (p_io->target_read == NULL) {
-        return TINYDELTA_ERR_MALFORMED; /* reaches back further than the buffer */
+        return TINYDELTA_ERR_MALFORMED; /* reaches back further than the ring */
     }
-    /* The source is more than a buffer back, so it lies before the current
+    /* The source is more than a ring back, so it lies before the current
      * page: already written, the whole way. */
     return read_to_target(p_decoder, p_io->target_read, p_io->p_target_ctx, address, length, false);
 }
 
 /* ADD_DIFF (version 2): dictionary bytes at the cursor, each plus the next
- * patch byte. */
+ * instruction-stream byte. */
 static tinydelta_result_t io_decode_add_diff(io_decoder_t *p_decoder, uint32_t length) {
     const tinydelta_io_t *p_io = p_decoder->p_io;
 
-    if (!range_within(p_decoder->cursor, length, p_io->dict_len) || !range_within(p_decoder->patch_pos, length, p_io->patch_len)) {
+    if (!range_within(p_decoder->cursor, length, p_io->dict_len)) {
         return TINYDELTA_ERR_MALFORMED;
     }
     return read_to_target(p_decoder, p_io->dict_read, p_io->p_dict_ctx, p_decoder->cursor, length, true);
@@ -240,9 +270,43 @@ static bool is_power_of_two(uint32_t value) {
     return (value != 0u) && ((value & (value - 1u)) == 0u);
 }
 
-/* Powers of two, page_size at most buffer_size (so it divides it). */
-static bool buffer_valid(const tinydelta_io_t *p_io) {
-    return (p_io->p_buffer != NULL) && is_power_of_two(p_io->page_size) && is_power_of_two(p_io->buffer_size) && (p_io->page_size <= p_io->buffer_size);
+#if TINYDELTA_CODER
+/* Reads a coded patch's header (the first byte's flag already seen) and
+ * starts the coder with its tables in p_tables: *p_version becomes the
+ * instruction set's version. */
+static tinydelta_result_t io_start_coded(io_decoder_t *p_decoder, uint8_t *p_version) {
+    const tinydelta_io_t *p_io = p_decoder->p_io;
+    uint8_t features;
+    uint8_t layout;
+    uint32_t needed;
+    tinydelta_result_t result = io_raw_byte(p_decoder, &features);
+
+    if (result != TINYDELTA_OK) {
+        return result;
+    }
+    layout = features & TINYDELTA_CODED_LAYOUT_MASK;
+    needed = tinydelta_coder_tables_size(layout);
+    if (((features & ~TINYDELTA_CODED_LAYOUT_MASK) != 0u) || (needed == 0u) || (p_io->p_tables == NULL) || (p_io->tables_size < needed)) {
+        return TINYDELTA_ERR_VERSION; /* a feature this build or its tables lack */
+    }
+    result = io_read_varint(p_decoder, TINYDELTA_FIELD_CONTINUED, &p_decoder->stream_left); /* stored as is: not coded yet */
+    if (result != TINYDELTA_OK) {
+        return result;
+    }
+    p_decoder->b_coded = true;
+    *p_version &= (uint8_t)~TINYDELTA_CODED_FLAG; /* Cast: the flag fits a byte. */
+    return tinydelta_coder_init(&p_decoder->coder, layout, p_io->p_tables, io_raw_byte, p_decoder);
+}
+#endif
+
+/* Whether instructions remain. */
+static bool io_more(const io_decoder_t *p_decoder) {
+#if TINYDELTA_CODER
+    if (p_decoder->b_coded) {
+        return p_decoder->stream_left > 0u;
+    }
+#endif
+    return p_decoder->patch_pos < p_decoder->p_io->patch_len;
 }
 
 tinydelta_result_t tinydelta_decode_io(const tinydelta_io_t *p_io, uint32_t *p_target_len) {
@@ -252,36 +316,45 @@ tinydelta_result_t tinydelta_decode_io(const tinydelta_io_t *p_io, uint32_t *p_t
     bool b_format_v2;
     tinydelta_result_t result;
 
-    if (!buffer_valid(p_io)) {
+    /* The buffer: powers of two, page_size at most buffer_size (so it
+     * divides it). */
+    if ((p_io->p_buffer == NULL) || !is_power_of_two(p_io->page_size) || !is_power_of_two(p_io->buffer_size) || (p_io->page_size > p_io->buffer_size)) {
         return TINYDELTA_ERR_MALFORMED;
     }
     if (p_io->dict_len > TINYDELTA_MAX_SIZE) {
         return TINYDELTA_ERR_TOO_LARGE;
     }
-    if (p_io->patch_len < TINYDELTA_HEADER_LEN) {
-        return TINYDELTA_ERR_MALFORMED;
+
+    decoder.p_io        = p_io;
+    decoder.page_mask   = p_io->page_size - 1u;
+    decoder.patch_pos   = 0u;
+    decoder.target_pos  = 0u;
+    decoder.written_len = 0u;
+    decoder.cursor      = 0u;
+    decoder.buffer_mask = p_io->buffer_size - 1u;
+    result              = io_raw_byte(&decoder, &version);
+    if (result != TINYDELTA_OK) {
+        return result;
     }
-    if (p_io->patch_read(p_io->p_patch_ctx, 0u, &version, TINYDELTA_HEADER_LEN) != TINYDELTA_CALLBACK_OK) {
-        return TINYDELTA_ERR_IO;
+#if TINYDELTA_CODER
+    decoder.b_coded = false;
+    if ((version == (TINYDELTA_CODED_FLAG | TINYDELTA_FORMAT_VERSION)) || (version == (TINYDELTA_CODED_FLAG | TINYDELTA_FORMAT_VERSION_2))) {
+        result = io_start_coded(&decoder, &version);
+        if (result != TINYDELTA_OK) {
+            return result;
+        }
     }
+#endif
     b_format_v2 = (version == TINYDELTA_FORMAT_VERSION_2);
     if ((version != TINYDELTA_FORMAT_VERSION) && !b_format_v2) {
         return TINYDELTA_ERR_VERSION;
     }
 
-    decoder.p_io        = p_io;
-    decoder.buffer_mask = p_io->buffer_size - 1u;
-    decoder.page_mask   = p_io->page_size - 1u;
-    decoder.patch_pos   = TINYDELTA_HEADER_LEN;
-    decoder.target_pos  = 0u;
-    decoder.written_len = 0u;
-    decoder.cursor      = 0u;
-
-    while (decoder.patch_pos < p_io->patch_len) {
+    while (io_more(&decoder)) {
         uint32_t instruction;
         uint32_t length;
 
-        result = io_read_varint(&decoder, &instruction);
+        result = io_read_varint(&decoder, TINYDELTA_FIELD_INSTRUCTION, &instruction);
         if (result != TINYDELTA_OK) {
             return result;
         }

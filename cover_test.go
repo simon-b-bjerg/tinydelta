@@ -60,7 +60,8 @@ func TestDecodeAddDiff(t *testing.T) {
 	}
 }
 
-func TestEncodeForCompression(t *testing.T) {
+// TestEncodeFirstPass checks the first pass of a two-pass patch.
+func TestEncodeFirstPass(t *testing.T) {
 	r := rand.New(rand.NewSource(11))
 	dict, target := shiftedFirmware(r)
 	text := textFile(r, fileSize)
@@ -77,7 +78,7 @@ func TestEncodeForCompression(t *testing.T) {
 	}
 	for _, c := range cases {
 		for _, greedy := range []bool{false, true} {
-			patch := mustEncode(t, c.dict, c.target, EncodeOptions{ForCompression: true, Greedy: greedy})
+			patch := encodeFirstPass(c.dict, c.target, MaxSize, MaxSize, greedy)
 			if got, err := Decode(c.dict, patch); err != nil || !bytes.Equal(got, c.target) {
 				t.Fatalf("%s (greedy %v): round trip failed: %v", c.name, greedy, err)
 			}
@@ -93,7 +94,7 @@ func TestEncodeForCompression(t *testing.T) {
 
 	// The point of version 2: moved addresses compress far better.
 	v1 := mustEncode(t, dict, target, EncodeOptions{})
-	v2 := mustEncode(t, dict, target, EncodeOptions{ForCompression: true})
+	v2 := encodeFirstPass(dict, target, MaxSize, MaxSize, false)
 	if a, b := deflatedLen(v1), deflatedLen(v2); b*2 > a {
 		t.Errorf("shifted addresses: version 2 deflated to %d B, version 1 to %d B; want at most half", b, a)
 	}

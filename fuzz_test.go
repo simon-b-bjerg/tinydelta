@@ -82,8 +82,10 @@ func applyEdits(dict, script []byte) []byte {
 //
 // and the optimizing encoder's patch must be no larger than the greedy
 // one's, which Encode and EncodeWith document. The version 2 cover
-// encoder, and EncodeWith with ForCompression, must meet the first three
-// too.
+// encoder, and the first pass of a two-pass patch, must meet the first three
+// too. Coded patches of both instruction sets, in every table layout,
+// must decode back to exactly the plain patch and the target, and
+// EncodeWith with CoderTables must be no larger than the plain patch.
 //
 // `go test` runs the seed corpus below plus any failing inputs saved under
 // testdata/fuzz/FuzzEncodeRoundTrip. To search for new failures:
@@ -115,10 +117,11 @@ func FuzzEncodeRoundTrip(f *testing.F) {
 
 		var sizes [2]int
 		for i, greedy := range []bool{true, false} {
-			patch, err := EncodeWith(dict, target, EncodeOptions{Greedy: greedy, MaxInstructionLen: int(maxLen)})
+			encoded, err := EncodeWith(dict, target, EncodeOptions{Greedy: greedy, MaxInstructionLen: int(maxLen)})
 			if err != nil {
 				t.Fatalf("greedy=%v: encode: %v", greedy, err)
 			}
+			patch := encoded.Bytes
 			sizes[i] = len(patch)
 
 			got, err := Decode(dict, patch)
@@ -152,15 +155,15 @@ func FuzzEncodeRoundTrip(f *testing.F) {
 			t.Fatalf("optimizing patch %d B is larger than greedy patch %d B", sizes[1], sizes[0])
 		}
 
-		// Format version 2: the cover encoder itself (ForCompression may
-		// pick the version 1 patch instead), and ForCompression.
+		// Format version 2: the cover encoder itself, and the first pass of
+		// a two-pass patch (which may pick the version 1 patch instead).
 		limit := MaxSize
 		if maxLen > 0 {
 			limit = int(maxLen)
 		}
 		for _, patch := range [][]byte{
 			withVersion(FormatVersion2, encodeCovers(dict, target, limit)),
-			mustEncode(t, dict, target, EncodeOptions{ForCompression: true, MaxInstructionLen: int(maxLen)}),
+			encodeFirstPass(dict, target, limit, MaxSize, false),
 		} {
 			if got, err := Decode(dict, patch); err != nil || !bytes.Equal(got, target) {
 				t.Fatalf("version %d: round trip failed: %v", patch[0], err)
@@ -175,6 +178,42 @@ func FuzzEncodeRoundTrip(f *testing.F) {
 					t.Fatalf("version %d: instruction of %d B exceeds MaxInstructionLen %d", patch[0], n, maxLen)
 				}
 			}
+		}
+
+		// Coded patches: both instruction sets in every table layout
+		// code and decode back to exactly the plain patch, and EncodeWith
+		// with CoderTables is never larger than the plain patch.
+		v1 := mustEncode(t, dict, target, EncodeOptions{MaxInstructionLen: int(maxLen)})
+		for _, plain := range [][]byte{v1, withVersion(FormatVersion2, encodeCovers(dict, target, limit))} {
+			for _, layout := range []int{codedLayoutA, codedLayoutB, codedLayoutC} {
+				coded := encodeCoded(plain, layout)
+				if back, err := decodeCoded(coded, MaxSize); err != nil || !bytes.Equal(back, plain) {
+					t.Fatalf("coded version %d, layout %d: uncoded stream differs: %v", plain[0], layout, err)
+				}
+				if got, err := Decode(dict, coded); err != nil || !bytes.Equal(got, target) {
+					t.Fatalf("coded version %d, layout %d: round trip failed: %v", plain[0], layout, err)
+				}
+			}
+		}
+		if coded := mustEncode(t, dict, target, EncodeOptions{CoderTables: 1287, MaxInstructionLen: int(maxLen)}); len(coded) > len(v1) {
+			t.Fatalf("CoderTables patch %d B is larger than the plain one, %d B", len(coded), len(v1))
+		}
+		// Every option at once: the smallest patch, decoded in its passes.
+		all, err := EncodeWith(dict, target, EncodeOptions{CoderTables: 1287, TwoPass: true, Window: 64, MaxInstructionLen: int(maxLen)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := all.Bytes
+		if all.Passes == 2 {
+			if got, err = Decode(nil, got); err != nil {
+				t.Fatalf("two-pass patch: first pass: %v", err)
+			}
+		}
+		if got, err = Decode(dict, got); err != nil || !bytes.Equal(got, target) {
+			t.Fatalf("all options, %d passes: round trip failed: %v", all.Passes, err)
+		}
+		if plain := mustEncode(t, dict, target, EncodeOptions{Window: 64, MaxInstructionLen: int(maxLen)}); len(all.Bytes) > len(plain) {
+			t.Fatalf("all options: %d B, larger than the plain patch with the same window, %d B", len(all.Bytes), len(plain))
 		}
 	})
 }
@@ -218,12 +257,46 @@ func TestDumpFuzzInput(t *testing.T) {
 		len(applyEdits(dict, script)), hex.Dump(applyEdits(dict, script)))
 }
 
-// mustEncode is EncodeWith, failing the test on error.
+// mustEncode is EncodeWith for a single-pass patch, failing the test on
+// error.
 func mustEncode(t *testing.T, dict, target []byte, opts EncodeOptions) []byte {
 	t.Helper()
 	patch, err := EncodeWith(dict, target, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return patch
+	if patch.Passes != 1 {
+		t.Fatalf("%d-pass patch where one pass was expected", patch.Passes)
+	}
+	return patch.Bytes
+}
+
+// FuzzDecode feeds the Go decoder arbitrary patches, plain and coded, and
+// checks that it fails cleanly: an error, never a panic (which Decode
+// would turn into an error mentioning a runtime error) and never output
+// beyond the capacity. Seeds are real patches of every kind, so mutations
+// start from valid headers and streams.
+//
+//	go test -run '^$' -fuzz '^FuzzDecode$' -fuzztime 5m .
+func FuzzDecode(f *testing.F) {
+	r := rand.New(rand.NewSource(4))
+	dict := textFile(r, 400)
+	target := applyEdits(dict, []byte{0, 100, 6, 'X', 1, 40, 3, 'Y'})
+	plain := withHeader(encode(dict, target, MaxSize))
+	v2 := withVersion(FormatVersion2, encodeCovers(dict, target, MaxSize))
+	for _, patch := range [][]byte{plain, v2, encodeCoded(plain, codedLayoutA), encodeCoded(v2, codedLayoutB), encodeCoded(plain, codedLayoutC), {0x81, 1, 0, 0, 0, 0, 0}, {}} {
+		f.Add(dict, patch, uint16(len(target)))
+	}
+	f.Fuzz(func(t *testing.T, dict, patch []byte, capacity uint16) {
+		out, err := DecodeReaderLimit(dict, bytes.NewReader(patch), int(capacity))
+		if err != nil {
+			if strings.Contains(err.Error(), "runtime error") {
+				t.Fatalf("panic while decoding: %v", err)
+			}
+			return
+		}
+		if capacity > 0 && len(out) > int(capacity) {
+			t.Fatalf("%d bytes out, capacity %d", len(out), capacity)
+		}
+	})
 }

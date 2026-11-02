@@ -68,7 +68,9 @@ const cCapacity = 8 << 10
 
 // cDriver feeds files to the C reference decoder (c/tinydelta_decode.c):
 // driver <dict> <patch> <out> <out_cap>. It exits 0 on success, 1 when the
-// decoder rejects the input, after printing the result code.
+// decoder rejects the input, after printing the result code. Built with
+// TINYDELTA_CODER, it decodes coded patches too, with tables for any
+// layout.
 const cDriver = `#include <stdio.h>
 #include <stdlib.h>
 #include "tinydelta.h"
@@ -79,7 +81,12 @@ const cDriver = `#include <stdio.h>
 	uint8_t *d = slurp(argv[1], &dn), *p = slurp(argv[2], &pn);
 	uint32_t cap = (uint32_t)atol(argv[4]);
 	uint8_t *o = malloc(cap ? cap : 1);
+#if TINYDELTA_CODER
+	static uint8_t tables[TINYDELTA_CODED_TABLES_A];
+	tinydelta_result_t rc = tinydelta_decode_coded(d, dn, p, pn, o, cap, tables, sizeof tables, &on);
+#else
 	tinydelta_result_t rc = tinydelta_decode(d, dn, p, pn, o, cap, &on);
+#endif
 	if (rc != TINYDELTA_OK) {
 		printf("%d\n", rc);
 		return 1;
@@ -118,14 +125,28 @@ func cCommand(bin string, args ...string) *exec.Cmd {
 	return exec.Command(bin, args...)
 }
 
-// buildCDriver compiles cDriver with the memory decoder and returns the binary's path.
-func buildCDriver(t *testing.T) string {
+// cCoderSources are the coder's compile flag and source, for drivers that
+// decode coded patches.
+var cCoderSources = []string{"-DTINYDELTA_CODER=1", "c/tinydelta_coder.c"}
+
+// buildCDriver compiles cDriver with the memory decoder, and with
+// extra (e.g. cCoderSources), and returns the binary's path.
+func buildCDriver(t *testing.T, extra ...string) string {
 	t.Helper()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "decode")
 	os.WriteFile(filepath.Join(dir, "driver.c"), []byte(cDriver), 0o644)
-	cCompile(t, bin, "c/tinydelta_decode.c", filepath.Join(dir, "driver.c"))
+	cCompile(t, bin, append(append([]string{}, extra...), "c/tinydelta_decode.c", filepath.Join(dir, "driver.c"))...)
 	return bin
+}
+
+// codedPatches is plain made into a coded patch with each table layout.
+func codedPatches(plain []byte) map[string][]byte {
+	return map[string][]byte{
+		"coded A": encodeCoded(plain, codedLayoutA),
+		"coded B": encodeCoded(plain, codedLayoutB),
+		"coded C": encodeCoded(plain, codedLayoutC),
+	}
 }
 
 // TestCDecoderMatchesGo compiles the C reference decoder (skipped when no C
@@ -135,7 +156,7 @@ func buildCDriver(t *testing.T) string {
 // must accept or reject exactly the inputs Go does, with identical output.
 func TestCDecoderMatchesGo(t *testing.T) {
 	dir := t.TempDir()
-	bin := buildCDriver(t)
+	bin := buildCDriver(t, cCoderSources...)
 
 	var failure string // how the last failed run ended, for test messages
 	cDecode := func(dict, patch []byte, capacity int) ([]byte, bool) {
@@ -183,6 +204,11 @@ func TestCDecoderMatchesGo(t *testing.T) {
 			{"optimal", func(d, t []byte) []byte { return withHeader(encode(d, t, MaxSize)) }},
 			{"greedy", func(d, t []byte) []byte { return withHeader(encodeGreedy(d, t, MaxSize)) }},
 			{"version 2", func(d, t []byte) []byte { return withVersion(FormatVersion2, encodeCovers(d, t, MaxSize)) }},
+			{"coded A", func(d, t []byte) []byte { return encodeCoded(withHeader(encode(d, t, MaxSize)), codedLayoutA) }},
+			{"coded B, version 2", func(d, t []byte) []byte {
+				return encodeCoded(withVersion(FormatVersion2, encodeCovers(d, t, MaxSize)), codedLayoutB)
+			}},
+			{"coded C", func(d, t []byte) []byte { return encodeCoded(withHeader(encode(d, t, MaxSize)), codedLayoutC) }},
 		} {
 			patch := enc.fn(p.dict, p.tgt)
 			label := p.name + "/" + enc.name
@@ -200,6 +226,31 @@ func TestCDecoderMatchesGo(t *testing.T) {
 				m[r.Intn(len(m))] = byte(r.Intn(256))
 				compare(fmt.Sprintf("%s flip=%d", label, k), p.dict, m, big)
 			}
+		}
+	}
+}
+
+// TestCDecoderWithoutCoder checks a build without TINYDELTA_CODER: plain
+// patches decode as ever, and every coded patch is rejected with
+// TINYDELTA_ERR_VERSION before anything is decoded.
+func TestCDecoderWithoutCoder(t *testing.T) {
+	dir := t.TempDir()
+	bin := buildCDriver(t)
+	r := rand.New(rand.NewSource(13))
+	dict := textFile(r, 3000)
+	target := splice(dict, 1000, 5, []byte("new text"))
+	plain := withHeader(encode(dict, target, MaxSize))
+	d, p, o := filepath.Join(dir, "d"), filepath.Join(dir, "p"), filepath.Join(dir, "o")
+	os.WriteFile(d, dict, 0o644)
+	os.WriteFile(p, plain, 0o644)
+	if msg, err := cCommand(bin, d, p, o, fmt.Sprint(cCapacity)).CombinedOutput(); err != nil {
+		t.Fatalf("plain patch: %v: %s", err, msg)
+	}
+	for name, coded := range codedPatches(plain) {
+		os.WriteFile(p, coded, 0o644)
+		msg, err := cCommand(bin, d, p, o, fmt.Sprint(cCapacity)).CombinedOutput()
+		if err == nil || strings.TrimSpace(string(msg)) != "-4" {
+			t.Errorf("%s: %v, %q; want TINYDELTA_ERR_VERSION (-4)", name, err, msg)
 		}
 	}
 }

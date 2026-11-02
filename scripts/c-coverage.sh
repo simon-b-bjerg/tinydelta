@@ -16,7 +16,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 LLVM_PROFDATA="${LLVM_PROFDATA:-llvm-profdata}"
 LLVM_COV="${LLVM_COV:-llvm-cov}"
-FILES=(c/tinydelta_decode.c c/tinydelta_io.c)
+FILES=(c/tinydelta_decode.c c/tinydelta_io.c c/tinydelta_coder.c)
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT

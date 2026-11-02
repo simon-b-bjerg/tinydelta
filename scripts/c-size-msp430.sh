@@ -20,9 +20,12 @@ TARGETS=("msp430:-mcpu=msp430" "msp430x:-mcpu=msp430x" "msp430x-large:-mcpu=msp4
 echo "| part | MSP430 | MSP430X | MSP430X, -mlarge |"
 echo "|---|---|---|---|"
 # name:file:extra flags.
-for part in decode:tinydelta_decode: io:tinydelta_io:; do
+# Coded patches (TINYDELTA_CODER=1) add the coder and grow each decoder.
+for part in decode:tinydelta_decode: io:tinydelta_io: \
+            decode-coded:tinydelta_decode:-DTINYDELTA_CODER=1 io-coded:tinydelta_io:-DTINYDELTA_CODER=1 \
+            coder:tinydelta_coder:-DTINYDELTA_CODER=1; do
   IFS=: read -r name file extra <<< "$part"
-  row="| $file.c |"
+  row="| $file.c${extra:+, $extra} |"
   for target in "${TARGETS[@]}"; do
     cpu="${target%%:*}"
     read -ra flags <<< "${target#*:}"
@@ -38,5 +41,5 @@ echo
 echo "Stack, MSP430X -mlarge, per function (-fstack-usage), per part:"
 echo
 echo '```'
-cat "$out"/{decode,io}_msp430x-large.su | awk -F'\t' '{ n = split($1, f, ":"); printf "%-28s %4d B\n", f[n], $2 }'
+cat "$out"/{decode,io,decode-coded,io-coded,coder}_msp430x-large.su | awk -F'\t' '{ n = split($1, f, ":"); printf "%-28s %4d B\n", f[n], $2 }'
 echo '```'
