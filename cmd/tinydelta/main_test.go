@@ -191,6 +191,8 @@ var encodeOptionNames = map[string]struct{ flag, python string }{
 	"CoderTables":       {"coder-tables", "coder_tables"},
 	"TwoPass":           {"two-pass", "two_pass"},
 	"MaxInstructionLen": {"max-len", "max_instruction_len"},
+	"Relocation":        {"reloc", "relocation"},
+	"ImageBase":         {"base", "image_base"},
 }
 
 func TestEncodeOptionsEverywhere(t *testing.T) {
