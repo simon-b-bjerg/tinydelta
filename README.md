@@ -30,15 +30,17 @@ no compression library.
 
 ## Highlights
 
-- **Small patches, smallest for configuration.** One version byte, then
-  a stream of short instructions: no framing, lengths or checksum. An
-  unchanged region typically costs one or two bytes, so a small change
+- **Small patches, for configuration and firmware.** One version byte,
+  then a stream of short instructions: no framing, lengths or checksum.
+  An unchanged region typically costs one or two bytes, so a small change
   to a small file gives a patch of a few dozen bytes. On 316 real
   configuration updates (3–20 KB), tinydelta's patch is the smallest of
-  seven tools in most of them, compressing tools included: typically
-  0.65× HPatchLite's and 0.21× bsdiff's. On firmware it is about a fifth
-  of open-vcdiff's and within about 10% of the compressing embedded
-  patchers, with a decoder a fraction of their size ([Benchmark](#benchmark)).
+  seven tools in nearly all of them, compressing tools included:
+  typically 0.62× HPatchLite's and 0.20× bsdiff's. On 176 firmware
+  updates, with the optional coder, it is smaller than the other
+  embedded patchers' in every one (0.72× HPatchLite's, 0.41× detools')
+  and typically 0.85× bsdiff's, with a decoder a fraction of their size
+  ([Benchmark](#benchmark)).
 - **Optimizing encoder.** Dynamic programming over exact instruction
   costs, never worse than the built-in greedy encoder, which is
   available when speed matters more.
@@ -46,7 +48,7 @@ no compression library.
   in RAM; 876 bytes when the data lives on external flash behind your
   own read/write functions, with one small buffer of yours (it can be a
   local array) as flash page cache and recent history. Optionally, it
-  reads [coded patches](#coded-patches) too, about 40% smaller firmware
+  reads [coded patches](#coded-patches) too, about a third smaller firmware
   patches for about 0.9 KB more code on Cortex-M0 (1–1.6 KB on MSP430)
   and 0.5–1.3 KB of short-lived RAM, a trade the encoder tunes to the
   device.
@@ -71,9 +73,11 @@ delta tools: firmware (MicroPython builds for four Cortex-M boards,
 185–364 KB) and configuration (Linux kernel configuration files and
 microcontroller device trees, 3–20 KB). Every patch was decoded again
 and checked against the target.
-For each update, tinydelta's figure is the smaller of its plain patch
-and its [two-pass](#two-pass-patches) patch, the one an update server
-would send. [Coded patches](#coded-patches) aren't in it yet.
+For each update, tinydelta's figure is its [coded patch](#coded-patches)
+for a decoder with 777 B of coder tables (or the plain patch, when that
+is smaller), the one an update server would send. The trade-off graph
+also shows tinydelta without the coder: the smaller of its plain and
+[two-pass](#two-pass-patches) patch.
 
 ![Every pair: tinydelta against open-vcdiff, HPatchLite, detools, bsdiff and zstd](docs/benchmark/pairs.svg)
 
@@ -82,27 +86,28 @@ below 1, tinydelta's is smaller) and how often tinydelta's is smaller:
 
 | compared with | configuration, 3–20 KB (316 pairs) | firmware, 185–364 KB (176 pairs) |
 |---|---|---|
-| open-vcdiff | **0.37**, smaller in 100% | **0.18**, smaller in 100% |
-| xdelta3 | 0.34, smaller in 100% | 0.33, smaller in 100% |
-| HPatchLite, 4 KB dictionary | **0.65**, smaller in 87% | 1.10, smaller in 12% |
-| detools (heatshrink) | 0.26, smaller in 100% | 0.63, smaller in 75% |
-| bsdiff | **0.21**, smaller in 99% | 1.31, smaller in 8% |
-| zstd `--patch-from` | 0.65, smaller in 81% | 0.78, smaller in 93% |
+| open-vcdiff | **0.36**, smaller in 100% | **0.12**, smaller in 100% |
+| xdelta3 | 0.33, smaller in 100% | 0.21, smaller in 100% |
+| HPatchLite, 4 KB dictionary | **0.62**, smaller in 97% | **0.72**, smaller in 100% |
+| detools (heatshrink) | 0.25, smaller in 100% | 0.41, smaller in 100% |
+| bsdiff | **0.20**, smaller in 100% | 0.85, smaller in 67% |
+| zstd `--patch-from` | 0.63, smaller in 90% | 0.51, smaller in 100% |
 
-tinydelta's patch is smaller than the VCDIFF tools' in every pair.
-Against the tools that compress their patches it depends on the size of
-the change: when tinydelta's patch is under 1 KB (324 pairs, nearly all
-configuration updates), it is the smaller one in 89% of them against
-HPatchLite and in 99% against bsdiff, typically 0.63× and 0.20× their
-size; at 1 KB and above (168 pairs, nearly all firmware), HPatchLite's
-and bsdiff's are smaller in nearly all of them, with tinydelta's
-typically 17% and 49% larger. A typical configuration update is 56
-bytes; a typical firmware update about 9 KB, 4% of the image.
+tinydelta's patch is smaller than the VCDIFF tools', detools' and
+zstd's in every firmware pair, and than HPatchLite's in every firmware
+pair and 97% of configuration pairs. Against bsdiff it depends on the
+size of the change: when tinydelta's patch is under 1 KB (333 pairs,
+nearly all configuration updates), it is the smaller one in every pair,
+typically 0.21× bsdiff's; at 1 KB and above (159 pairs, nearly all
+firmware), the two are about even: tinydelta's is the smaller in 64%,
+typically 0.97× bsdiff's, whose decoder needs megabytes of RAM. A
+typical configuration update is about 55 bytes; a typical firmware
+update about 6 KB, 2.7% of the image.
 
 Larger configuration files (arm64 device trees, 47–107 KB, 38 pairs)
-are left out of the graphs above: HPatchLite and bsdiff catch up as the
-files grow (0.88 and 0.63), and their patches are the smaller ones when
-versions are five commits apart. Their numbers and
+are left out of the graphs above: tinydelta's lead narrows as the files
+grow (0.72× HPatchLite's and 0.51× bsdiff's; five commits apart, 0.84×
+and 0.85×). Their numbers and
 [graph](docs/benchmark/ratio_ecdf_large_configuration.svg) are with the
 [summary](docs/benchmark/summary.md).
 
@@ -114,6 +119,7 @@ What that compression costs on the device:
 |---|---:|---:|---:|
 | **tinydelta**, memory decoder | **500 B** | **0** | ~110 B |
 | **tinydelta**, callback decoder | **876 B** | **256 B** buffer\* | ~185 B |
+| **tinydelta**, callback decoder + coder | **1,708 B** | **256 B** buffer\* + 777 B tables‡ | ~305 B |
 | HPatchLite + tinyuz | ~2.2 KB | 4–32 KB dictionary | – |
 | detools + heatshrink | 1,948 B | 640 B state† | ~0.5 KB |
 | tiny-vcdiff (open-vcdiff's format) | 3,881 B | 3,221 B | ~150 B |
@@ -123,17 +129,21 @@ What that compression costs on the device:
 can be a local array, on the stack.
 † Its decoder state, heatshrink's 256-byte window and input buffer
 included, which the caller provides, on the stack or static.
+‡ The coder's probability tables, needed only while decoding: a local
+array is fine ([Coded patches](#coded-patches)).
 
 What you give up:
 
-- **Somewhat larger patches for large changes.** On firmware updates
-  that change code, tinydelta's patch is typically 10% larger than
-  HPatchLite's and 31% larger than bsdiff's. Both need decoders several
-  to thousands of times larger (see the graph above).
-- **Two passes, or the coder, for large changes.** The smallest firmware
-  patches take either two passes, with room for the intermediate patch
-  ([Two-pass patches](#two-pass-patches)), or the optional coder, with
-  its code and tables ([Coded patches](#coded-patches)).
+- **The coder, or two passes, for large changes.** Without either, on
+  firmware updates of 1 KB and up, tinydelta's patch is typically 17%
+  larger than HPatchLite's and 53% larger than bsdiff's. With the coder
+  it is about even with bsdiff, which needs a decoder thousands of times
+  larger (see the graph above).
+- **The coder costs code and RAM.** The smallest firmware patches need
+  the optional coder, about 0.9 KB more code on Cortex-M0 and its tables
+  ([Coded patches](#coded-patches)); without it, two passes come
+  closest, with room for the intermediate patch
+  ([Two-pass patches](#two-pass-patches)).
 - **Speed was not compared.** The goal is a small decoder, not a fast one.
 - **Small patch reads.** The callback decoder reads instruction headers
   a few bytes at a time; on slow flash, wrap `patch_read` in a small
@@ -155,10 +165,12 @@ microcontroller boards' device trees (STM32F7, STM32H7, LPC4357) between
 (rk3588-rock-5b, imx8mp-evk, k3-am625-sk) between `v7.0-dts` and
 `v7.3-dts`. Details per source are in the [summary](docs/benchmark/summary.md). tinydelta uses the
 library's default encoding, as users get it: optimal, but greedy above
-roughly 100 KB, so greedy for the firmware. Each pair is encoded both
-plain and as a two-pass patch (`encode -two-pass`) and the smaller
-counts; both are listed on
-their own in the summary, with how often each wins. The other tools run at their
+roughly 100 KB, so greedy for the firmware. Each pair is encoded with
+`encode -coder-tables 777`, which returns the coded patch or the plain
+one, whichever is smaller; that one counts. For tinydelta without the
+coder, in the trade-off graph, each pair is encoded both plain and as
+a two-pass patch (`encode -two-pass`) and the smaller counts. Every
+variant is listed on its own in the summary. The other tools run at their
 smallest settings: open-vcdiff with `-target_matches`, xdelta3 `-9 -S
 none`, HPatchLite `hdiffi -c-tuz-4k` (and `-32k`), detools with
 heatshrink, zstd `-19 --patch-from`. The graphs show the six
@@ -215,10 +227,10 @@ The encoder returns whichever is smaller, plain or two-pass, and says
 which: the CLI prints `passes 1` or `passes 2`, Go's `Patch.Passes` and
 Python's `Patch.passes` carry it. Send it with the patch; it is not part
 of it. In the benchmark, two passes win on 96% of firmware updates and
-about halve them (2.1× smaller on patches of 1 KB and up); on small
+about halve them (2.2× smaller on patches of 1 KB and up); on small
 configuration updates the plain patch is the smaller in 84% of them,
-typically by a few bytes. The [benchmark](#benchmark) counts the
-smaller of the two.
+typically by a few bytes. The [benchmark](#benchmark)'s trade-off graph
+shows the smaller of the two, for a decoder without the coder.
 
 Two passes cost no decoder code, only time and room for the inner patch
 between the passes. Where the decoder can afford the coder,
@@ -282,20 +294,20 @@ and the encoder only makes one when told the size of the decoder's
 buffer for the coder's probability tables, needed for as long as it
 decodes (a local array is fine):
 
-| table layout | RAM | firmware patches, sample below |
-|---|---:|---:|
-| plain, best of one and two passes | 0 | 49,225 B |
-| C: one shared byte table | 522 B | 31,904 B (−35%) |
-| B: `ADD_DIFF` bytes, and one for the rest | 777 B | 30,208 B (−39%) |
-| A: one table per kind of byte | 1,287 B | 30,114 B (−39%) |
+| table layout | RAM | firmware, 176 updates | configuration, 316 updates |
+|---|---:|---:|---:|
+| plain, best of one and two passes | 0 | 1,765,799 B | 51,109 B |
+| C: one shared byte table | 522 B | 1,207,085 B (−32%) | 46,416 B (−9%) |
+| B: `ADD_DIFF` bytes, and one for the rest | 777 B | 1,149,923 B (−35%) | 45,900 B (−10%) |
+| A: one table per kind of byte | 1,287 B | 1,145,110 B (−35%) | 44,582 B (−13%) |
 
-Sample: six MicroPython updates for a SAMD21 board (Cortex-M0+, about
-185 KB), five 1 commit apart and one 5 commits apart; the
-[benchmark](#benchmark) doesn't include coded patches yet. On those,
-coded patches were smaller than HPatchLite's (4 KB dictionary) in every
-update. On small configuration updates the plain patch is often
-smaller: a few bytes of coder setup outweigh the gain on a 20-byte
-patch, and the encoder then returns the plain one.
+All patches of the [benchmark](#benchmark), added up; coded patches
+decode in one pass, against two for most of the plain row's firmware
+patches. With the coder, firmware patches are smaller than HPatchLite's
+(4 KB dictionary) in every update. On small configuration updates the
+plain patch is often smaller: a few bytes of coder setup outweigh the
+gain on a 20-byte patch, and the encoder then returns the plain one (in
+about two thirds of them).
 
 ```sh
 tinydelta encode -coder-tables 777 old.bin new.bin update.td   # coded if smaller, with tables that fit 777 bytes
