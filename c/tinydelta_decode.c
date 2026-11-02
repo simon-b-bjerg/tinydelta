@@ -173,11 +173,12 @@ static tinydelta_result_t memory_decode_copy_target(memory_decoder_t *p_decoder,
 /* ADD_DIFF (version 2): dictionary bytes at the cursor, each plus the
  * next patch byte. */
 static tinydelta_result_t memory_decode_add_diff(memory_decoder_t *p_decoder, uint32_t length) {
-    const uint8_t *p_old = p_decoder->p_dict + p_decoder->cursor;
+    const uint8_t *p_old;
 
     if (!range_within(p_decoder->cursor, length, p_decoder->dict_len)) {
         return TINYDELTA_ERR_MALFORMED;
     }
+    p_old = p_decoder->p_dict + p_decoder->cursor;
 #if TINYDELTA_RELOC != 0
     if (p_decoder->b_reloc) {
         /* The relocated dictionary bytes first, in place; then the sums.
