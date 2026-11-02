@@ -2,15 +2,91 @@
 
 A sketch: what could make patches smaller still, measured before anything
 changes. Nothing here changes the format or the decoders; the
-experiments are in [`ideas_test.go`](../ideas_test.go) and
-[`ideas_header_test.go`](../ideas_header_test.go), built only with
+experiments are in [`ideas_test.go`](../ideas_test.go),
+[`ideas_header_test.go`](../ideas_header_test.go) and
+[`ideas_reloc_test.go`](../ideas_reloc_test.go), built only with
 `-tags ideas`.
 
 The goals, in order: decoder footprint, patch size per footprint,
 simplicity. So each idea is judged by what it adds to the decoder (code,
 RAM, flash) against what it saves on the air.
 
-## Summary
+## The big one: relocating with the shift map
+
+Measured last, but it changes the picture: **ARM firmware patches −82%,
+MSP430X −50%**, against today's coded patches.
+
+Where a coded firmware patch's bytes go today (44 ARM updates): 72% are
+instructions, 25% ADD_DIFF bytes, 3% literals. Almost all of it is the
+same story told thousands of times: SKIP to the next pointer that moved,
+ADD_DIFF its low bytes. The patch spends its bytes saying *which* words
+changed, not *how*.
+
+But the decoder can know which words change. The covers already say how
+each region of the old file moved (old start, length, shift); a handful
+per update, 5 on average here. Any word in the old file that points
+into a region that moved changes by exactly that region's shift, and a
+relative call changes by the callee's shift minus the call site's. So:
+
+1. The encoder finds the covers as today and sends their map: a few
+   (old start, length, shift) entries, ~6 bytes each before coding.
+2. Both sides relocate the old file through the map: absolute pointers
+   (ARM: aligned 32-bit words pointing into the image; MSP430X: the
+   20-bit immediates of `CALLA #imm` and `MOVA #imm,Rd`), and on ARM the
+   Thumb `BL` offsets.
+3. The patch is then made against the relocated old file, as today. What
+   is left is the real change.
+
+| | today | relocated (map included) |
+|---|---:|---:|
+| ARM, 44 updates, pointers only | 151,643 B | 90,321 B (−40.4%) |
+| ARM, `BL` offsets only | 151,643 B | 73,740 B (−51.4%) |
+| ARM, both | 151,643 B | **25,467 B (−83.2%)** |
+| ARM, both, real coder, round trip checked | 151,935 B | 27,272 B (−82.1%) |
+| MSP430X, 17 updates, 20-bit immediates | 21,665 B | **10,951 B (−49.5%)** |
+| MSP430X, 32-bit data pointers too | 21,665 B | 18,112 B (−16.4%) |
+
+(The ARM rows use the predicted difference byte too; it adds a few
+percent.) On MSP430X, treating any 32-bit value as a pointer hurts: too
+many code words look like one. The instruction forms are what carry the
+addresses. Today, relative to the other tools on the benchmark, coded
+firmware patches are about 0.85× bsdiff's and 0.72× HPatchLite's;
+−80% would make them several times smaller than either.
+
+This is the idea behind Google's Courgette and Zucchini for Chrome
+updates, made small: no disassembler, just the cover map and one or two
+instruction patterns per architecture.
+
+What it costs the decoder:
+
+- **The map** in RAM while decoding: a few entries of 12 bytes, or read
+  from the patch as needed.
+- **Relocating dictionary reads:** wherever the decoder reads the old
+  file (SKIP, COPY, ADD_DIFF), it relocates what it read: recognise the
+  pattern (an aligned word in range; a `BL` pair; a `CALLA`/`MOVA`
+  opcode), look the address up in the map, adjust. The callback decoder
+  reads 2–3 bytes around each chunk for patterns that straddle it.
+  Estimated 200–400 B of code per architecture, not yet prototyped.
+- **The architecture** (ARM Thumb, MSP430X, none) and the image's load
+  address in the header, so one decoder build serves its own chip.
+
+Open points before it's real: patterns must be recognised the same way
+whatever order the decoder reads in (a pattern decided by its own bytes
+and a fixed look-behind, not by a sequential scan); `BL` pairs and 20-bit
+immediates that sit across a cover boundary; and checking on the meter's
+firmware, which may use other address forms (`MOVX.A`, `CALLA &abs`).
+
+## COPY_TARGET in version 2
+
+Version 2 gave up COPY_TARGET for ADD_DIFF. On ARM firmware that costs
+almost nothing: only 7% of literal bytes sit in a 6-byte match with
+earlier target, and literals are 3% of the patch. On MSP430X it is 48%
+of literal bytes, and literals are 14% of the patch, so a few percent.
+It could come back without an opcode: the low bit of COPY's delta
+choosing dictionary or target (COPY is rare in firmware covers, so the
+bit costs next to nothing).
+
+## Summary of the smaller ideas
 
 | idea | decoder cost | firmware (ARM) | firmware (MSP430X) | configuration | verdict |
 |---|---|---:|---:|---:|---|
@@ -187,9 +263,11 @@ misdecoding it.
 
 ## Proposed next step
 
-One small format addition, "coded patches, version 2": the predicted
-difference byte (1), with a header bit for 16- or 32-bit lanes, and the
-short header and flush (3); the 16-bit carry (2) only if MSP430 data
+Prototype the relocation (the big one) end to end, Go encoder and C
+decoder, and measure its code size; then, if it holds, a coded patch
+version with it. Of the smaller ideas, the same version would carry
+the predicted difference byte (1), with a header bit for 16- or 32-bit
+lanes, and the short header and flush (3); the 16-bit carry (2) only if MSP430 data
 confirms its 1%. About 120–270 B more decoder code and about 10 bytes
 of RAM, for firmware patches about 7% (ARM) to 9% (MSP430X) smaller and
 configuration patches 2% smaller. Trained starting states (4) as a
