@@ -12,8 +12,10 @@
 
 #include "tinydelta.h"
 
-/* Gets the raw old-image byte at index (always within the image). */
-typedef tinydelta_result_t (*tinydelta_raw_fn_t)(void *p_ctx, uint32_t index, uint8_t *p_byte);
+/* Gets the raw old-image byte at index (always within the image). On a
+ * read failure it returns anything and records the failure for its
+ * decoder to report after tinydelta_reloc_span. */
+typedef uint8_t (*tinydelta_raw_fn_t)(void *p_ctx, uint32_t index);
 
 /* Reads the next varint of the patch header. */
 typedef tinydelta_result_t (*tinydelta_varint_fn_t)(void *p_ctx, uint32_t *p_value);
@@ -35,12 +37,12 @@ typedef struct {
 
 /* Reads the map from the patch header (after the features byte) into
  * p_storage, which holds storage_size bytes: TINYDELTA_ERR_VERSION if it
- * doesn't fit, TINYDELTA_ERR_MALFORMED if the entries are out of order. */
+ * doesn't fit, TINYDELTA_ERR_MALFORMED if an entry reaches past 32 bits. */
 tinydelta_result_t
 tinydelta_reloc_read_map(tinydelta_reloc_t *p_reloc, tinydelta_varint_fn_t varint, void *p_varint_ctx, uint8_t *p_storage, uint32_t storage_size);
 
 /* p_out holds the old image's bytes [offset, offset + length), raw; makes
  * them the relocated image's. */
-tinydelta_result_t tinydelta_reloc_span(const tinydelta_reloc_t *p_reloc, uint32_t offset, uint8_t *p_out, uint32_t length);
+void tinydelta_reloc_span(const tinydelta_reloc_t *p_reloc, uint32_t offset, uint8_t *p_out, uint32_t length);
 
 #endif

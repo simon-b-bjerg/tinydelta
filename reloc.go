@@ -235,9 +235,9 @@ func relocateThumb(m *relocMap, raw, out []byte) {
 		callee := int64(h) + 4 + off
 		var s2 int64
 		if callee >= 0 && callee < int64(n) {
-			s2 = m.shiftAt(callee)
+			s2 = m.addressShift(m.base+uint32(callee), n)
 		}
-		next := off + s2 - m.shiftAt(int64(h))
+		next := off + s2 - m.addressShift(m.base+uint32(h), n)
 		if next == off || next&1 != 0 || next < -(1<<22) || next >= 1<<22 {
 			continue
 		}

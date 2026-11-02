@@ -390,10 +390,11 @@ instruction set, or one whose map doesn't fit the tables buffer, is
 rejected with `TINYDELTA_ERR_VERSION`.
 
 The cost, from [Code size and stack](#code-size-and-stack): on
-Cortex-M0, about 1.1 KB more than the coded decoders; on MSP430X
-`-mlarge`, about 3 KB more, as most of the relocation code is 32-bit
-address arithmetic. This first version is written for clarity, not
-size; that is the next thing to work on.
+Cortex-M0, about 1 KB more than the coded decoders; on MSP430X
+`-mlarge`, about 2.5 KB more, as most of the relocation code is 32-bit
+address arithmetic, several instructions per operation on a 16-bit
+core. RAM: the map in the tables buffer (12 bytes per entry), and in
+the callback decoder a 16-byte cache of raw dictionary bytes.
 
 ## Why another delta format?
 
@@ -622,8 +623,8 @@ even on Cortex-M0). Reproduce with [`scripts/c-size.sh`](scripts/c-size.sh).
 | callback decoder | 876 B | 836 B | 836 B | ~185 B\* |
 | memory decoder + coder | 1,416 B | 1,340 B | 1,340 B | ~290 B |
 | callback decoder + coder | 1,716 B | 1,700 B | 1,700 B | ~305 B\* |
-| memory decoder + coder + Thumb relocation | 2,424 B | 2,332 B | 2,332 B | – |
-| callback decoder + coder + Thumb relocation | 2,804 B | 2,724 B | 2,728 B | – |
+| memory decoder + coder + Thumb relocation | 2,324 B | 2,220 B | 2,216 B | – |
+| callback decoder + coder + Thumb relocation | 2,716 B | 2,620 B | 2,616 B | – |
 
 \* Deepest path, excluding your buffer and your callbacks' own stack
 use. With the coder (`TINYDELTA_CODER = 1`), each decoder grows by
@@ -642,8 +643,8 @@ every 32-bit operation takes several 16-bit instructions.
 | callback decoder | 2,350 B | 2,298 B | 2,458 B | ~230 B\* |
 | memory decoder + coder | 2,608 B | 2,544 B | 2,808 B | ~290 B |
 | callback decoder + coder | 3,362 B | 3,268 B | 3,562 B | ~335 B\* |
-| memory decoder + coder + MSP430X relocation | 5,346 B | 5,178 B | 5,554 B | – |
-| callback decoder + coder + MSP430X relocation | 6,270 B | 6,064 B | 6,532 B | – |
+| memory decoder + coder + MSP430X relocation | 4,854 B | 4,688 B | 5,076 B | – |
+| callback decoder + coder + MSP430X relocation | 5,770 B | 5,568 B | 6,020 B | – |
 
 ### Results
 

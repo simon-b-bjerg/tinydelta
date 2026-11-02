@@ -6,17 +6,37 @@
  * bytes are addresses depends only on the raw old image, a few bytes around
  * each position, so any span of the image relocates the same whichever
  * order the decoder reads it in. The rules match the Go encoder's
- * (reloc.go). */
+ * (reloc.go). Instructions are read as 16-bit words, which keeps the code
+ * small on 16-bit cores. */
 #include "tinydelta_reloc.h"
 #include "tinydelta_internal.h"
 
 #if TINYDELTA_CODER && (TINYDELTA_RELOC != 0)
 
-/* A map entry as stored, byte by byte (the tables buffer has no
- * alignment): start, length, shift (two's complement), little-endian. */
-#define ENTRY_START  0u
-#define ENTRY_LENGTH 1u
-#define ENTRY_SHIFT  2u
+/* The span being relocated. */
+typedef struct {
+    uint32_t offset;
+    uint32_t length;
+    uint8_t *p_out;
+} span_t;
+
+/* Map entries are stored without alignment (the tables buffer has none):
+ * start, length, shift (two's complement), each 4 bytes little-endian. */
+static void store_le32(uint8_t *p_bytes, uint32_t value) {
+    for (uint32_t byte_index = 0u; byte_index < 4u; byte_index++) {
+        p_bytes[byte_index] = (uint8_t)value; /* Cast: keeps the low byte. */
+        value >>= 8;
+    }
+}
+
+static uint32_t load_le32(const uint8_t *p_bytes) {
+    uint32_t value = 0u;
+
+    for (uint32_t byte_index = 4u; byte_index > 0u; byte_index--) {
+        value = (value << 8) | p_bytes[byte_index - 1u];
+    }
+    return value;
+}
 
 tinydelta_result_t
 tinydelta_reloc_read_map(tinydelta_reloc_t *p_reloc, tinydelta_varint_fn_t varint, void *p_varint_ctx, uint8_t *p_storage, uint32_t storage_size) {
@@ -29,8 +49,8 @@ tinydelta_reloc_read_map(tinydelta_reloc_t *p_reloc, tinydelta_varint_fn_t varin
     if (result != TINYDELTA_OK) {
         return result;
     }
-    if (p_reloc->count > (storage_size / TINYDELTA_RELOC_ENTRY_SIZE)) {
-        return TINYDELTA_ERR_VERSION; /* the map doesn't fit the tables buffer */
+    if ((p_reloc->count > 0x0FFFFFFFu) || ((p_reloc->count * TINYDELTA_RELOC_ENTRY_SIZE) > storage_size)) { /* no division on 16-bit cores */
+        return TINYDELTA_ERR_VERSION;                                                                       /* the map doesn't fit the tables buffer */
     }
     p_reloc->p_entries = p_storage;
     for (uint32_t index = 0u; index < p_reloc->count; index++) {
@@ -42,297 +62,206 @@ tinydelta_reloc_read_map(tinydelta_reloc_t *p_reloc, tinydelta_varint_fn_t varin
                 return result;
             }
         }
-        if (!range_within(entry[ENTRY_START], entry[ENTRY_LENGTH], 0xFFFFFFFFu - end)) {
+        if (!range_within(entry[0], entry[1], 0xFFFFFFFFu - end)) {
             return TINYDELTA_ERR_MALFORMED; /* past 32 bits */
         }
-        entry[ENTRY_START] += end;
-        entry[ENTRY_SHIFT] = zigzag_decode(entry[ENTRY_SHIFT]);
-        end                = entry[ENTRY_START] + entry[ENTRY_LENGTH];
-        for (uint32_t byte_index = 0u; byte_index < TINYDELTA_RELOC_ENTRY_SIZE; byte_index++) {
-            /* Cast: keeps one byte of the field. */
-            p_storage[byte_index] = (uint8_t)(entry[byte_index / 4u] >> ((byte_index % 4u) * 8u));
+        entry[0] += end;
+        entry[2] = zigzag_decode(entry[2]);
+        end      = entry[0] + entry[1];
+        for (uint32_t field = 0u; field < 3u; field++) {
+            store_le32(p_storage, entry[field]);
+            p_storage += 4u;
         }
-        p_storage += TINYDELTA_RELOC_ENTRY_SIZE;
     }
     return TINYDELTA_OK;
-}
-
-/* The shift of old-image offset, 0 outside every entry (two's complement). */
-static uint32_t shift_at(const tinydelta_reloc_t *p_reloc, uint32_t offset) {
-    const uint8_t *p_entry = p_reloc->p_entries;
-
-    for (uint32_t index = 0u; index < p_reloc->count; index++) {
-        uint32_t entry[3] = {0u, 0u, 0u};
-
-        for (uint32_t byte_index = 0u; byte_index < TINYDELTA_RELOC_ENTRY_SIZE; byte_index++) {
-            entry[byte_index / 4u] |= (uint32_t)p_entry[byte_index] << ((byte_index % 4u) * 8u); /* Cast: widens. */
-        }
-        p_entry += TINYDELTA_RELOC_ENTRY_SIZE;
-        if (entry[ENTRY_START] > offset) {
-            break; /* entries are in order */
-        }
-        if ((offset - entry[ENTRY_START]) < entry[ENTRY_LENGTH]) {
-            return entry[ENTRY_SHIFT];
-        }
-    }
-    return 0u;
 }
 
 /* The shift of an address, if it points into the old image; else 0. */
 static uint32_t address_shift(const tinydelta_reloc_t *p_reloc, uint32_t address) {
-    uint32_t shift = 0u;
+    const uint8_t *p_entry = p_reloc->p_entries;
+    uint32_t offset        = address - p_reloc->base;
 
-    if ((address >= p_reloc->base) && ((address - p_reloc->base) < p_reloc->dict_len)) {
-        shift = shift_at(p_reloc, address - p_reloc->base);
+    if ((address < p_reloc->base) || (offset >= p_reloc->dict_len)) {
+        return 0u;
     }
-    return shift;
-}
+    for (uint32_t index = 0u; index < p_reloc->count; index++) {
+        uint32_t start = load_le32(p_entry);
 
-/* Stores the count relocated bytes of an instruction or pointer at index
- * where they fall in the span [offset, offset + length). */
-static void put(uint32_t offset, uint8_t *p_out, uint32_t length, uint32_t index, const uint8_t *p_bytes, uint32_t count) {
-    for (uint32_t byte_index = 0u; byte_index < count; byte_index++) {
-        uint32_t position = index + byte_index;
-
-        if ((position >= offset) && ((position - offset) < length)) {
-            p_out[position - offset] = p_bytes[byte_index];
+        if (start > offset) {
+            break; /* entries are in order */
         }
-    }
-}
-
-/* Stores value's count low bytes, little-endian, into p_bytes. */
-static void le_bytes(uint8_t *p_bytes, uint32_t value, uint32_t count) {
-    for (uint32_t byte_index = 0u; byte_index < count; byte_index++) {
-        p_bytes[byte_index] = (uint8_t)(value >> (byte_index * 8u)); /* Cast: keeps one byte. */
-    }
-}
-
-/* Reads count raw bytes at index (within the image), little-endian. */
-static tinydelta_result_t raw_le(const tinydelta_reloc_t *p_reloc, uint32_t index, uint32_t count, uint32_t *p_value) {
-    uint32_t value = 0u;
-
-    for (uint32_t byte_index = count; byte_index > 0u; byte_index--) {
-        uint8_t byte;
-
-        if (p_reloc->p_dict != NULL) {
-            byte = p_reloc->p_dict[index + byte_index - 1u];
-        } else {
-            tinydelta_result_t result = p_reloc->raw(p_reloc->p_raw_ctx, index + byte_index - 1u, &byte);
-
-            if (result != TINYDELTA_OK) {
-                return result;
-            }
+        if ((offset - start) < load_le32(p_entry + 4u)) {
+            return load_le32(p_entry + 8u);
         }
-        value = (value << 8) | byte;
+        p_entry += TINYDELTA_RELOC_ENTRY_SIZE;
     }
-    *p_value = value;
-    return TINYDELTA_OK;
+    return 0u;
+}
+
+/* The raw 16-bit little-endian word at index and index + 1 (within the
+ * image). */
+static uint32_t raw16(const tinydelta_reloc_t *p_reloc, uint32_t index) {
+    uint32_t word = 0u;
+
+    for (uint32_t byte_index = 2u; byte_index > 0u; byte_index--) {
+        uint32_t position = index + byte_index - 1u;
+        uint8_t byte      = (p_reloc->p_dict != NULL) ? p_reloc->p_dict[position] : p_reloc->raw(p_reloc->p_raw_ctx, position);
+
+        word = (word << 8) | byte;
+    }
+    return word;
+}
+
+/* Stores a relocated 16-bit word at index: the bytes of it in the span. */
+static void put16(const span_t *p_span, uint32_t index, uint32_t word) {
+    for (uint32_t byte_index = 0u; byte_index < 2u; byte_index++) {
+        uint32_t position = (index + byte_index) - p_span->offset; /* wraps around below the span */
+
+        if (position < p_span->length) {
+            p_span->p_out[position] = (uint8_t)word; /* Cast: keeps the low byte. */
+        }
+        word >>= 8;
+    }
+}
+
+/* Whether size bytes at h are in the image, at an even address. */
+static bool even_fits(const tinydelta_reloc_t *p_reloc, uint32_t h, uint32_t size) {
+    return range_within(h, size, p_reloc->dict_len) && (((p_reloc->base + h) & 1u) == 0u);
 }
 
 #if TINYDELTA_RELOC == TINYDELTA_RELOC_THUMB
 
 /* Whether a BL starts at h: a halfword 0xF000-0xF7FF, then one
  * 0xF800-0xFFFF (BLs can't overlap: the ranges are disjoint). */
-static tinydelta_result_t thumb_bl(const tinydelta_reloc_t *p_reloc, uint32_t h, bool *p_is_bl, uint32_t *p_value) {
-    *p_is_bl = false;
-    if (!range_within(h, 4u, p_reloc->dict_len) || (((p_reloc->base + h) & 1u) != 0u)) {
-        return TINYDELTA_OK;
-    }
-    tinydelta_result_t result = raw_le(p_reloc, h, 4u, p_value);
-
-    if (result == TINYDELTA_OK) {
-        *p_is_bl = ((*p_value & 0xF800F800u) == 0xF800F000u);
-    }
-    return result;
+static bool thumb_bl(const tinydelta_reloc_t *p_reloc, uint32_t h) {
+    return even_fits(p_reloc, h, 4u) && ((raw16(p_reloc, h) & 0xF800u) == 0xF000u) && ((raw16(p_reloc, h + 2u) & 0xF800u) == 0xF800u);
 }
 
-tinydelta_result_t tinydelta_reloc_span(const tinydelta_reloc_t *p_reloc, uint32_t offset, uint8_t *p_out, uint32_t length) {
+void tinydelta_reloc_span(const tinydelta_reloc_t *p_reloc, uint32_t offset, uint8_t *p_out, uint32_t length) {
+    span_t span  = {offset, length, p_out};
     uint32_t end = offset + length;
-    uint32_t value;
-    bool b_bl;
-    tinydelta_result_t result;
 
-    /* BL: its offset gains the callee's shift less the call site's. */
     for (uint32_t h = (offset >= 3u) ? (offset - 3u) : 0u; h < end; h++) {
-        result = thumb_bl(p_reloc, h, &b_bl, &value);
-        if (result != TINYDELTA_OK) {
-            return result;
-        }
-        if (b_bl) {
-            /* The halfwords' 11-bit fields; the offset is twice that, sign-extended from 23 bits. */
-            uint32_t field  = ((value & 0x7FFu) << 11) | ((value >> 16) & 0x7FFu);
+        if (thumb_bl(p_reloc, h)) {
+            /* The 22-bit field, 11 bits per halfword; the offset is twice it,
+             * sign-extended from 23 bits, and gains the callee's shift less the
+             * call site's. */
+            uint32_t field  = ((raw16(p_reloc, h) & 0x7FFu) << 11) | (raw16(p_reloc, h + 2u) & 0x7FFu);
             uint32_t branch = (field << 1) | (((field & 0x200000u) != 0u) ? 0xFF800000u : 0u);
             uint32_t callee = h + 4u + branch;
-            uint32_t next   = branch - shift_at(p_reloc, h);
+            uint32_t next   = branch - address_shift(p_reloc, p_reloc->base + h);
 
             if (callee < p_reloc->dict_len) {
-                next += shift_at(p_reloc, callee);
+                next += address_shift(p_reloc, p_reloc->base + callee);
             }
             if ((next != branch) && ((next & 1u) == 0u) && ((next + 0x400000u) < 0x800000u)) {
-                uint8_t bytes[4];
-
-                field = (next >> 1) & 0x3FFFFFu;
-                le_bytes(bytes, 0xF800F000u | ((field >> 11) & 0x7FFu) | ((field & 0x7FFu) << 16), 4u);
-                put(offset, p_out, length, h, bytes, 4u);
+                field = next >> 1;
+                put16(&span, h, 0xF000u | ((field >> 11) & 0x7FFu));
+                put16(&span, h + 2u, 0xF800u | (field & 0x7FFu));
             }
-        }
-    }
-    /* Aligned 32-bit pointers into the image, outside BLs. */
-    for (uint32_t a = (offset >= 3u) ? (offset - 3u) : 0u; a < end; a++) {
-        bool b_skip = (((p_reloc->base + a) & 3u) != 0u) || !range_within(a, 4u, p_reloc->dict_len);
+        } else if ((((p_reloc->base + h) & 3u) == 0u) && even_fits(p_reloc, h, 4u) && !((h >= 2u) && thumb_bl(p_reloc, h - 2u)) && !thumb_bl(p_reloc, h + 2u)) {
+            /* An aligned 32-bit pointer into the image that no BL overlaps. */
+            uint32_t pointer = raw16(p_reloc, h) | (raw16(p_reloc, h + 2u) << 16);
+            uint32_t shift   = address_shift(p_reloc, pointer);
 
-        for (uint32_t back = 0u; !b_skip && (back < 3u); back++) {
-            uint32_t h = a + (back * 2u); /* a - 2, a, a + 2 */
-
-            if (h >= 2u) {
-                result = thumb_bl(p_reloc, h - 2u, &b_bl, &value);
-                if (result != TINYDELTA_OK) {
-                    return result;
-                }
-                b_skip = b_bl;
-            }
-        }
-        if (!b_skip) {
-            uint32_t shift;
-
-            result = raw_le(p_reloc, a, 4u, &value);
-            if (result != TINYDELTA_OK) {
-                return result;
-            }
-            shift = address_shift(p_reloc, value);
             if (shift != 0u) {
-                uint8_t bytes[4];
-
-                le_bytes(bytes, value + shift, 4u);
-                put(offset, p_out, length, a, bytes, 4u);
+                pointer += shift;
+                put16(&span, h, pointer);
+                put16(&span, h + 2u, pointer >> 16);
             }
+        } else {
+            /* nothing to relocate at h */
         }
     }
-    return TINYDELTA_OK;
 }
 
 #elif TINYDELTA_RELOC == TINYDELTA_RELOC_MSP430X
 
-/* What looks like an instruction with 20-bit addresses at h. */
-typedef struct {
-    uint32_t length;   /* bytes, 0 if none */
-    uint32_t count;    /* address fields */
-    uint32_t lo[2];    /* where each field's low 16 bits are */
-    uint32_t shift[2]; /* where its high 4 bits are in the first word */
-} msp430x_insn_t;
-
-static tinydelta_result_t msp430x_candidate(const tinydelta_reloc_t *p_reloc, uint32_t h, msp430x_insn_t *p_insn) {
+/* The length in bytes of what looks like an instruction with 20-bit
+ * addresses at h (0 if none). *p_fields gets its address fields, up to
+ * two of 8 bits each, the first in the low bits: per field, the position
+ * of the address's high 4 bits in the first word (bits 3-0), and which
+ * word after the first holds its low 16 bits (bits 7-4). */
+static uint32_t msp430x_candidate(const tinydelta_reloc_t *p_reloc, uint32_t h, uint32_t *p_fields) {
     uint32_t w0;
-    tinydelta_result_t result;
+    uint32_t length = 4u;
 
-    p_insn->length = 0u;
-    p_insn->count  = 0u;
-    if (!range_within(h, 4u, p_reloc->dict_len) || (((p_reloc->base + h) & 1u) != 0u)) {
-        return TINYDELTA_OK;
+    *p_fields = 0u;
+    if (!even_fits(p_reloc, h, 4u)) {
+        return 0u;
     }
-    result = raw_le(p_reloc, h, 2u, &w0);
-    if (result != TINYDELTA_OK) {
-        return result;
-    }
-    p_insn->lo[0] = h + 2u;
+    w0 = raw16(p_reloc, h);
     if (((w0 & 0xFFF0u) == 0x13B0u) || ((w0 & 0xFFF0u) == 0x1380u) || ((w0 & 0xF0F0u) == 0x0060u)) {
-        /* CALLA #imm20 / &abs20, MOVA Rs,&abs20: high bits in bits 3-0 */
-        p_insn->length   = 4u;
-        p_insn->count    = 1u;
-        p_insn->shift[0] = 0u;
+        *p_fields = 0x10u; /* CALLA #imm20 / &abs20, MOVA Rs,&abs20: bits 3-0, word 1 */
     } else if (((w0 & 0xF0C0u) == 0x0080u) || ((w0 & 0xF0F0u) == 0x0020u)) {
-        /* MOVA/CMPA/ADDA/SUBA #imm20,Rd, MOVA &abs20,Rd: bits 11-8 */
-        p_insn->length   = 4u;
-        p_insn->count    = 1u;
-        p_insn->shift[0] = 8u;
+        *p_fields = 0x18u; /* MOVA/CMPA/ADDA/SUBA #imm20,Rd, MOVA &abs20,Rd: bits 11-8 */
     } else if ((w0 & 0xF800u) == 0x1800u) {
-        /* Extension word, then a two-operand instruction. */
-        uint32_t w1;
-        uint32_t position = h + 4u;
+        /* Extension word, then a two-operand instruction and its operand words. */
+        uint32_t w1     = raw16(p_reloc, h + 2u);
+        uint32_t as     = (w1 >> 4) & 3u;
+        uint32_t source = (w1 >> 8) & 0xFu;
+        uint32_t word   = 2u; /* the next operand word's number */
 
-        result = raw_le(p_reloc, h + 2u, 2u, &w1);
-        if ((result != TINYDELTA_OK) || (w1 < 0x4000u)) {
-            return result;
+        if (w1 < 0x4000u) {
+            return 0u; /* not a two-operand instruction */
         }
-        uint32_t as_mode = (w1 >> 4) & 3u;
-        uint32_t source  = (w1 >> 8) & 0xFu;
-        uint32_t ad_mode = (w1 >> 7) & 1u;
-        uint32_t dest    = w1 & 0xFu;
-
-        if (((as_mode == 1u) && (source != 3u)) || ((as_mode == 3u) && (source == 0u))) {
-            if (!((as_mode == 1u) && (source == 0u))) { /* not PC-relative */
-                p_insn->lo[p_insn->count]    = position;
-                p_insn->shift[p_insn->count] = 7u;
-                p_insn->count++;
+        if (((as == 1u) && (source != 3u)) || ((as == 3u) && (source == 0u))) {
+            if ((as != 1u) || (source != 0u)) { /* not PC-relative */
+                *p_fields = 7u | (word << 4);
             }
-            position += 2u;
+            word++;
         }
-        if (ad_mode == 1u) {
-            if (dest != 0u) {
-                p_insn->lo[p_insn->count]    = position;
-                p_insn->shift[p_insn->count] = 0u;
-                p_insn->count++;
+        if ((w1 & 0x80u) != 0u) { /* Ad = 1 */
+            if ((w1 & 0xFu) != 0u) {
+                *p_fields |= (word << 4) << (((*p_fields) != 0u) ? 8u : 0u);
             }
-            position += 2u;
+            word++;
         }
-        if (position > p_reloc->dict_len) {
-            p_insn->count = 0u;
-            return TINYDELTA_OK;
+        length = word * 2u;
+        if (!range_within(h, length, p_reloc->dict_len)) {
+            *p_fields = 0u;
+            length    = 0u;
         }
-        p_insn->length = position - h;
     } else {
-        /* not one of ours */
+        length = 0u;
     }
-    return TINYDELTA_OK;
+    return length;
 }
 
-tinydelta_result_t tinydelta_reloc_span(const tinydelta_reloc_t *p_reloc, uint32_t offset, uint8_t *p_out, uint32_t length) {
+void tinydelta_reloc_span(const tinydelta_reloc_t *p_reloc, uint32_t offset, uint8_t *p_out, uint32_t length) {
+    span_t span  = {offset, length, p_out};
     uint32_t end = offset + length;
 
     for (uint32_t h = (offset >= 7u) ? (offset - 7u) : 0u; h < end; h++) {
-        msp430x_insn_t insn;
-        uint8_t bytes[2];
-        uint32_t w0;
-        tinydelta_result_t result = msp430x_candidate(p_reloc, h, &insn);
+        uint32_t fields;
+        uint32_t size = msp430x_candidate(p_reloc, h, &fields);
 
         /* Not if an instruction up to 6 bytes before reaches over h. */
-        for (uint32_t back = 2u; (result == TINYDELTA_OK) && (insn.length != 0u) && (back <= 6u) && (back <= h); back += 2u) {
-            msp430x_insn_t before;
+        for (uint32_t back = 2u; (size != 0u) && (back <= 6u) && (back <= h); back += 2u) {
+            uint32_t unused;
 
-            result = msp430x_candidate(p_reloc, h - back, &before);
-            if (before.length > back) {
-                insn.length = 0u;
+            if (msp430x_candidate(p_reloc, h - back, &unused) > back) {
+                size = 0u;
             }
         }
-        if (result == TINYDELTA_OK) {
-            result = raw_le(p_reloc, h, (insn.length != 0u) ? 2u : 0u, &w0);
-        }
-        if (result != TINYDELTA_OK) {
-            return result;
-        }
-        for (uint32_t field = 0u; (insn.length != 0u) && (field < insn.count); field++) {
-            uint32_t low;
-            uint32_t shift;
+        if (size != 0u) {
+            uint32_t w0 = raw16(p_reloc, h);
 
-            result = raw_le(p_reloc, insn.lo[field], 2u, &low);
-            if (result != TINYDELTA_OK) {
-                return result;
+            for (; fields != 0u; fields >>= 8) {
+                uint32_t high    = fields & 0xFu;
+                uint32_t at      = h + (((fields >> 4) & 0xFu) * 2u);
+                uint32_t address = raw16(p_reloc, at) | (((w0 >> high) & 0xFu) << 16);
+                uint32_t shift   = address_shift(p_reloc, address);
+
+                address += shift;
+                if ((shift != 0u) && (address < 0x100000u)) {
+                    w0 = (w0 & ~(0xFu << high)) | ((address >> 16) << high);
+                    put16(&span, at, address);
+                }
             }
-            low |= ((w0 >> insn.shift[field]) & 0xFu) << 16;
-            shift = address_shift(p_reloc, low);
-            low += shift;
-            if ((shift != 0u) && (low < 0x100000u)) {
-                w0 = (w0 & ~(0xFu << insn.shift[field])) | ((low >> 16) << insn.shift[field]);
-                le_bytes(bytes, low, 2u);
-                put(offset, p_out, length, insn.lo[field], bytes, 2u);
-            }
-        }
-        if (insn.length != 0u) {
-            le_bytes(bytes, w0, 2u);
-            put(offset, p_out, length, h, bytes, 2u);
+            put16(&span, h, w0);
         }
     }
-    return TINYDELTA_OK;
 }
 
 #endif

@@ -89,18 +89,17 @@ static tinydelta_result_t memory_read_varint(memory_decoder_t *p_decoder, tinyde
 }
 
 /* Relocates the length dictionary bytes from address just placed at the
- * target position (no-op without a relocation map). */
-static tinydelta_result_t memory_relocate(memory_decoder_t *p_decoder, uint32_t address, uint32_t length) {
+ * target position (nothing without a relocation map). */
+static void memory_relocate(memory_decoder_t *p_decoder, uint32_t address, uint32_t length) {
 #if TINYDELTA_RELOC != 0
     if (p_decoder->b_reloc) {
-        return tinydelta_reloc_span(&p_decoder->reloc, address, p_decoder->p_target + p_decoder->target_pos, length);
+        tinydelta_reloc_span(&p_decoder->reloc, address, p_decoder->p_target + p_decoder->target_pos, length);
     }
 #else
     (void)p_decoder;
     (void)address;
     (void)length;
 #endif
-    return TINYDELTA_OK;
 }
 
 /* Each instruction below checks its length against its source before
@@ -123,7 +122,8 @@ static tinydelta_result_t memory_decode_copy(memory_decoder_t *p_decoder, uint32
     /* Cast: length is within the dictionary, so it fits in size_t. */
     (void)memcpy(p_decoder->p_target + p_decoder->target_pos, p_decoder->p_dict + address, (size_t)length);
     p_decoder->cursor = address;
-    return memory_relocate(p_decoder, address, length);
+    memory_relocate(p_decoder, address, length);
+    return TINYDELTA_OK;
 }
 
 /* ADD: literal bytes, taken from the patch. */
@@ -145,7 +145,8 @@ static tinydelta_result_t memory_decode_skip(memory_decoder_t *p_decoder, uint32
     }
     /* Cast: length is within the dictionary, so it fits in size_t. */
     (void)memcpy(p_decoder->p_target + p_decoder->target_pos, p_decoder->p_dict + p_decoder->cursor, (size_t)length);
-    return memory_relocate(p_decoder, p_decoder->cursor, length);
+    memory_relocate(p_decoder, p_decoder->cursor, length);
+    return TINYDELTA_OK;
 }
 
 /* COPY_TARGET (version 1): earlier target bytes at target position +
@@ -179,15 +180,10 @@ static tinydelta_result_t memory_decode_add_diff(memory_decoder_t *p_decoder, ui
     }
 #if TINYDELTA_RELOC != 0
     if (p_decoder->b_reloc) {
-        /* The relocated dictionary bytes first, in place; then the sums. */
-        tinydelta_result_t result;
-
-        /* Cast: length is within the dictionary, so it fits in size_t. */
+        /* The relocated dictionary bytes first, in place; then the sums.
+         * Cast: length is within the dictionary, so it fits in size_t. */
         (void)memcpy(p_decoder->p_target + p_decoder->target_pos, p_old, (size_t)length);
-        result = memory_relocate(p_decoder, p_decoder->cursor, length);
-        if (result != TINYDELTA_OK) {
-            return result;
-        }
+        memory_relocate(p_decoder, p_decoder->cursor, length);
         p_old = p_decoder->p_target + p_decoder->target_pos;
     }
 #endif
