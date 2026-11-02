@@ -45,11 +45,12 @@ PLATFORMS = {
 
 
 def python_version(version):
-    """Converts a release version (v1.2.3, v1.2.3-rc.1) to PEP 440 (1.2.3,
-    1.2.3rc1). Build-only versions (dev-<commit>) become 0.0.0.dev0."""
+    """Converts a release version (v1.2.3, v1.2.3-rc.1, also v1.2.3-rc1) to
+    PEP 440 (1.2.3, 1.2.3rc1). Build-only versions (dev-<commit>) become
+    0.0.0.dev0."""
     if version.startswith("dev-"):
         return "0.0.0.dev0"
-    m = re.fullmatch(r"v(\d+\.\d+\.\d+)(?:-(alpha|beta|rc)\.(\d+))?", version)
+    m = re.fullmatch(r"v(\d+\.\d+\.\d+)(?:-(alpha|beta|rc)\.?(\d+))?", version)
     if not m:
         sys.exit("build_wheels: version %r is not vX.Y.Z or vX.Y.Z-(alpha|beta|rc).N" % version)
     pre = {"alpha": "a", "beta": "b", "rc": "rc"}

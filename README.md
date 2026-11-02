@@ -1211,8 +1211,10 @@ or the Python package does the same automatically.
 Publishing to PyPI needs a one-time setup on pypi.org: add a trusted
 publisher for the project `tinydelta` with this repository, the
 workflow `release.yml` and the environment `pypi`. Release tags must be
-`vX.Y.Z` or `vX.Y.Z-alpha.N`/`-beta.N`/`-rc.N`, which become Python
-versions `X.Y.Z` and `X.Y.ZaN`/`bN`/`rcN`. A tag with a suffix is
+`vX.Y.Z` or `vX.Y.Z-alpha.N`/`-beta.N`/`-rc.N` (the dot is optional,
+`-rcN` works too), which become Python versions `X.Y.Z` and
+`X.Y.ZaN`/`bN`/`rcN`; the workflow checks the tag before it builds
+anything, and publishes the archives before it builds the wheels. A tag with a suffix is
 published as a pre-release, on GitHub and on PyPI, so it never becomes
 the latest release and pip only installs it when asked for.
 

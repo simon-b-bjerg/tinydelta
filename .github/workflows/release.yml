@@ -52,18 +52,19 @@ jobs:
         with:
           go-version: stable # release binaries use the current Go, not the go.mod minimum
           cache: false # the module has no dependencies, so no go.sum
+      - name: Check the tag
+        # Before anything is built: a tag the Python version can't be made
+        # from (PEP 440) would otherwise fail after the build.
+        if: env.TAG != ''
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.?[0-9]+)?$ ]]; then
+            echo "::error::tag $TAG is not vX.Y.Z or vX.Y.Z-(alpha|beta|rc).N"
+            exit 1
+          fi
       - name: Test
         run: go test ./...
       - name: Build release archives
-        run: |
-          version="${TAG:-dev-${GITHUB_SHA::7}}"
-          scripts/build-release.sh "$version"
-          python3 python/build_wheels.py "$version" dist wheels
-      - name: Upload Python wheels to the workflow run
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-wheels
-          path: wheels/
+        run: scripts/build-release.sh "${TAG:-dev-${GITHUB_SHA::7}}"
       - name: Upload archives to the workflow run (build only)
         if: env.TAG == ''
         uses: actions/upload-artifact@v4
@@ -85,6 +86,15 @@ jobs:
             gh release create "$TAG" dist/* "${prerelease[@]}" \
               --verify-tag --title "tinydelta $TAG" --generate-notes
           fi
+      # The wheels after the GitHub release, so the archives are published
+      # even if building the wheels fails.
+      - name: Build Python wheels
+        run: python3 python/build_wheels.py "${TAG:-dev-${GITHUB_SHA::7}}" dist wheels
+      - name: Upload Python wheels to the workflow run
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheels
+          path: wheels/
 
   pypi:
     name: Publish to PyPI
