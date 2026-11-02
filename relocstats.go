@@ -115,5 +115,123 @@ func RelocationStats(dict, target []byte, rule Relocation, base uint32) string {
 		}
 		fmt.Fprintf(&b, "  %5d  0x%04x       0x%04x\n", c.v, c.k.prev, c.k.next)
 	}
+	if rule == RelocationMSP430X {
+		msp430xStats(&b, m, dict, rd, target, base)
+	}
 	return b.String()
+}
+
+// msp430xStats sorts the address fields relocation left wrong by why: the
+// instruction is in a data run, the decode took it for an operand word,
+// its address isn't in the image, or the map gave it another shift than
+// where the address really moved.
+func msp430xStats(b *strings.Builder, m *relocMap, dict, rd, target []byte, base uint32) {
+	const none = int(^uint(0) >> 1)
+	moved := make([]int, len(dict)) // where each old byte really went, from the covers
+	for i := range moved {
+		moved[i] = none
+	}
+	covers := findCovers(rd, target)
+	for _, c := range covers {
+		if c.extra == 0 {
+			for k := 0; k < c.length; k++ {
+				moved[c.oldPos+k] = c.newPos - c.oldPos
+			}
+		}
+	}
+	word := func(img []byte, i int) uint32 { return uint32(img[i]) | uint32(img[i+1])<<8 }
+	type pair struct{ mapShift, needed int64 }
+	reasons := map[string]int{}
+	wrong := map[pair]int{}
+	rejected := map[[4]uint16]int{}
+	right := 0
+	for _, c := range covers {
+		if c.extra > 0 {
+			continue
+		}
+		for k := 0; k+4 <= c.length; k++ {
+			h, n := c.oldPos+k, c.newPos+k
+			l, f, nf := msp430xCandidate(&relocMap{arch: m.arch, base: m.base, entries: m.entries}, dict, base, h)
+			if l == 0 || k+l > c.length {
+				continue
+			}
+			for i := 0; i < nf; i++ {
+				at := f[i].lo - h
+				oldAddr := word(dict, f[i].lo) | (word(dict, h)>>uint32(f[i].shift)&0xF)<<16
+				newAddr := word(target, n+at) | (word(target, n)>>uint32(f[i].shift)&0xF)<<16
+				if oldAddr == newAddr {
+					continue
+				}
+				if word(rd, f[i].lo) == word(target, n+at) && word(rd, h)>>uint32(f[i].shift)&0xF == word(target, n)>>uint32(f[i].shift)&0xF {
+					right++
+					continue
+				}
+				switch lv, _, _ := msp430xValid(m, dict, base, h); {
+				case m.inData(h):
+					reasons["in a data run"]++
+				case lv == 0:
+					reasons["taken for an operand word by the instruction decode"]++
+					var ctx [4]uint16
+					for j := range ctx {
+						if p := h - 8 + 2*j; p >= 0 {
+							ctx[j] = uint16(word(dict, p))
+						}
+					}
+					rejected[ctx]++
+				case oldAddr < base || uint64(oldAddr-base) >= uint64(len(dict)):
+					reasons["address outside the old image"]++
+				default:
+					s := m.addressShift(oldAddr, len(dict))
+					needed := int64(newAddr) - int64(oldAddr)
+					if mv := moved[oldAddr-base]; mv != none && int64(mv) == needed {
+						reasons["map shift differs from where the address really moved"]++
+					} else {
+						reasons["map shift differs, and the address's target changed too"]++
+					}
+					wrong[pair{s, needed}]++
+				}
+			}
+		}
+	}
+	fmt.Fprintf(b, "\nMSP430X address fields that moved: %d relocated right; left wrong:\n", right)
+	var rk []string
+	for k := range reasons {
+		rk = append(rk, k)
+	}
+	sort.Slice(rk, func(i, j int) bool { return reasons[rk[i]] > reasons[rk[j]] })
+	for _, k := range rk {
+		fmt.Fprintf(b, "  %6d  %s\n", reasons[k], k)
+	}
+	type pc struct {
+		p pair
+		v int
+	}
+	var ps []pc
+	for k, v := range wrong {
+		ps = append(ps, pc{k, v})
+	}
+	sort.Slice(ps, func(i, j int) bool { return ps[i].v > ps[j].v })
+	fmt.Fprintf(b, "\nwrong shift, by map shift and the shift needed (top 15):\n  count  map  needed\n")
+	for i, p := range ps {
+		if i == 15 {
+			break
+		}
+		fmt.Fprintf(b, "  %5d  %+d  %+d\n", p.v, p.p.mapShift, p.p.needed)
+	}
+	type rc struct {
+		k [4]uint16
+		v int
+	}
+	var rs []rc
+	for k, v := range rejected {
+		rs = append(rs, rc{k, v})
+	}
+	sort.Slice(rs, func(i, j int) bool { return rs[i].v > rs[j].v })
+	fmt.Fprintf(b, "\ntaken for operands, by the 4 words before the instruction (top 15):\n")
+	for i, r := range rs {
+		if i == 15 {
+			break
+		}
+		fmt.Fprintf(b, "  %5d  %04x %04x %04x %04x\n", r.v, r.k[0], r.k[1], r.k[2], r.k[3])
+	}
 }
