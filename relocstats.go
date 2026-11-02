@@ -117,6 +117,7 @@ func RelocationStats(dict, target []byte, rule Relocation, base uint32) string {
 	}
 	if rule == RelocationMSP430X {
 		msp430xStats(&b, m, dict, rd, target, base)
+		msp430xBaseCheck(&b, dict, target, base)
 	}
 	return b.String()
 }
@@ -234,4 +235,81 @@ func msp430xStats(b *strings.Builder, m *relocMap, dict, rd, target []byte, base
 		}
 		fmt.Fprintf(b, "  %5d  %04x %04x %04x %04x\n", r.v, r.k[0], r.k[1], r.k[2], r.k[3])
 	}
+}
+
+// msp430xBaseCheck tests the image base: for each CALLA #imm whose callee
+// address changed, the base is right where the old image's bytes at the
+// callee moved by that change. It reports how many calls the given base
+// explains and the bases that explain most.
+func msp430xBaseCheck(b *strings.Builder, dict, target []byte, base uint32) {
+	const none = int(^uint(0) >> 1)
+	moved := make([]int, len(dict))
+	for i := range moved {
+		moved[i] = none
+	}
+	covers := findCovers(dict, target)
+	for _, c := range covers {
+		if c.extra == 0 {
+			for k := 0; k < c.length; k++ {
+				moved[c.oldPos+k] = c.newPos - c.oldPos
+			}
+		}
+	}
+	type call struct {
+		addr   uint32
+		needed int
+	}
+	var calls []call
+	for _, c := range covers {
+		if c.extra > 0 {
+			continue
+		}
+		for k := 0; k+4 <= c.length; k++ {
+			h, n := c.oldPos+k, c.newPos+k
+			w := uint32(dict[h]) | uint32(dict[h+1])<<8
+			if w&0xFFF0 != 0x13B0 || uint32(target[n])|uint32(target[n+1])<<8 != w&0xFFF0|uint32(target[n])&0xF {
+				continue
+			}
+			oldAddr := (w&0xF)<<16 | uint32(dict[h+2]) | uint32(dict[h+3])<<8
+			newAddr := uint32(target[n]&0xF)<<16 | uint32(target[n+2]) | uint32(target[n+3])<<8
+			if oldAddr != newAddr {
+				calls = append(calls, call{oldAddr, int(newAddr) - int(oldAddr)})
+			}
+		}
+	}
+	explained := func(bs uint32) int {
+		k := 0
+		for _, c := range calls {
+			if o := int64(c.addr) - int64(bs); o >= 0 && o < int64(len(dict)) && moved[o] == c.needed {
+				k++
+			}
+		}
+		return k
+	}
+	// Bases explaining the most calls, as ranges of neighbouring bases.
+	type rng struct {
+		from, to uint32
+		k        int
+	}
+	var rs []rng
+	for bs := uint32(0); bs < 0x40000; bs += 2 {
+		k := explained(bs)
+		if k == 0 {
+			continue
+		}
+		if l := len(rs) - 1; l >= 0 && rs[l].to+2 == bs && rs[l].k == k {
+			rs[l].to = bs
+			continue
+		}
+		rs = append(rs, rng{bs, bs, k})
+	}
+	sort.Slice(rs, func(i, j int) bool { return rs[i].k > rs[j].k || (rs[i].k == rs[j].k && rs[i].from < rs[j].from) })
+	fmt.Fprintf(b, "\nimage base check: %d CALLA #imm whose callee moved; base 0x%05x explains %d of them; best bases:", len(calls), base, explained(base))
+	for i, r := range rs {
+		if i == 5 {
+			break
+		}
+		fmt.Fprintf(b, " 0x%05x-0x%05x (%d)", r.from, r.to, r.k)
+	}
+	fmt.Fprintf(b, "\n")
 }

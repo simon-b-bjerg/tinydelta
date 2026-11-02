@@ -210,8 +210,43 @@ func parseRelocMap(arch Relocation, b []byte) (*relocMap, int, error) {
 // of at least relocMinCover bytes that moved becomes an entry (trimmed
 // where old ranges overlap; neighbours with the same shift merged).
 func relocMapFrom(dict, target []byte, arch Relocation, base uint32) *relocMap {
+	m := relocMapFromCovers(findCovers(dict, target), len(dict), arch, base)
+	// Refine: once the first map's addresses are relocated, the old image
+	// lines up with the target in longer stretches, which show the code's
+	// moves more finely. Keep the map under which most bytes match.
+	best, bestScore := m, relocMatchScore(m.relocate(dict), target)
+	for i := 0; i < relocRefinements; i++ {
+		m = relocMapFromCovers(findCovers(m.relocate(dict), target), len(dict), arch, base)
+		if score := relocMatchScore(m.relocate(dict), target); score > bestScore {
+			best, bestScore = m, score
+		}
+	}
+	return best
+}
+
+// relocRefinements: how many times relocMapFrom rebuilds the map from the
+// image relocated through the previous one.
+const relocRefinements = 3
+
+// relocMatchScore counts the old image's bytes that match the target once
+// aligned with it.
+func relocMatchScore(rel, target []byte) int {
+	n := 0
+	for _, c := range findCovers(rel, target) {
+		for k := 0; k < c.length && c.extra == 0; k++ {
+			if rel[c.oldPos+k] == target[c.newPos+k] {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// relocMapFromCovers makes a map from the covers of dict (n bytes) that
+// moved.
+func relocMapFromCovers(covers []cover, n int, arch Relocation, base uint32) *relocMap {
 	var es []relocEntry
-	for _, c := range findCovers(dict, target) {
+	for _, c := range covers {
 		if c.extra == 0 && c.length >= relocMinCover && c.newPos != c.oldPos {
 			es = append(es, relocEntry{uint32(c.oldPos), uint32(c.length), int32(c.newPos - c.oldPos)})
 		}
@@ -236,7 +271,7 @@ func relocMapFrom(dict, target []byte, arch Relocation, base uint32) *relocMap {
 		}
 		out = append(out, e)
 	}
-	return (&relocMap{arch: arch, base: base, entries: out}).filled(len(dict))
+	return (&relocMap{arch: arch, base: base, entries: out}).filled(n)
 }
 
 // filled makes the entries contiguous: each reaches to the next one's
