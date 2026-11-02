@@ -50,11 +50,11 @@
   },
   "zstd": {
     "label": "zstd --patch-from",
-    "code": null,
-    "buffers": 0,
+    "code": 20396,
+    "buffers": 95800,
     "stack": null,
     "plus_old_file": true,
-    "basis": "zstd --patch-from uses the whole old file as its window, so the decoder needs at least the old file in memory"
+    "basis": "measured (zstd 1.5.7, decoder only, smallest configuration: HUF_FORCE_DECOMPRESS_X1, ZSTD_FORCE_DECOMPRESS_SEQUENCES_SHORT, ZSTD_NO_INLINE, ZSTD_STRIP_ERROR_STRINGS; Cortex-M0, -Os, --gc-sections, linked around ZSTD_decompress, arm-none-eabi-gcc 13.2): 20,396 B code; buffers: sizeof(ZSTD_DCtx) on Cortex-M0, 95,800 B; and --patch-from uses the whole old file as its window, so the decoder needs it in memory too"
   },
   "openvcdiff_interleaved": {
     "label": "tiny-vcdiff (VCDIFF, interleaved)",
@@ -66,10 +66,10 @@
   },
   "xdelta3": {
     "label": "xdelta3",
-    "code": null,
-    "buffers": 0,
+    "code": 11267,
+    "buffers": 1272,
     "stack": null,
     "plus_old_file": true,
-    "basis": "xdelta3 keeps the source in memory in blocks (default 8 MB window), which covers the whole old file at these sizes"
+    "basis": "measured (xdelta3 at 5d936d2, decoder only: XD3_ENCODER=0, no secondary compressors; Cortex-M0, -Os, --gc-sections, linked around xd3_decode_memory, arm-none-eabi-gcc 13.2): 11,267 B code; buffers: sizeof(xd3_stream) on Cortex-M0, 1,272 B, plus the old file, which xdelta3 keeps in memory in blocks (default 8 MB source window) and, not counted here, the buffers it allocates for the target window"
   }
 }
