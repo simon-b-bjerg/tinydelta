@@ -439,7 +439,10 @@ func encodeCoversFold(dict, target []byte, fold int) []byte {
 // next, up to the end of each aligned word (by target position) and of
 // the instruction. A moved pointer then gives the same difference bytes
 // whether or not the addition carries into its second byte.
-func encodeCoversCarry(dict, target []byte) []byte {
+func encodeCoversCarry(dict, target []byte) []byte { return encodeCoversCarryWidth(dict, target, 4) }
+
+// encodeCoversCarryWidth is encodeCoversCarry for words of width bytes.
+func encodeCoversCarryWidth(dict, target []byte, width int) []byte {
 	plain := encodeCovers(dict, target, MaxSize)
 	// Same instructions; recompute the ADD_DIFF bytes with carries.
 	out := append([]byte{}, plain...)
@@ -466,7 +469,7 @@ func encodeCoversCarry(dict, target []byte) []byte {
 				d := (t - o - carry) & 0xFF
 				out[i+k] = byte(d)
 				carry = (o + d + carry) >> 8
-				if (pos+k)&3 == 3 {
+				if (pos+k)&(width-1) == width-1 {
 					carry = 0
 				}
 			}
@@ -552,6 +555,8 @@ func TestIdeas(t *testing.T) {
 		ideaVariant{"word carry in ADD_DIFF, v2", "format change", carry, codeBaseline},
 		ideaVariant{"word carry + predicted diff byte, v2", "format change, +4 B", carry, codePredicted},
 		ideaVariant{"word carry + diff tables per lane, v2", "format change, +765 B", carry, codeLanes},
+		ideaVariant{"word carry + predicted diff byte, 16-bit lanes, v2", "format change, +2 B", carry, func(m *ideaModel, t []ideaToken) { codePredictedLanes(m, t, 2) }},
+		ideaVariant{"16-bit carry + predicted, 16-bit lanes, v2", "format change, +2 B", func(p ideaPair) []byte { return encodeCoversCarryWidth(p.dict, p.target, 2) }, func(m *ideaModel, t []ideaToken) { codePredictedLanes(m, t, 2) }},
 	)
 	bcj := func(p ideaPair) []byte {
 		return withVersion(FormatVersion2, encodeCovers(thumbBCJ(p.dict), thumbBCJ(p.target), MaxSize))
