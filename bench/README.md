@@ -55,7 +55,7 @@ commits to `bench-results-preview`, replaced each time. The results:
 
 | file | what |
 |---|---|
-| `pairs.svg` | the headline: every pair, one panel per kind of data: tinydelta against open-vcdiff, HPatchLite (4 KB), detools, bsdiff and zstd, colour by tool, marker by commit step |
+| `pairs.svg` | the headline: every pair, one row per kind of data: tinydelta against open-vcdiff, HPatchLite (4 KB), detools, bsdiff and zstd, colour by tool, marker by commit step; tinydelta coded on the left, without the coder (plain or two-pass) on the right, same axes |
 | `forest.svg` | per kind of data, tinydelta's patch size divided by that of open-vcdiff, xdelta3, HPatchLite (4 KB), detools, bsdiff and zstd (geometric mean, 10th-90th percentile), 1 and 5 commits apart |
 | `ratio_ecdf_<kind>.svg`, `patch_share_<kind>.svg` | the full distributions, one graph per kind of data (`firmware`, `configuration`, `large_configuration`): the size ratio, and patch size as a share of the target |
 | `tradeoff.svg` | each tool's median patch size against its decoder's footprint on the device: code plus RAM buffers, stack excluded |
