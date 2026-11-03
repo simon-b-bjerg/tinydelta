@@ -8,6 +8,9 @@
 #   - the callback decoder keeps its callback contract, gives the memory
 #     decoder's result and target bytes, reports a failed callback as
 #     TINYDELTA_ERR_IO and rejects a bad buffer setup;
+#   - one step of the coder, from any state a corrupt patch can reach, stays
+#     in its tables and keeps the range normalized, which carries over from
+#     step to step (a whole coded patch is too much arithmetic for CBMC);
 #   - the loop bounds were enough (--unwinding-assertions).
 # Unsigned wraparound is not checked: the decoders rely on it on purpose.
 #
@@ -30,6 +33,7 @@ MEMORY="-DDICT_MAX=4 -DPATCH_MAX=8 -DOUT_MAX=8 --unwind 10 cbmc/memory.c tinydel
 IO="-DDICT_MAX=2 -DPATCH_MAX=4 -DOUT_MAX=4 --unwind 6 cbmc/io.c tinydelta_io.c tinydelta_decode.c"
 runs="$(cat <<EOF
 memory decoder (dictionary <= 4, patch <= 8, output <= 8)|$MEMORY
+coder, one byte from any state|-DTINYDELTA_CODER=1 --unwind 10 --unwindset main.0:1290,coder_bit.0:4 cbmc/coder.c tinydelta_coder.c
 callback = memory decoder, buffer 1, page 1|$IO -DBUFFER_SIZE=1 -DPAGE_SIZE=1 -DWITH_READ=1
 callback = memory decoder, buffer 2, page 1|$IO -DBUFFER_SIZE=2 -DPAGE_SIZE=1 -DWITH_READ=1
 callback = memory decoder, buffer 4, page 2|$IO -DBUFFER_SIZE=4 -DPAGE_SIZE=2 -DWITH_READ=1
