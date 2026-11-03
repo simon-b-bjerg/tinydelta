@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -302,5 +303,123 @@ func TestRulesYAMLErrors(t *testing.T) {
 	ok := head + "code:\n  - name: \"CALLA #imm20\"   # a comment\n    match: [\"13B0/FFF0\"]\n    address: [\"w0[3:0]\", 'w1[15:0]']\n    unless: [{ rule: self, at: [-2, 2] }]\n"
 	if r, err := ParseRules([]byte(ok)); err != nil || r.lists[ruleCode][0].name != "CALLA #imm20" {
 		t.Errorf("valid file: %v", err)
+	}
+}
+
+// TestRulesCHeaders keeps the C library's built-in tables and the CRCs it
+// maps features values 1 and 2 to in step with rules/*.yaml.
+func TestRulesCHeaders(t *testing.T) {
+	src, err := os.ReadFile("c/tinydelta_reloc.c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		rules *Rules
+		file  string
+		crc   string
+	}{{builtinThumb, "thumb", "RULES_THUMB_CRC"}, {builtinMSP430X, "msp430x", "RULES_MSP430X_CRC"}} {
+		got, err := os.ReadFile("c/tinydelta_rules_" + c.file + ".h")
+		if want := c.rules.CHeader("rules/" + c.file + ".yaml"); err != nil || string(got) != want {
+			t.Errorf("c/tinydelta_rules_%s.h is out of date: tinydelta rules compile -c c/tinydelta_rules_%s.h rules/%s.yaml", c.file, c.file, c.file)
+		}
+		if def := fmt.Sprintf("#define %-17s 0x%04Xu", c.crc, c.rules.CRC()); !strings.Contains(string(src), def) {
+			t.Errorf("c/tinydelta_reloc.c lacks %q", def)
+		}
+	}
+}
+
+// TestCRelocationRules decodes, with the C decoders, patches that ship
+// their rule table and patches that name a table of one's own built in,
+// and compares corrupted ones with Go.
+func TestCRelocationRules(t *testing.T) {
+	src := mustReadRule(t, "msp430x")
+	custom, err := ParseRules(src[:bytes.Index(src, []byte("\ndata:"))+1]) // without the data rule
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	header := filepath.Join(dir, "custom_rules.h")
+	os.WriteFile(header, []byte(custom.CHeader("custom.yaml")), 0o644)
+	build := func(defs ...string) (memory, callback string) {
+		memory = buildCDriver(t, append(append(append([]string{}, cCoderSources...), defs...), "c/tinydelta_reloc.c")...)
+		d := t.TempDir()
+		os.WriteFile(filepath.Join(d, "driver.c"), []byte(cIODriver), 0o644)
+		callback = filepath.Join(d, "decode_io")
+		cCompile(t, callback, append(append(append([]string{}, cCoderSources...), defs...), "c/tinydelta_reloc.c", "c/tinydelta_io.c", filepath.Join(d, "driver.c"))...)
+		return memory, callback
+	}
+	decode := func(bin string, dict, patch []byte) ([]byte, string, bool) {
+		d := t.TempDir()
+		dp, pp, op := filepath.Join(d, "d"), filepath.Join(d, "p"), filepath.Join(d, "o")
+		os.WriteFile(dp, dict, 0o644)
+		os.WriteFile(pp, patch, 0o644)
+		msg, err := cCommand(bin, dp, pp, op, fmt.Sprint(cCapacity)).CombinedOutput()
+		if err != nil {
+			return nil, string(bytes.TrimSpace(msg)), false
+		}
+		out, _ := os.ReadFile(op)
+		return out, "", true
+	}
+	shippedMem, shippedIO := build("-DTINYDELTA_RELOC=2", "-DTINYDELTA_RELOC_SHIPPED=1")
+	ownMem, ownIO := build("-DTINYDELTA_RELOC=3", `-DTINYDELTA_RELOC_RULES_HEADER="`+header+`"`)
+	plainMem, _ := build("-DTINYDELTA_RELOC=2")
+
+	r := rand.New(rand.NewSource(77))
+	old, new := fakeFirmware(r, RelocationMSP430X, 0x10000, 45)
+	tables := CodedTablesSize(codedLayoutA) + 64*relocEntrySize
+	var shipped, named [][]byte
+	for _, layout := range []int{codedLayoutA, codedLayoutB, codedLayoutC} {
+		m := relocMapFrom(old, new, custom, 0x10000).withOutside(old, new)
+		rd := m.relocate(old)
+		v1, _ := Encode(rd, new)
+		named = append(named, encodeCodedReloc(v1, layout, m))
+		ms := m.with(m.entries, m.data, m.outside)
+		ms.ship = true
+		shipped = append(shipped, encodeCodedReloc(v1, layout, ms))
+	}
+	for i := range shipped {
+		if got, err := Decode(old, shipped[i]); err != nil || !bytes.Equal(got, new) {
+			t.Fatalf("Go, shipped %d: %v", i, err)
+		}
+		if got, code, ok := decode(shippedMem, old, shipped[i]); !ok || !bytes.Equal(got, new) {
+			t.Fatalf("shipped %d: memory decoder: %s", i, code)
+		}
+		for _, cfg := range []ioConfig{{1, 1, tables}, {16, 4, tables}, {256, 256, tables}} {
+			if got, code, ok := runCIO(t, shippedIO, cfg, true, old, shipped[i], cCapacity); !ok || !bytes.Equal(got, new) {
+				t.Fatalf("shipped %d %+v: callback decoder: %s", i, cfg, code)
+			}
+		}
+		if _, code, ok := decode(plainMem, old, shipped[i]); ok || code != "-4" {
+			t.Errorf("shipped %d without TINYDELTA_RELOC_SHIPPED: ok=%v %s, want -4", i, ok, code)
+		}
+		if _, code, ok := decode(shippedMem, old, named[i]); ok || code != "-4" {
+			t.Errorf("named %d, built-in msp430x: ok=%v %s, want -4", i, ok, code)
+		}
+		if got, code, ok := decode(ownMem, old, named[i]); !ok || !bytes.Equal(got, new) {
+			t.Fatalf("named %d, own table built in: memory decoder: %s", i, code)
+		}
+		if got, code, ok := runCIO(t, ownIO, ioConfig{16, 4, tables}, true, old, named[i], cCapacity); !ok || !bytes.Equal(got, new) {
+			t.Fatalf("named %d, own table built in: callback decoder: %s", i, code)
+		}
+	}
+	// Corrupted shipped patches, in the header and in the coded table: C
+	// accepts and rejects as Go, with the same output.
+	patch := shipped[0]
+	for k := 0; k < 300; k++ {
+		bad := append([]byte{}, patch...)
+		if k%3 == 0 {
+			bad = bad[:r.Intn(len(bad))]
+		} else {
+			bad[1+r.Intn(min(len(bad)-1, 60))] ^= byte(1 + r.Intn(255))
+		}
+		want, werr := Decode(old, bad)
+		got, code, ok := decode(shippedMem, old, bad)
+		if ok != (werr == nil) || (ok && !bytes.Equal(got, want)) {
+			t.Fatalf("corruption %d: memory decoder ok=%v (%s), Go err=%v", k, ok, code, werr)
+		}
+		got, code, ok = runCIO(t, shippedIO, ioConfig{16, 4, tables}, true, old, bad, cCapacity)
+		if ok != (werr == nil) || (ok && !bytes.Equal(got, want)) {
+			t.Fatalf("corruption %d: callback decoder ok=%v (%s), Go err=%v", k, ok, code, werr)
+		}
 	}
 }

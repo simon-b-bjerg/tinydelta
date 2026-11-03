@@ -40,9 +40,16 @@ uint32_t tinydelta_coder_tables_size(uint8_t layout) {
     return size;
 }
 
-tinydelta_result_t tinydelta_coder_init(tinydelta_coder_t *p_coder, uint8_t layout, uint8_t *p_states, tinydelta_fetch_fn_t fetch, void *p_fetch_ctx) {
-    uint32_t size = tinydelta_coder_tables_size(layout);
+/* Sets every state to state 0, 0 more likely: even odds. */
+static void coder_clear(tinydelta_coder_t *p_coder) {
+    uint32_t size = tinydelta_coder_tables_size(p_coder->layout);
 
+    for (uint32_t index = 0u; index < size; index++) {
+        p_coder->p_states[index] = 0u;
+    }
+}
+
+tinydelta_result_t tinydelta_coder_init(tinydelta_coder_t *p_coder, uint8_t layout, uint8_t *p_states, tinydelta_fetch_fn_t fetch, void *p_fetch_ctx) {
     p_coder->fetch       = fetch;
     p_coder->p_fetch_ctx = p_fetch_ctx;
     p_coder->p_states    = p_states;
@@ -50,9 +57,7 @@ tinydelta_result_t tinydelta_coder_init(tinydelta_coder_t *p_coder, uint8_t layo
     p_coder->prev_opcode = CODER_PREV_START;
     p_coder->range       = 0xFFFFFFFFu;
     p_coder->code        = 0u;
-    for (uint32_t index = 0u; index < size; index++) {
-        p_states[index] = 0u; /* state 0, 0 more likely: even odds */
-    }
+    coder_clear(p_coder);
     for (uint32_t index = 0u; index < 4u; index++) {
         uint8_t byte;
         tinydelta_result_t result = fetch(p_fetch_ctx, &byte);
@@ -176,5 +181,20 @@ tinydelta_result_t tinydelta_coder_byte(tinydelta_coder_t *p_coder, tinydelta_fi
     *p_byte = (uint8_t)value;
     return result;
 }
+
+#if TINYDELTA_RELOC_SHIPPED
+tinydelta_result_t tinydelta_coder_tree_bytes(tinydelta_coder_t *p_coder, uint8_t *p_bytes, uint32_t count) {
+    tinydelta_result_t result = TINYDELTA_OK;
+
+    for (uint32_t index = 0u; (result == TINYDELTA_OK) && (index < count); index++) {
+        uint32_t value = 0u;
+
+        result         = coder_tree(p_coder, 0u, 7u, 0u, &value);
+        p_bytes[index] = (uint8_t)value; /* Cast: 8 bits. */
+    }
+    coder_clear(p_coder);
+    return result;
+}
+#endif
 
 #endif

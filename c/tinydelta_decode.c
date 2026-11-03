@@ -222,18 +222,17 @@ static tinydelta_result_t memory_start_coded(memory_decoder_t *p_decoder, uint8_
     }
     layout = features & TINYDELTA_CODED_LAYOUT_MASK;
     needed = tinydelta_coder_tables_size(layout);
-    if (((features & ~(TINYDELTA_CODED_LAYOUT_MASK | TINYDELTA_CODED_RELOC_MASK)) != 0u) || (needed == 0u) || (p_tables == NULL) || (tables_size < needed)) {
+    if (((features & ~(TINYDELTA_CODED_LAYOUT_MASK | TINYDELTA_CODED_RELOC_MASK | TINYDELTA_CODED_SHIPPED_MASK)) != 0u) || (needed == 0u) ||
+        (p_tables == NULL) || (tables_size < needed)) {
         return TINYDELTA_ERR_VERSION; /* a feature this build or buffer lacks */
     }
-    if ((features & TINYDELTA_CODED_RELOC_MASK) != 0u) {
+    if ((features & (TINYDELTA_CODED_RELOC_MASK | TINYDELTA_CODED_SHIPPED_MASK)) != 0u) {
 #if TINYDELTA_RELOC != 0
-        if ((features >> TINYDELTA_CODED_RELOC_SHIFT) != (uint8_t)TINYDELTA_RELOC) { /* Cast: the rule number fits a byte. */
-            return TINYDELTA_ERR_VERSION;                                            /* relocation for another instruction set */
-        }
         p_decoder->reloc.p_dict   = p_decoder->p_dict;
         p_decoder->reloc.dict_len = p_decoder->dict_len;
         p_decoder->b_reloc        = true;
-        result                    = tinydelta_reloc_read_map(&p_decoder->reloc, memory_header_varint, p_decoder, p_tables + needed, tables_size - needed);
+        result =
+            tinydelta_reloc_read_header(&p_decoder->reloc, features, memory_raw_byte, memory_header_varint, p_decoder, p_tables + needed, tables_size - needed);
         if (result != TINYDELTA_OK) {
             return result;
         }
@@ -247,7 +246,13 @@ static tinydelta_result_t memory_start_coded(memory_decoder_t *p_decoder, uint8_
     }
     p_decoder->b_coded = true;
     *p_version &= (uint8_t)~TINYDELTA_CODED_FLAG; /* Cast: the flag fits a byte. */
-    return tinydelta_coder_init(&p_decoder->coder, layout, p_tables, memory_raw_byte, p_decoder);
+    result = tinydelta_coder_init(&p_decoder->coder, layout, p_tables, memory_raw_byte, p_decoder);
+#if TINYDELTA_RELOC != 0
+    if ((result == TINYDELTA_OK) && p_decoder->b_reloc) {
+        result = tinydelta_reloc_start(&p_decoder->reloc, &p_decoder->coder); /* a shipped table, and checking the table */
+    }
+#endif
+    return result;
 }
 #endif
 

@@ -22,7 +22,8 @@ trap 'rm -rf "$log" "$work"' EXIT
 FLAGS=(-std=c99 -I.)
 # Every analyzer runs on each build: without and with coded patches, and
 # with each relocation rule.
-CONFIGS=("-DTINYDELTA_CODER=0" "-DTINYDELTA_CODER=1" "-DTINYDELTA_CODER=1 -DTINYDELTA_RELOC=1" "-DTINYDELTA_CODER=1 -DTINYDELTA_RELOC=2")
+CONFIGS=("-DTINYDELTA_CODER=0" "-DTINYDELTA_CODER=1" "-DTINYDELTA_CODER=1 -DTINYDELTA_RELOC=1" "-DTINYDELTA_CODER=1 -DTINYDELTA_RELOC=2"
+  "-DTINYDELTA_CODER=1 -DTINYDELTA_RELOC=3 -DTINYDELTA_RELOC_RULES_HEADER=\"tinydelta_rules_msp430x.h\" -DTINYDELTA_RELOC_SHIPPED=1")
 
 for config in "${CONFIGS[@]}"; do
   read -ra coder <<<"$config"
@@ -70,6 +71,10 @@ MISRA_DEVIATIONS=(
   # like the callbacks' contexts
   --suppress='misra-c2012-11.5:*tinydelta_decode.c'
   --suppress='misra-c2012-11.5:*tinydelta_io.c'
+  # 8.9 (advisory) a generated relocation rule table is a file-scope array
+  # in its header, used by one function
+  --suppress='misra-c2012-8.9:*tinydelta_rules_*.h'
+  --suppress='misra-c2012-8.9:*tinydelta_reloc.c'
 )
 for config in "${CONFIGS[@]}"; do
   read -ra coder <<<"$config"
@@ -77,7 +82,9 @@ for config in "${CONFIGS[@]}"; do
   # relocation rule leaves their macros unused, and the Thumb rule the
   # MSP430X rule's
   [[ "$config" != *TINYDELTA_RELOC* ]] && unused=(--suppress=misra-c2012-2.5)
-  [[ "$config" == *TINYDELTA_RELOC=1* ]] && unused=(--suppress='misra-c2012-2.5:*tinydelta_reloc.c')
+  # TINYDELTA_RELOC_RULES names a build option for users of the library;
+  # without TINYDELTA_RELOC_SHIPPED, the shipped-table limit goes unused
+  [[ "$config" == *TINYDELTA_RELOC=[12]* ]] && unused=(--suppress='misra-c2012-2.5:*tinydelta.h' --suppress='misra-c2012-2.5:*tinydelta_reloc.c')
   cppcheck --addon=misra --enable=style --std=c99 -I. "${coder[@]}" --quiet --error-exitcode=1 --cppcheck-build-dir="$work" \
     "${MISRA_DEVIATIONS[@]}" "${unused[@]}" "${FILES[@]}"
 done

@@ -2,16 +2,74 @@
  * SPDX-License-Identifier: MIT
  */
 
-/* Relocation (see tinydelta_reloc.h and README.md, "Relocation"). Which
- * bytes are addresses depends only on the raw old image, a few bytes around
- * each position, so any span of the image relocates the same whichever
- * order the decoder reads it in. The rules match the Go encoder's
- * (reloc.go). Instructions are read as 16-bit words, which keeps the code
- * small on 16-bit cores. */
+/* Relocation by rule table (see tinydelta_reloc.h, README.md "Relocation"
+ * and docs/relocation-rules.md). Which bytes are addresses depends only on
+ * the raw old image near each position, the map and the table, so any span
+ * of the image relocates the same whichever order the decoder reads it in.
+ * The engine matches the Go encoder's (rules.go) bit for bit. Every table,
+ * built in or shipped, is checked against the limits before use, and every
+ * rule is read with bounds checks, so a table can't make the engine read
+ * or write outside its buffers. */
 #include "tinydelta_reloc.h"
 #include "tinydelta_internal.h"
 
 #if TINYDELTA_CODER && (TINYDELTA_RELOC != 0)
+
+/* The built-in table: a header made by "tinydelta rules compile -c", which
+ * defines tinydelta_reloc_rules, TINYDELTA_RELOC_RULES_SIZE and
+ * TINYDELTA_RELOC_RULES_CRC. */
+#if TINYDELTA_RELOC == TINYDELTA_RELOC_THUMB
+#include "tinydelta_rules_thumb.h"
+#elif TINYDELTA_RELOC == TINYDELTA_RELOC_MSP430X
+#include "tinydelta_rules_msp430x.h"
+#elif TINYDELTA_RELOC == TINYDELTA_RELOC_RULES
+#include TINYDELTA_RELOC_RULES_HEADER
+#else
+#error "TINYDELTA_RELOC: TINYDELTA_RELOC_THUMB, TINYDELTA_RELOC_MSP430X or TINYDELTA_RELOC_RULES"
+#endif
+
+/* The CRCs of rules/thumb.yaml and rules/msp430x.yaml, which features
+ * values 1 and 2 name (checked against the generated headers by the Go
+ * tests). */
+#define RULES_THUMB_CRC   0x5D68u
+#define RULES_MSP430X_CRC 0xC169u
+
+/* Features bits (tinydelta_internal.h has the layout and rule bits). */
+#define FEATURES_SHIPPED    0x10u
+#define FEATURES_RULE_TABLE 3u /* features value of a table named by CRC or shipped */
+#if TINYDELTA_RELOC_SHIPPED
+#define MAX_SHIPPED_TABLE 4096u /* the longest table a patch may ship */
+#endif
+
+/* Table format and limits (docs/relocation-rules.md, "Binary table"). */
+#define RULES_VERSION     1u
+#define RULES_HEADER_SIZE 7u
+#define LIST_PREFIXES     0u
+#define LIST_LENGTHS      1u
+#define LIST_CODE         2u
+#define LIST_DATA         3u
+#define MAX_RULES         64u
+#define MAX_CONDS         4u
+#define MAX_WORDS         8u
+#define MAX_SIZE          16u
+#define MAX_SLICES        6u
+#define MAX_UNLESS        2u
+#define MAX_UNLESS_AT     4u
+#define MAX_UNLESS_OFFSET 16
+#define MAX_SYNC          16u
+#define MAX_SKIP          4u
+#define MAX_LENGTH        16u
+#define FIRST_RELATIVE    0x20u
+#define FIRST_MORE        0x40u
+#define MORE_REQUIRE      0x01u
+#define MORE_ALIGN        0x08u
+#define MORE_SIZE         0x10u
+#define MORE_UNLESS       0x20u
+#define SLICE_FIXED       0x80u
+#define SPACE_CODE        1u
+#define SPACE_DATA        2u
+#define NO_RULE           0xFFFFFFFFu
+#define DATA_BLOCK_SHIFT  8u /* data runs are in blocks of 256 bytes */
 
 /* The span being relocated. */
 typedef struct {
@@ -19,6 +77,27 @@ typedef struct {
     uint32_t length;
     uint8_t *p_out;
 } span_t;
+
+/* A rule, as read from the table: where its parts are and its settings. */
+typedef struct {
+    uint32_t conds_at;   /* its first condition */
+    uint32_t addr_at[2]; /* its addresses' slice counts */
+    uint32_t unless_at;  /* its unless count, 0 if none */
+    uint32_t next;       /* the next rule */
+    uint32_t conds;
+    uint32_t addrs;
+    uint32_t align;
+    uint32_t size;
+    uint32_t cond_size;
+    uint32_t n; /* a prefix's skip, a length rule's length */
+    uint32_t space;
+    uint32_t sign_ext;
+    int32_t rel_base;
+    bool b_relative;
+    bool b_require;
+} rule_t;
+
+/* ---- the map -------------------------------------------------------------- */
 
 /* Map entries are stored without alignment (the tables buffer has none):
  * start, length, shift (two's complement), each 4 bytes little-endian. */
@@ -71,28 +150,80 @@ read_list(tinydelta_varint_fn_t varint, void *p_varint_ctx, uint8_t **pp_storage
     return result;
 }
 
-tinydelta_result_t
-tinydelta_reloc_read_map(tinydelta_reloc_t *p_reloc, tinydelta_varint_fn_t varint, void *p_varint_ctx, uint8_t *p_storage, uint32_t storage_size) {
-    tinydelta_result_t result = varint(p_varint_ctx, &p_reloc->base);
+tinydelta_result_t tinydelta_reloc_read_header(tinydelta_reloc_t *p_reloc,
+                                               uint8_t features,
+                                               tinydelta_fetch_fn_t fetch,
+                                               tinydelta_varint_fn_t varint,
+                                               void *p_ctx,
+                                               uint8_t *p_storage,
+                                               uint32_t storage_size) {
+    uint32_t rule             = ((uint32_t)features & TINYDELTA_CODED_RELOC_MASK) >> TINYDELTA_CODED_RELOC_SHIFT; /* Cast: widens. */
+    tinydelta_result_t result = TINYDELTA_OK;
 
-    p_reloc->p_entries     = p_storage;
+    p_reloc->b_shipped     = (features & FEATURES_SHIPPED) != 0u;
     p_reloc->run_count     = 0u;
     p_reloc->outside_count = 0u;
-    if (result == TINYDELTA_OK) {
-        result = read_list(varint, p_varint_ctx, &p_storage, &storage_size, 3u, &p_reloc->count);
-    }
-#if TINYDELTA_RELOC == TINYDELTA_RELOC_MSP430X
-    /* Data runs, in blocks of 256 bytes. */
-    p_reloc->p_runs = p_storage;
-    if (result == TINYDELTA_OK) {
-        result = read_list(varint, p_varint_ctx, &p_storage, &storage_size, 2u, &p_reloc->run_count);
-    }
-    /* Addresses outside the image that moved. */
-    p_reloc->p_outside = p_storage;
-    if (result == TINYDELTA_OK) {
-        result = read_list(varint, p_varint_ctx, &p_storage, &storage_size, 3u, &p_reloc->outside_count);
-    }
+    if (p_reloc->b_shipped) {
+#if TINYDELTA_RELOC_SHIPPED
+        if (rule != FEATURES_RULE_TABLE) {
+            return TINYDELTA_ERR_VERSION;
+        }
+        result = varint(p_ctx, &p_reloc->rules_len);
+        if ((result == TINYDELTA_OK) && ((p_reloc->rules_len == 0u) || (p_reloc->rules_len > MAX_SHIPPED_TABLE))) {
+            result = TINYDELTA_ERR_MALFORMED;
+        }
+        if ((result == TINYDELTA_OK) && (p_reloc->rules_len > storage_size)) {
+            result = TINYDELTA_ERR_VERSION; /* doesn't fit the tables buffer */
+        }
+        if (result != TINYDELTA_OK) {
+            return result;
+        }
+        p_reloc->p_rules = p_storage; /* filled from the coded stream by tinydelta_reloc_start */
+        p_storage += p_reloc->rules_len;
+        storage_size -= p_reloc->rules_len;
+#else
+        return TINYDELTA_ERR_VERSION; /* built without shipped tables */
 #endif
+    } else {
+        uint32_t crc = RULES_THUMB_CRC;
+
+        if (rule == 2u) {
+            crc = RULES_MSP430X_CRC;
+        } else if (rule == FEATURES_RULE_TABLE) {
+            uint8_t low  = 0u;
+            uint8_t high = 0u;
+
+            result = fetch(p_ctx, &low);
+            if (result == TINYDELTA_OK) {
+                result = fetch(p_ctx, &high);
+            }
+            crc = (uint32_t)low | ((uint32_t)high << 8); /* Cast: widens. */
+        } else {
+            /* 1: the Thumb table's */
+        }
+        if ((result == TINYDELTA_OK) && (crc != TINYDELTA_RELOC_RULES_CRC)) {
+            result = TINYDELTA_ERR_VERSION; /* rules this decoder doesn't have */
+        }
+        p_reloc->p_rules   = tinydelta_reloc_rules;
+        p_reloc->rules_len = TINYDELTA_RELOC_RULES_SIZE;
+    }
+    if (result == TINYDELTA_OK) {
+        result = varint(p_ctx, &p_reloc->base);
+    }
+    p_reloc->p_entries = p_storage;
+    if (result == TINYDELTA_OK) {
+        result = read_list(varint, p_ctx, &p_storage, &storage_size, 3u, &p_reloc->count);
+    }
+    if (rule != 1u) { /* data runs, in 256-byte blocks; RAM ranges */
+        p_reloc->p_runs = p_storage;
+        if (result == TINYDELTA_OK) {
+            result = read_list(varint, p_ctx, &p_storage, &storage_size, 2u, &p_reloc->run_count);
+        }
+        p_reloc->p_outside = p_storage;
+        if (result == TINYDELTA_OK) {
+            result = read_list(varint, p_ctx, &p_storage, &storage_size, 3u, &p_reloc->outside_count);
+        }
+    }
     return result;
 }
 
@@ -112,106 +243,31 @@ static uint32_t entry_shift(const uint8_t *p_entry, uint32_t count, uint32_t key
     return 0u;
 }
 
-/* The shift of an address: by its offset if it points into the old
- * image, else (MSP430X) by the address itself. */
-static uint32_t address_shift(const tinydelta_reloc_t *p_reloc, uint32_t address) {
-    uint32_t offset = address - p_reloc->base;
-
-    if ((address < p_reloc->base) || (offset >= p_reloc->dict_len)) {
-#if TINYDELTA_RELOC == TINYDELTA_RELOC_MSP430X
-        return entry_shift(p_reloc->p_outside, p_reloc->outside_count, address);
-#else
-        return 0u;
-#endif
-    }
-    return entry_shift(p_reloc->p_entries, p_reloc->count, offset);
+static bool in_image(const tinydelta_reloc_t *p_reloc, uint32_t address) {
+    return (address >= p_reloc->base) && ((address - p_reloc->base) < p_reloc->dict_len);
 }
 
-/* The raw 16-bit little-endian word at index and index + 1 (within the
- * image). */
-static uint32_t raw16(const tinydelta_reloc_t *p_reloc, uint32_t index) {
-    uint32_t word = 0u;
+/* The shift of an address in a space: by the map's entries if it points
+ * into the old image, else by the RAM ranges. */
+static uint32_t address_shift(const tinydelta_reloc_t *p_reloc, uint32_t address, uint32_t space) {
+    uint32_t shift = 0u;
 
-    for (uint32_t byte_index = 2u; byte_index > 0u; byte_index--) {
-        uint32_t position = index + byte_index - 1u;
-        uint8_t byte      = (p_reloc->p_dict != NULL) ? p_reloc->p_dict[position] : p_reloc->raw(p_reloc->p_raw_ctx, position);
-
-        word = (word << 8) | byte;
-    }
-    return word;
-}
-
-/* Stores a relocated 16-bit word at index: the bytes of it in the span. */
-static void put16(const span_t *p_span, uint32_t index, uint32_t word, uint32_t mask) {
-    for (uint32_t byte_index = 0u; byte_index < 2u; byte_index++) {
-        uint32_t position = (index + byte_index) - p_span->offset; /* wraps around below the span */
-
-        if (position < p_span->length) {
-            /* Cast: keeps the low byte. Only the mask's bits change, so moved bits of an overlapping instruction stay. */
-            p_span->p_out[position] = (uint8_t)((p_span->p_out[position] & ~mask) | (word & mask));
+    if (in_image(p_reloc, address)) {
+        if (space != SPACE_DATA) {
+            shift = entry_shift(p_reloc->p_entries, p_reloc->count, address - p_reloc->base);
         }
-        word >>= 8;
-        mask >>= 8;
+    } else if (space != SPACE_CODE) {
+        shift = entry_shift(p_reloc->p_outside, p_reloc->outside_count, address);
+    } else {
+        /* an address outside the image, in the code space only: stays */
     }
+    return shift;
 }
 
-/* Whether size bytes at h are in the image, at an even address. */
-static bool even_fits(const tinydelta_reloc_t *p_reloc, uint32_t h, uint32_t size) {
-    return range_within(h, size, p_reloc->dict_len) && (((p_reloc->base + h) & 1u) == 0u);
-}
-
-#if TINYDELTA_RELOC == TINYDELTA_RELOC_THUMB
-
-/* Whether a BL starts at h: a halfword 0xF000-0xF7FF, then one
- * 0xF800-0xFFFF (BLs can't overlap: the ranges are disjoint). */
-static bool thumb_bl(const tinydelta_reloc_t *p_reloc, uint32_t h) {
-    return even_fits(p_reloc, h, 4u) && ((raw16(p_reloc, h) & 0xF800u) == 0xF000u) && ((raw16(p_reloc, h + 2u) & 0xF800u) == 0xF800u);
-}
-
-void tinydelta_reloc_span(const tinydelta_reloc_t *p_reloc, uint32_t offset, uint8_t *p_out, uint32_t length) {
-    span_t span  = {offset, length, p_out};
-    uint32_t end = offset + length;
-
-    for (uint32_t h = (offset >= 3u) ? (offset - 3u) : 0u; h < end; h++) {
-        if (thumb_bl(p_reloc, h)) {
-            /* The 22-bit field, 11 bits per halfword; the offset is twice it,
-             * sign-extended from 23 bits, and gains the callee's shift less the
-             * call site's. */
-            uint32_t field  = ((raw16(p_reloc, h) & 0x7FFu) << 11) | (raw16(p_reloc, h + 2u) & 0x7FFu);
-            uint32_t branch = (field << 1) | (((field & 0x200000u) != 0u) ? 0xFF800000u : 0u);
-            uint32_t callee = h + 4u + branch;
-            uint32_t next   = branch - address_shift(p_reloc, p_reloc->base + h);
-
-            if (callee < p_reloc->dict_len) {
-                next += address_shift(p_reloc, p_reloc->base + callee);
-            }
-            if ((next != branch) && ((next & 1u) == 0u) && ((next + 0x400000u) < 0x800000u)) {
-                field = next >> 1;
-                put16(&span, h, 0xF000u | ((field >> 11) & 0x7FFu), 0xFFFFu);
-                put16(&span, h + 2u, 0xF800u | (field & 0x7FFu), 0xFFFFu);
-            }
-        } else if ((((p_reloc->base + h) & 3u) == 0u) && even_fits(p_reloc, h, 4u) && !((h >= 2u) && thumb_bl(p_reloc, h - 2u)) && !thumb_bl(p_reloc, h + 2u)) {
-            /* An aligned 32-bit pointer into the image that no BL overlaps. */
-            uint32_t pointer = raw16(p_reloc, h) | (raw16(p_reloc, h + 2u) << 16);
-            uint32_t shift   = address_shift(p_reloc, pointer);
-
-            if (shift != 0u) {
-                pointer += shift;
-                put16(&span, h, pointer, 0xFFFFu);
-                put16(&span, h + 2u, pointer >> 16, 0xFFFFu);
-            }
-        } else {
-            /* nothing to relocate at h */
-        }
-    }
-}
-
-#elif TINYDELTA_RELOC == TINYDELTA_RELOC_MSP430X
-
-/* Whether old-image offset h is in a data run (runs are in 256-byte blocks). */
+/* Whether old-image offset h is in a data run. */
 static bool in_data(const tinydelta_reloc_t *p_reloc, uint32_t h) {
     const uint8_t *p_run = p_reloc->p_runs;
-    uint32_t block       = h >> 8;
+    uint32_t block       = h >> DATA_BLOCK_SHIFT;
 
     for (uint32_t index = 0u; index < p_reloc->run_count; index++) {
         uint32_t start = load_le32(p_run);
@@ -227,170 +283,503 @@ static bool in_data(const tinydelta_reloc_t *p_reloc, uint32_t h) {
     return false;
 }
 
-/* What looks like a 4-byte data pointer at h, in a data run: high half
- * 1-15, pointing into the image (0 if none). */
-static uint32_t data_pointer(const tinydelta_reloc_t *p_reloc, uint32_t h) {
-    uint32_t pointer = 0u;
+/* ---- the table ------------------------------------------------------------ */
 
-    if (even_fits(p_reloc, h, 4u) && in_data(p_reloc, h)) {
-        pointer = raw16(p_reloc, h) | (raw16(p_reloc, h + 2u) << 16);
-        if (((pointer >> 16) == 0u) || ((pointer >> 16) > 0xFu) || (pointer < p_reloc->base) || ((pointer - p_reloc->base) >= p_reloc->dict_len)) {
-            pointer = 0u;
-        }
+/* The table byte at *p_pos, advancing it; false past the table's end. */
+static bool get_byte(const tinydelta_reloc_t *p_reloc, uint32_t *p_pos, uint32_t *p_value) {
+    if (*p_pos >= p_reloc->rules_len) {
+        return false;
     }
-    return pointer;
+    *p_value = p_reloc->p_rules[*p_pos];
+    (*p_pos)++;
+    return true;
 }
 
-/* The length in bytes of what looks like an instruction with 20-bit
- * addresses at h (0 if none). *p_fields gets its address fields, up to
- * two of 8 bits each, the first in the low bits: per field, the position
- * of the address's high 4 bits in the first word (bits 3-0), and which
- * word after the first holds its low 16 bits (bits 7-4). */
-static uint32_t msp430x_candidate(const tinydelta_reloc_t *p_reloc, uint32_t h, uint32_t *p_fields) {
-    uint32_t w0;
-    uint32_t length = 4u;
+/* A little-endian value of a word's size in the table. */
+static bool get_word(const tinydelta_reloc_t *p_reloc, uint32_t *p_pos, uint32_t *p_value) {
+    uint32_t value = 0u;
+    bool b_ok      = true;
 
-    *p_fields = 0u;
-    if (!even_fits(p_reloc, h, 4u) || in_data(p_reloc, h)) {
+    for (uint32_t byte_index = 0u; b_ok && (byte_index < p_reloc->word_bytes); byte_index++) {
+        uint32_t byte = 0u;
+
+        b_ok = get_byte(p_reloc, p_pos, &byte);
+        value |= byte << (8u * byte_index);
+    }
+    *p_value = value;
+    return b_ok;
+}
+
+/* The bits of an n-bit field, n 1 to 32. */
+static uint32_t low_mask(uint32_t bits) {
+    return 0xFFFFFFFFu >> ((32u - bits) & 31u);
+}
+
+/* Reads one address's slices at *p_pos: their word count reach in *p_words
+ * and total bits in *p_bits. */
+static bool read_slices(const tinydelta_reloc_t *p_reloc, uint32_t *p_pos, uint32_t *p_words, uint32_t *p_bits) {
+    uint32_t count = 0u;
+    bool b_ok      = get_byte(p_reloc, p_pos, &count) && (count >= 1u) && (count <= MAX_SLICES);
+
+    *p_bits = 0u;
+    for (uint32_t index = 0u; b_ok && (index < count); index++) {
+        uint32_t x = 0u;
+        uint32_t y = 0u;
+
+        b_ok = get_byte(p_reloc, p_pos, &x) && get_byte(p_reloc, p_pos, &y);
+        if (b_ok && ((y & SLICE_FIXED) != 0u)) {
+            uint32_t width = (y & 0x7Fu) + 1u;
+
+            b_ok = (width <= 8u) && ((x >> width) == 0u);
+            *p_bits += width;
+        } else if (b_ok) {
+            uint32_t low = x & 0x1Fu;
+
+            b_ok = (y <= 31u) && ((low + y) < (8u * p_reloc->word_bytes));
+            *p_bits += y + 1u;
+            if (((x >> 5) + 1u) > *p_words) {
+                *p_words = (x >> 5) + 1u;
+            }
+        } else {
+            /* the bytes ran out */
+        }
+    }
+    return b_ok && (*p_bits <= 32u);
+}
+
+/* Reads the rule at pos of list (whose rules number list_count) into
+ * *p_rule, checking it against the format's limits. */
+static bool read_rule(const tinydelta_reloc_t *p_reloc, uint32_t pos, uint32_t list, uint32_t list_count, rule_t *p_rule) {
+    uint32_t first     = 0u;
+    uint32_t more      = 0u;
+    uint32_t explicit  = 0u;
+    uint32_t words     = 1u;
+    uint32_t addr_bits = 0u;
+    bool b_ok          = get_byte(p_reloc, &pos, &first);
+
+    p_rule->addrs      = first & 3u;
+    p_rule->conds      = (first >> 2) & 7u;
+    p_rule->b_relative = (first & FIRST_RELATIVE) != 0u;
+    p_rule->align      = p_reloc->unit;
+    p_rule->n          = 0u;
+    p_rule->unless_at  = 0u;
+    p_rule->cond_size  = 0u;
+    if (b_ok && ((first & FIRST_MORE) != 0u)) {
+        b_ok = get_byte(p_reloc, &pos, &more) && (more != 0u) && ((more & ~0x3Fu) == 0u);
+    }
+    p_rule->b_require = (more & MORE_REQUIRE) != 0u;
+    p_rule->space     = (more >> 1) & 3u;
+    if (b_ok && ((more & MORE_ALIGN) != 0u)) {
+        b_ok = get_byte(p_reloc, &pos, &p_rule->align) && (p_rule->align != p_reloc->unit);
+    }
+    if (b_ok && ((more & MORE_SIZE) != 0u)) {
+        b_ok = get_byte(p_reloc, &pos, &explicit);
+    }
+    b_ok = b_ok && ((first & 0x80u) == 0u) && (p_rule->addrs <= 2u) && (p_rule->conds <= MAX_CONDS) && (p_rule->space <= SPACE_DATA) &&
+           (p_rule->align >= p_reloc->unit) && (p_rule->align <= 8u) && ((p_rule->align & (p_rule->align - 1u)) == 0u);
+    if (b_ok && (list < LIST_CODE)) {
+        b_ok = (p_rule->addrs == 0u) && !p_rule->b_relative && ((more & ~(MORE_ALIGN | MORE_SIZE)) == 0u) && get_byte(p_reloc, &pos, &p_rule->n);
+        if (list == LIST_PREFIXES) {
+            b_ok = b_ok && (p_rule->n >= 1u) && (p_rule->n <= MAX_SKIP) && ((p_rule->n % p_reloc->unit) == 0u);
+        } else {
+            b_ok = b_ok && (p_rule->n >= 1u) && (p_rule->n <= MAX_LENGTH);
+        }
+    }
+    p_rule->conds_at = pos;
+    for (uint32_t index = 0u; b_ok && (index < p_rule->conds); index++) {
+        uint32_t word  = 0u;
+        uint32_t value = 0u;
+        uint32_t mask  = 0u;
+
+        b_ok = get_byte(p_reloc, &pos, &word) && get_word(p_reloc, &pos, &value) && get_word(p_reloc, &pos, &mask) && ((word & 0x7Fu) < MAX_WORDS) &&
+               ((value & ~mask) == 0u);
+        word &= 0x7Fu;
+        if ((word + 1u) > words) {
+            words = word + 1u;
+        }
+        if (((word + 1u) * p_reloc->word_bytes) > p_rule->cond_size) {
+            p_rule->cond_size = (word + 1u) * p_reloc->word_bytes;
+        }
+    }
+    for (uint32_t index = 0u; b_ok && (index < p_rule->addrs); index++) {
+        p_rule->addr_at[index] = pos;
+        b_ok                   = read_slices(p_reloc, &pos, &words, &addr_bits);
+        if (index == 0u) {
+            p_rule->sign_ext = addr_bits; /* the first address's width, for the check below */
+        }
+    }
+    if (b_ok && p_rule->b_relative) {
+        uint32_t base = 0u;
+        uint32_t bits = p_rule->sign_ext;
+
+        b_ok             = get_byte(p_reloc, &pos, &base) && get_byte(p_reloc, &pos, &p_rule->sign_ext);
+        p_rule->rel_base = (base >= 0x80u) ? ((int32_t)base - 256) : (int32_t)base; /* Cast: 0-255 fits. */
+        b_ok             = b_ok && (p_rule->addrs == 1u) && (p_rule->sign_ext >= 1u) && (p_rule->sign_ext <= bits);
+    }
+    b_ok = b_ok && !(p_rule->b_require && ((p_rule->addrs == 0u) || p_rule->b_relative));
+    if (b_ok && ((more & MORE_UNLESS) != 0u)) {
+        uint32_t entries = 0u;
+
+        p_rule->unless_at = pos;
+        b_ok              = get_byte(p_reloc, &pos, &entries) && (entries >= 1u) && (entries <= MAX_UNLESS);
+        for (uint32_t index = 0u; b_ok && (index < entries); index++) {
+            uint32_t rule_index = 0u;
+            uint32_t offsets    = 0u;
+
+            b_ok = get_byte(p_reloc, &pos, &rule_index) && get_byte(p_reloc, &pos, &offsets) && (rule_index < list_count) && (offsets >= 1u) &&
+                   (offsets <= MAX_UNLESS_AT);
+            for (uint32_t at = 0u; b_ok && (at < offsets); at++) {
+                uint32_t byte = 0u;
+                int32_t offset;
+
+                b_ok   = get_byte(p_reloc, &pos, &byte);
+                offset = (byte >= 0x80u) ? ((int32_t)byte - 256) : (int32_t)byte; /* Cast: 0-255 fits. */
+                b_ok   = b_ok && (offset >= -MAX_UNLESS_OFFSET) && (offset <= MAX_UNLESS_OFFSET) && ((byte % p_reloc->unit) == 0u);
+            }
+        }
+    }
+    p_rule->size = words * p_reloc->word_bytes;
+    if (b_ok && ((more & MORE_SIZE) != 0u)) {
+        b_ok         = explicit > p_rule->size; /* not below what it reads, nor the default given */
+        p_rule->size = explicit;
+    }
+    p_rule->next = pos;
+    return b_ok && (p_rule->size <= MAX_SIZE);
+}
+
+/* Checks the table and reads its header and where its lists start. */
+static bool check_table(tinydelta_reloc_t *p_reloc) {
+    uint32_t pos = RULES_HEADER_SIZE;
+    uint32_t mode;
+    bool b_ok = (p_reloc->rules_len >= RULES_HEADER_SIZE) && (p_reloc->p_rules[0] == RULES_VERSION);
+
+    mode                = p_reloc->p_rules[1];
+    p_reloc->unit       = 1u << (mode & 3u);
+    p_reloc->word_bytes = ((mode >> 2) & 3u) + 1u;
+    p_reloc->b_big      = (mode & 0x10u) != 0u;
+    p_reloc->sync       = p_reloc->p_rules[2];
+    p_reloc->reach      = 0u;
+    b_ok                = b_ok && ((mode & ~0x1Fu) == 0u) && ((mode & 3u) != 3u) && (p_reloc->sync <= MAX_SYNC);
+    for (uint32_t list = 0u; b_ok && (list < TINYDELTA_RULE_LISTS); list++) {
+        p_reloc->list_count[list] = p_reloc->p_rules[3u + list];
+        p_reloc->list_start[list] = pos;
+        b_ok                      = p_reloc->list_count[list] <= MAX_RULES;
+        for (uint32_t index = 0u; b_ok && (index < p_reloc->list_count[list]); index++) {
+            rule_t rule;
+
+            b_ok = read_rule(p_reloc, pos, list, p_reloc->list_count[list], &rule);
+            pos  = rule.next;
+            if ((rule.size - 1u) > p_reloc->reach) {
+                p_reloc->reach = rule.size - 1u;
+            }
+        }
+    }
+    return b_ok && (pos == p_reloc->rules_len);
+}
+
+tinydelta_result_t tinydelta_reloc_start(tinydelta_reloc_t *p_reloc, tinydelta_coder_t *p_coder) {
+#if TINYDELTA_RELOC_SHIPPED
+    if (p_reloc->b_shipped) {
+        /* The storage's start, right after the coder's tables. */
+        tinydelta_result_t result = tinydelta_coder_tree_bytes(p_coder, p_coder->p_states + tinydelta_coder_tables_size(p_coder->layout), p_reloc->rules_len);
+
+        if (result != TINYDELTA_OK) {
+            return result;
+        }
+    }
+#else
+    (void)p_coder;
+#endif
+    return check_table(p_reloc) ? TINYDELTA_OK : TINYDELTA_ERR_MALFORMED;
+}
+
+/* ---- the engine ----------------------------------------------------------- */
+
+static uint8_t raw_byte(const tinydelta_reloc_t *p_reloc, uint32_t index) {
+    return (p_reloc->p_dict != NULL) ? p_reloc->p_dict[index] : p_reloc->raw(p_reloc->p_raw_ctx, index);
+}
+
+/* Word w of a rule at position p (the caller checked the bounds). */
+static uint32_t word_at(const tinydelta_reloc_t *p_reloc, uint32_t p, uint32_t w) {
+    uint32_t at    = p + (w * p_reloc->word_bytes);
+    uint32_t value = 0u;
+
+    for (uint32_t byte_index = 0u; byte_index < p_reloc->word_bytes; byte_index++) {
+        uint32_t byte = raw_byte(p_reloc, at + byte_index);
+
+        if (p_reloc->b_big) {
+            value = (value << 8) | byte;
+        } else {
+            value |= byte << (8u * byte_index);
+        }
+    }
+    return value;
+}
+
+/* Whether a rule's alignment and conditions hold at p. */
+static bool matches(const tinydelta_reloc_t *p_reloc, const rule_t *p_rule, uint32_t p) {
+    uint32_t pos = p_rule->conds_at;
+    bool b_ok =
+        (p_rule->cond_size <= p_reloc->dict_len) && (p <= (p_reloc->dict_len - p_rule->cond_size)) && ((((p_reloc->base + p) & (p_rule->align - 1u))) == 0u);
+
+    for (uint32_t index = 0u; b_ok && (index < p_rule->conds); index++) {
+        uint32_t word  = 0u;
+        uint32_t value = 0u;
+        uint32_t mask  = 0u;
+
+        (void)get_byte(p_reloc, &pos, &word); /* checked when the table was */
+        (void)get_word(p_reloc, &pos, &value);
+        (void)get_word(p_reloc, &pos, &mask);
+        b_ok = ((word_at(p_reloc, p, word & 0x7Fu) & mask) == value) != ((word & 0x80u) != 0u);
+    }
+    return b_ok;
+}
+
+/* Whether a rule's size fits the image at p. */
+static bool fits(const tinydelta_reloc_t *p_reloc, const rule_t *p_rule, uint32_t p) {
+    return (p_rule->size <= p_reloc->dict_len) && (p <= (p_reloc->dict_len - p_rule->size));
+}
+
+/* An address's value at p, its slices joined most significant first; its
+ * width in *p_bits. */
+static uint32_t join(const tinydelta_reloc_t *p_reloc, uint32_t addr_at, uint32_t p, uint32_t *p_bits) {
+    uint32_t pos   = addr_at;
+    uint32_t count = 0u;
+    uint32_t value = 0u;
+
+    *p_bits = 0u;
+    (void)get_byte(p_reloc, &pos, &count);
+    for (uint32_t index = 0u; index < count; index++) {
+        uint32_t x = 0u;
+        uint32_t y = 0u;
+        uint32_t width;
+        uint32_t part;
+
+        (void)get_byte(p_reloc, &pos, &x);
+        (void)get_byte(p_reloc, &pos, &y);
+        if ((y & SLICE_FIXED) != 0u) {
+            width = (y & 0x7Fu) + 1u;
+            part  = x;
+        } else {
+            width = y + 1u;
+            part  = (word_at(p_reloc, p, x >> 5) >> (x & 0x1Fu)) & low_mask(width);
+        }
+        value = (width >= 32u) ? part : ((value << width) | part);
+        *p_bits += width;
+    }
+    return value;
+}
+
+/* Writes value into an address's slices at p, the bytes of them inside the
+ * span; nothing if it doesn't fit them or their fixed bits. */
+static void split(const tinydelta_reloc_t *p_reloc, const span_t *p_span, uint32_t addr_at, uint32_t p, uint32_t value) {
+    uint32_t pos   = addr_at;
+    uint32_t count = 0u;
+    bool b_fits    = true;
+
+    (void)get_byte(p_reloc, &pos, &count);
+    /* The slices from the last (least significant): check, then write. */
+    for (uint32_t pass = 0u; b_fits && (pass < 2u); pass++) {
+        uint32_t rest = value;
+
+        for (uint32_t index = count; b_fits && (index > 0u); index--) {
+            uint32_t at    = addr_at + 1u + ((index - 1u) * 2u);
+            uint32_t x     = p_reloc->p_rules[at];
+            uint32_t y     = p_reloc->p_rules[at + 1u];
+            bool b_fixed   = (y & SLICE_FIXED) != 0u;
+            uint32_t width = b_fixed ? ((y & 0x7Fu) + 1u) : (y + 1u);
+            uint32_t part  = rest & low_mask(width);
+
+            if (b_fixed) {
+                b_fits = part == x;
+            } else if (pass == 1u) {
+                uint32_t mask = low_mask(width) << (x & 0x1Fu);
+                uint32_t bits = part << (x & 0x1Fu);
+                uint32_t word = p + ((x >> 5) * p_reloc->word_bytes);
+
+                for (uint32_t byte_index = 0u; byte_index < p_reloc->word_bytes; byte_index++) {
+                    uint32_t at_byte   = word + (p_reloc->b_big ? (p_reloc->word_bytes - 1u - byte_index) : byte_index);
+                    uint32_t position  = at_byte - p_span->offset; /* wraps around below the span */
+                    uint32_t byte_mask = (mask >> (8u * byte_index)) & 0xFFu;
+
+                    if ((byte_mask != 0u) && (position < p_span->length)) {
+                        /* Cast: keeps the low byte. Only the slice's bits change. */
+                        p_span->p_out[position] = (uint8_t)(((uint32_t)p_span->p_out[position] & ~byte_mask) | ((bits >> (8u * byte_index)) & byte_mask));
+                    }
+                }
+            } else {
+                /* checking only */
+            }
+            rest = (width >= 32u) ? 0u : (rest >> width);
+        }
+    }
+}
+
+/* The first rule of a list matching at p (NO_RULE if none) into *p_rule. A
+ * prefix or length rule must fit the image; one with require counts only
+ * if it fits and its address points into the image. */
+static uint32_t first_rule(const tinydelta_reloc_t *p_reloc, uint32_t list, uint32_t p, rule_t *p_rule) {
+    uint32_t pos = p_reloc->list_start[list];
+
+    for (uint32_t index = 0u; index < p_reloc->list_count[list]; index++) {
+        (void)read_rule(p_reloc, pos, list, p_reloc->list_count[list], p_rule); /* checked with the table */
+        pos = p_rule->next;
+        if (matches(p_reloc, p_rule, p)) {
+            bool b_fits = fits(p_reloc, p_rule, p);
+            uint32_t bits;
+
+            if (((list < LIST_CODE) || p_rule->b_require) && !b_fits) {
+                continue;
+            }
+            if (p_rule->b_require && !in_image(p_reloc, join(p_reloc, p_rule->addr_at[0], p, &bits))) {
+                continue;
+            }
+            return index;
+        }
+    }
+    return NO_RULE;
+}
+
+/* The instruction length at q for finding instruction starts: 0 outside
+ * the image, at a misaligned position or in a data run. */
+static uint32_t length_at(const tinydelta_reloc_t *p_reloc, uint32_t q) {
+    rule_t rule;
+    uint32_t skip   = 0u;
+    uint32_t length = p_reloc->unit;
+
+    if ((q >= p_reloc->dict_len) || ((p_reloc->dict_len - q) < p_reloc->word_bytes) || (((p_reloc->base + q) & (p_reloc->unit - 1u)) != 0u) ||
+        in_data(p_reloc, q)) {
         return 0u;
     }
-    w0 = raw16(p_reloc, h);
-    if (((w0 & 0xFFF0u) == 0x13B0u) || ((w0 & 0xFFF0u) == 0x1380u) || ((w0 & 0xF0F0u) == 0x0060u)) {
-        *p_fields = 0x10u; /* CALLA #imm20 / &abs20, MOVA Rs,&abs20: bits 3-0, word 1 */
-    } else if (((w0 & 0xF0C0u) == 0x0080u) || ((w0 & 0xF0F0u) == 0x0020u)) {
-        *p_fields = 0x18u; /* MOVA/CMPA/ADDA/SUBA #imm20,Rd, MOVA &abs20,Rd: bits 11-8 */
-    } else if ((w0 & 0xF800u) == 0x1800u) {
-        /* Extension word, then a two-operand instruction and its operand words. */
-        uint32_t w1     = raw16(p_reloc, h + 2u);
-        uint32_t as     = (w1 >> 4) & 3u;
-        uint32_t source = (w1 >> 8) & 0xFu;
-        uint32_t word   = 2u; /* the next operand word's number */
+    if ((first_rule(p_reloc, LIST_PREFIXES, q, &rule) != NO_RULE) && ((p_reloc->dict_len - q) >= (rule.n + p_reloc->word_bytes))) {
+        skip = rule.n;
+    }
+    if (first_rule(p_reloc, LIST_LENGTHS, q + skip, &rule) != NO_RULE) {
+        length = rule.n;
+    }
+    return skip + length;
+}
 
-        if (w1 < 0x4000u) {
-            return 0u; /* not a two-operand instruction */
-        }
-        if (((as == 1u) && (source != 3u)) || ((as == 3u) && (source == 0u))) {
-            if ((as != 1u) || (source != 0u)) { /* not PC-relative */
-                *p_fields = 7u | (word << 4);
+/* Whether p starts an instruction: decoding lengths from sync units before
+ * lands on it. */
+static bool starts(const tinydelta_reloc_t *p_reloc, uint32_t p) {
+    uint32_t covered = 0u; /* bit i: the unit i units on is inside an instruction */
+
+    for (uint32_t i = p_reloc->sync; i > 0u; i--) {
+        if (((covered & 1u) == 0u) && ((i * p_reloc->unit) <= p)) {
+            uint32_t units = length_at(p_reloc, p - (i * p_reloc->unit)) / p_reloc->unit;
+
+            if (units > 0u) {
+                covered |= low_mask(units) & ~1u;
             }
-            word++;
-        }
-        if ((w1 & 0x80u) != 0u) { /* Ad = 1 */
-            if ((w1 & 0xFu) != 0u) {
-                *p_fields |= (word << 4) << (((*p_fields) != 0u) ? 8u : 0u);
-            }
-            word++;
-        }
-        length = word * 2u;
-        if (!range_within(h, length, p_reloc->dict_len)) {
-            *p_fields = 0u;
-            length    = 0u;
-        }
-    } else {
-        length = 0u;
-    }
-    return length;
-}
-
-/* How many words before a candidate msp430x_starts decodes. */
-#define MSP430X_SYNC_WORDS 8u
-
-/* 2 if a source operand with mode as on register reg takes a word. */
-static uint32_t operand_word(uint32_t as, uint32_t reg) {
-    return ((((as == 1u) && (reg != 3u)) || ((as == 3u) && (reg == 0u))) ? 2u : 0u);
-}
-
-/* The length in bytes of any instruction at h, if it is one (0 at odd
- * positions and in data runs). */
-static uint32_t msp430x_length(const tinydelta_reloc_t *p_reloc, uint32_t h) {
-    uint32_t length = 2u;
-    uint32_t w;
-
-    if (!even_fits(p_reloc, h, 2u) || in_data(p_reloc, h)) {
-        return 0u;
-    }
-    w = raw16(p_reloc, h);
-    if (((w & 0xF800u) == 0x1800u) && even_fits(p_reloc, h, 4u)) { /* extension word */
-        length = 4u;
-        w      = raw16(p_reloc, h + 2u);
-    }
-    if (w >= 0x4000u) { /* two operands */
-        length += operand_word((w >> 4) & 3u, (w >> 8) & 0xFu) + ((w >> 6) & 2u);
-    } else if (w < 0x1000u) { /* MSP430X address instructions */
-        length += ((0x0FCCu >> ((w >> 4) & 0xFu)) & 1u) * 2u;
-    } else if (w < 0x1300u) { /* one operand */
-        length += operand_word((w >> 4) & 3u, w & 0xFu);
-    } else if (w < 0x1400u) { /* RETI, CALLA */
-        length += ((0x0B20u >> ((w >> 4) & 0xFu)) & 1u) * 2u;
-    } else {
-        /* jumps, PUSHM, POPM: one word */
-    }
-    return length;
-}
-
-/* Whether decoding instructions from MSP430X_SYNC_WORDS words before h
- * reaches h as an instruction, not as an operand word of one before. */
-static bool msp430x_starts(const tinydelta_reloc_t *p_reloc, uint32_t h) {
-    uint32_t covered = 0u; /* bit i: the word i words on is an operand */
-    uint32_t sync    = 2u * MSP430X_SYNC_WORDS;
-
-    for (uint32_t back = sync; back > 0u; back -= 2u) {
-        if (((covered & 1u) == 0u) && (back <= h)) {
-            uint32_t length = msp430x_length(p_reloc, h - back);
-
-            covered |= ((1u << (length >> 1)) - 1u) & ~1u;
         }
         covered >>= 1;
     }
-    return ((covered & 1u) == 0u);
+    return (covered & 1u) == 0u;
+}
+
+/* The rule that applies at p before unless (NO_RULE if none, or an
+ * exclusion), its list in *p_list. */
+static uint32_t applies(const tinydelta_reloc_t *p_reloc, uint32_t p, uint32_t *p_list, rule_t *p_rule) {
+    uint32_t index;
+
+    *p_list = LIST_CODE;
+    if ((p >= p_reloc->dict_len) || (((p_reloc->base + p) & (p_reloc->unit - 1u)) != 0u)) {
+        return NO_RULE;
+    }
+    if (in_data(p_reloc, p)) {
+        *p_list = LIST_DATA;
+    }
+    index = first_rule(p_reloc, *p_list, p, p_rule);
+    if ((index == NO_RULE) || (p_rule->addrs == 0u) || !fits(p_reloc, p_rule, p)) {
+        return NO_RULE;
+    }
+    if ((*p_list == LIST_CODE) && (p_reloc->sync > 0u) && !starts(p_reloc, p)) {
+        return NO_RULE;
+    }
+    return index;
+}
+
+/* Whether the rule that applies at p is excluded by its unless entries. */
+static bool excluded(const tinydelta_reloc_t *p_reloc, const rule_t *p_rule, uint32_t list, uint32_t p) {
+    uint32_t pos     = p_rule->unless_at;
+    uint32_t entries = 0u;
+    bool b_excluded  = false;
+
+    if (pos == 0u) {
+        return false;
+    }
+    (void)get_byte(p_reloc, &pos, &entries);
+    for (uint32_t index = 0u; index < entries; index++) {
+        uint32_t rule_index = 0u;
+        uint32_t offsets    = 0u;
+
+        (void)get_byte(p_reloc, &pos, &rule_index);
+        (void)get_byte(p_reloc, &pos, &offsets);
+        for (uint32_t at = 0u; at < offsets; at++) {
+            uint32_t byte = 0u;
+            uint32_t other_list;
+            rule_t other;
+
+            (void)get_byte(p_reloc, &pos, &byte);
+            /* Cast: two's complement, so a negative offset wraps below p (and past the image if p is near 0). */
+            if (!b_excluded && (applies(p_reloc, p + ((byte >= 0x80u) ? (byte | 0xFFFFFF00u) : byte), &other_list, &other) == rule_index) &&
+                (other_list == list)) {
+                b_excluded = true;
+            }
+        }
+    }
+    return b_excluded;
+}
+
+/* Rewrites the addresses of the rule at p in the span. */
+static void move_at(const tinydelta_reloc_t *p_reloc, const rule_t *p_rule, uint32_t p, const span_t *p_span) {
+    uint32_t bits;
+
+    if (p_rule->b_relative) {
+        uint32_t raw    = join(p_reloc, p_rule->addr_at[0], p, &bits);
+        uint32_t sign   = 1u << (p_rule->sign_ext - 1u);
+        uint32_t biased = (raw & low_mask(p_rule->sign_ext)) ^ sign;
+        int64_t offset  = (int64_t)biased - (int64_t)sign;     /* Cast: widens; sign-extends the field. */
+        int64_t site    = (int64_t)p_reloc->base + (int64_t)p; /* Cast: widens. */
+        int64_t target  = site + p_rule->rel_base + offset;
+        int64_t next    = offset - (int64_t)(int32_t)address_shift(p_reloc, (uint32_t)site, SPACE_CODE); /* Cast: shifts are two's complement. */
+        int64_t limit   = (int64_t)sign;
+
+        if ((target >= 0) && (target <= (int64_t)0xFFFFFFFFu)) {
+            next += (int64_t)(int32_t)address_shift(p_reloc, (uint32_t)target, p_rule->space); /* Cast: in range; two's complement. */
+        }
+        if ((next != offset) && (next >= -limit) && (next < limit)) {
+            split(p_reloc, p_span, p_rule->addr_at[0], p, (uint32_t)next & low_mask(bits)); /* Cast: two's complement, the low bits. */
+        }
+        return;
+    }
+    for (uint32_t index = 0u; index < p_rule->addrs; index++) {
+        uint32_t address = join(p_reloc, p_rule->addr_at[index], p, &bits);
+        uint32_t shift   = address_shift(p_reloc, address, p_rule->space);
+        uint32_t moved   = address + shift;
+
+        /* Not negative, nor past 32 bits: the sum wrapped exactly when the shift's sign says it must not have. */
+        if ((shift != 0u) && (((shift & 0x80000000u) != 0u) ? (moved < address) : (moved >= address))) {
+            if ((bits >= 32u) || ((moved >> bits) == 0u)) {
+                split(p_reloc, p_span, p_rule->addr_at[index], p, moved);
+            }
+        }
+    }
 }
 
 void tinydelta_reloc_span(const tinydelta_reloc_t *p_reloc, uint32_t offset, uint8_t *p_out, uint32_t length) {
     span_t span  = {offset, length, p_out};
     uint32_t end = offset + length;
 
-    for (uint32_t h = (offset >= 7u) ? (offset - 7u) : 0u; h < end; h++) {
-        uint32_t fields;
-        uint32_t size;
+    for (uint32_t p = (offset >= p_reloc->reach) ? (offset - p_reloc->reach) : 0u; p < end; p++) {
+        uint32_t list;
+        rule_t rule;
 
-        if (in_data(p_reloc, h)) {
-            /* A data pointer counts unless one 2 bytes before overlaps it. */
-            uint32_t pointer = data_pointer(p_reloc, h);
-
-            if ((pointer != 0u) && ((h < 2u) || (data_pointer(p_reloc, h - 2u) == 0u))) {
-                uint32_t shift = address_shift(p_reloc, pointer);
-
-                pointer += shift;
-                if ((shift != 0u) && (pointer < 0x100000u)) {
-                    put16(&span, h, pointer, 0xFFFFu);
-                    put16(&span, h + 2u, pointer >> 16, 0xFFFFu);
-                }
-            }
-            continue;
-        }
-        size = msp430x_candidate(p_reloc, h, &fields);
-        if ((size != 0u) && !msp430x_starts(p_reloc, h)) {
-            size = 0u;
-        }
-        if (size != 0u) {
-            uint32_t w0 = raw16(p_reloc, h);
-
-            for (; fields != 0u; fields >>= 8) {
-                uint32_t high    = fields & 0xFu;
-                uint32_t at      = h + (((fields >> 4) & 0xFu) * 2u);
-                uint32_t address = raw16(p_reloc, at) | (((w0 >> high) & 0xFu) << 16);
-                uint32_t shift   = address_shift(p_reloc, address);
-
-                address += shift;
-                if ((shift != 0u) && (address < 0x100000u)) {
-                    put16(&span, h, (address >> 16) << high, 0xFu << high); /* the high bits only */
-                    put16(&span, at, address, 0xFFFFu);
-                }
-            }
+        if ((applies(p_reloc, p, &list, &rule) != NO_RULE) && !excluded(p_reloc, &rule, list, p)) {
+            move_at(p_reloc, &rule, p, &span);
         }
     }
 }
-
-#endif
 
 #endif
