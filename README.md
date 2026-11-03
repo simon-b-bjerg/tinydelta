@@ -428,7 +428,7 @@ Download a prebuilt static binary for Linux or Windows (amd64 or arm64)
 from the [releases page](https://github.com/simon-b-bjerg/tinydelta/releases):
 
 ```sh
-VERSION=v1.1.0   # pick the latest release
+VERSION=v1.1.1   # pick the latest release
 curl -fsSLO "https://github.com/simon-b-bjerg/tinydelta/releases/download/${VERSION}/tinydelta_${VERSION}_linux_amd64.tar.gz"
 tar -xzf "tinydelta_${VERSION}_linux_amd64.tar.gz"
 sudo install "tinydelta_${VERSION}_linux_amd64/tinydelta" /usr/local/bin/
