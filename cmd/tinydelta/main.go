@@ -19,6 +19,7 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"strings"
 
 	"github.com/simon-b-bjerg/tinydelta"
 )
@@ -96,7 +97,7 @@ func encodeCommand(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return parseExit(err)
 	}
-	if fs.NArg() < 2 || fs.NArg() > 3 || *maxLen < 0 {
+	if fs.NArg() < 2 || fs.NArg() > 3 || *maxLen < 0 || misplacedFlag(fs) {
 		fs.Usage()
 		return exitUsage
 	}
@@ -141,7 +142,7 @@ func decodeCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	if err := fs.Parse(args); err != nil {
 		return parseExit(err)
 	}
-	if fs.NArg() < 2 || fs.NArg() > 3 || *maxSize < 1 {
+	if fs.NArg() < 2 || fs.NArg() > 3 || *maxSize < 1 || misplacedFlag(fs) {
 		fs.Usage()
 		return exitUsage
 	}
@@ -196,6 +197,14 @@ const (
 	firstPassSlack  = 4096
 )
 
+// misplacedFlag reports an output name that looks like a flag: flags go
+// before the file names, so "encode a b -greedy" would otherwise write a
+// file called -greedy. A file really named that can be given as ./-greedy.
+func misplacedFlag(fs *flag.FlagSet) bool {
+	name := fs.Arg(2)
+	return len(name) > 1 && name[0] == '-'
+}
+
 // outputName returns the optional output argument at index i, or "-".
 func outputName(fs *flag.FlagSet, i int) string {
 	if fs.NArg() > i {
@@ -220,7 +229,8 @@ func parseExit(err error) int {
 }
 
 func fail(stderr io.Writer, err error) int {
-	fmt.Fprintln(stderr, "tinydelta:", err)
+	// The library's errors already say where they're from.
+	fmt.Fprintln(stderr, "tinydelta:", strings.TrimPrefix(err.Error(), "tinydelta: "))
 	return exitFailure
 }
 

@@ -131,6 +131,44 @@ func TestDecodeMaxSize(t *testing.T) {
 	}
 }
 
+// TestErrorPrefix checks that errors name the tool once.
+func TestErrorPrefix(t *testing.T) {
+	_, dict, _ := writeFiles(t)
+	r := runCLI([]byte{0x7F}, "decode", dict, "-")
+	if r.code != exitFailure || strings.Count(r.stderr, "tinydelta:") != 1 {
+		t.Errorf("%+v", r)
+	}
+}
+
+// TestFlagAfterFileNames checks that a flag in the output's place is a
+// usage error, not a file of that name.
+func TestFlagAfterFileNames(t *testing.T) {
+	dir, dict, target := writeFiles(t)
+	patch := filepath.Join(dir, "patch")
+	if r := runCLI(nil, "encode", dict, target, patch); r.code != exitOK {
+		t.Fatalf("encode: %+v", r)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(wd) })
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"encode", dict, target, "-greedy"}, {"decode", dict, patch, "-v"}} {
+		if r := runCLI(nil, args...); r.code != exitUsage {
+			t.Errorf("%v: %+v", args, r)
+		}
+		if _, err := os.Stat(args[3]); err == nil {
+			t.Errorf("%v wrote a file called %s", args, args[3])
+		}
+	}
+	if r := runCLI(nil, "encode", dict, target, "-"); r.code != exitOK {
+		t.Errorf("- as the output: %+v", r)
+	}
+}
+
 // TestDecodeMaxSizeBelowOne checks that a limit that can't be meant
 // is a usage error, not no limit at all.
 func TestDecodeMaxSizeBelowOne(t *testing.T) {
@@ -252,8 +290,8 @@ func TestEncodeOptionsEverywhere(t *testing.T) {
 		if !strings.Contains(usage.String(), "-"+n.flag+" ") && !strings.Contains(usage.String(), "-"+n.flag+"\n") {
 			t.Errorf("EncodeOptions.%s: encode has no -%s flag", name, n.flag)
 		}
-		if !strings.Contains(string(python), n.python+"=") || !strings.Contains(string(python), `"-`+n.flag+`"`) {
-			t.Errorf("EncodeOptions.%s: Python encode() lacks %s= or doesn't pass -%s", name, n.python, n.flag)
+		if !strings.Contains(string(python), n.python+":") || !strings.Contains(string(python), `"-`+n.flag+`"`) {
+			t.Errorf("EncodeOptions.%s: Python encode() lacks %s or doesn't pass -%s", name, n.python, n.flag)
 		}
 	}
 	if len(encodeOptionNames) != fields.NumField() {

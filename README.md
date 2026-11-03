@@ -1154,7 +1154,7 @@ There are two, one for each side of the format:
 | Go coverage | `go test -cover` over the library and the CLI, per function in the job summary |
 | Update coverage badges | on pushes to `main` only: writes the Go and C coverage figures and the number of conformance vectors for the badges above to the `badges` branch |
 | Go tests on Windows | `go test ./...` for the library and the CLI |
-| Python package | on Linux and Windows, with Python 3.9 and current: the Python tests, including every conformance vector, against a fresh build of the tool; on Linux also builds the wheels, checks them with `twine` and tests the installed wheel |
+| Python package | on Linux and Windows, with Python 3.9 and current: the Python tests, including every conformance vector, against a fresh build of the tool; on Linux also checks the type hints with `mypy --strict`, builds the wheels, checks them with `twine` and tests the installed wheel |
 | Wheels on other platforms | installs the wheel built above on Linux ARM64, Windows x64 and Windows ARM64, and runs the Python tests against it |
 | C static analysis | `scripts/c-format.sh` and `scripts/c-analyze.sh` |
 | C decoders model-checked | `scripts/c-cbmc.sh` (CBMC from Ubuntu's packages), a few minutes |
