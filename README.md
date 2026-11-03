@@ -934,7 +934,7 @@ deviations, listed with their reasons in
 | 10.8 composite expression cast | required | the masked two-bit opcode is cast to `tinydelta_opcode`, so `-Wswitch-enum` proves every opcode has a case |
 | 11.8 const cast away | required | cppcheck false positive: a callback's `void *p_ctx` is copied out of the `const tinydelta_io_t`; no qualifier is removed |
 | 11.5 `void *` to object pointer | advisory | the coder's byte source gets its decoder through `void *`, like the callbacks' contexts |
-| 2.5 unused macro | advisory | in builds without `TINYDELTA_CODER` only: the coder's macros go unused; and `TINYDELTA_RELOC_RULES`, an option for the library's users |
+| 2.5 unused macro | advisory | in builds without `TINYDELTA_CODER` only: the coder's macros go unused; `TINYDELTA_RELOC_RULES`, an option for the library's users; and a generated rule header's parameters in builds that read them from shipped tables |
 | 8.9 object at block scope | advisory | a relocation rule table made by `tinydelta rules compile -c` is a file-scope array in its header |
 
 ## Wire format

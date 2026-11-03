@@ -75,6 +75,14 @@ MISRA_DEVIATIONS=(
   # in its header, used by one function
   --suppress='misra-c2012-8.9:*tinydelta_rules_*.h'
   --suppress='misra-c2012-8.9:*tinydelta_reloc.c'
+  # 2.5 (advisory) a generated rule header gives all of its table's
+  # parameters; a build that accepts shipped tables reads them from the table
+  --suppress='misra-c2012-2.5:*tinydelta_rules_*.h'
+  # (cppcheck style, not MISRA) a built-in rule table's parameters are
+  # compile-time constants, so the compiler folds the code they make dead:
+  # cppcheck sees those conditions as always true or false
+  --suppress='knownConditionTrueFalse:*tinydelta_reloc.c'
+  --suppress='unsignedLessThanZero:*tinydelta_reloc.c'
 )
 for config in "${CONFIGS[@]}"; do
   read -ra coder <<<"$config"
