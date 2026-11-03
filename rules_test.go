@@ -216,7 +216,7 @@ func TestRulesShippedAndNamed(t *testing.T) {
 	}
 	t.Logf("named %d B, shipped %d B (table %d B)", len(named.Bytes), len(shipped.Bytes), len(custom.Table()))
 	for _, p := range [][]byte{named.Bytes, shipped.Bytes} {
-		if d := DescribePatch(p); !strings.Contains(d, "relocation map") || !strings.Contains(d, "rule table") {
+		if d := DescribePatch(p, custom); !strings.Contains(d, "relocation map") || !strings.Contains(d, "rule table") {
 			t.Errorf("DescribePatch: %s", d)
 		}
 	}

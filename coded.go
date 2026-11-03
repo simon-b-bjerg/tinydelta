@@ -510,12 +510,13 @@ func codedLayoutsWithin(ram int) []int {
 // DescribePatch summarises a patch's parts in bytes, for tinydelta encode
 // -v: for a coded patch the coder's layout, a relocation rule table or its
 // CRC, the relocation map (entries, data runs, RAM ranges) and the RAM
-// the decoder keeps it in, and the coded instruction stream.
-func DescribePatch(patch []byte) string {
+// the decoder keeps it in, and the coded instruction stream. rules is the
+// table a patch may name by CRC (as for DecodeRules), or nil.
+func DescribePatch(patch []byte, rules *Rules) string {
 	if len(patch) < 2 || (patch[0] != codedFlag|FormatVersion && patch[0] != codedFlag|FormatVersion2) {
 		return fmt.Sprintf("plain patch: %d B", len(patch))
 	}
-	r, err := newCodedReader(patch, nil)
+	r, err := newCodedReader(patch, rules)
 	var b strings.Builder
 	fmt.Fprintf(&b, "coded patch, tables %d B: header 2 B", CodedTablesSize(int(patch[1]&3)))
 	used := 2
