@@ -89,8 +89,8 @@ A patch carries no checksum, so before shipping, read
 ## Contents
 
 - [Benchmark](#benchmark)
-- [Two-pass patches](#two-pass-patches)
 - [Coded patches](#coded-patches)
+- [Two-pass patches](#two-pass-patches)
 - [Why another delta format?](#why-another-delta-format)
 - [Installation](#installation)
   - [Command-line tool](#command-line-tool)
@@ -268,6 +268,64 @@ holds the old and new file in memory. Every figure and its source is in
 
 </details>
 
+## Coded patches
+
+A coded patch is a plain patch whose instruction stream is range-coded:
+every bit is coded with an adaptive probability chosen by what the bit
+belongs to (an instruction byte after a given previous instruction, an
+`ADD_DIFF` byte, a literal, ...). In firmware patches those are very
+regular: `SKIP` and `ADD_DIFF` alternate, and the same few difference
+values recur, so they cost a fraction of a bit each. The device decodes
+it in **one pass**, with no intermediate patch to store, and the
+instructions and their meaning are exactly those of a plain patch.
+
+![The layers of a coded patch: the range coder turns the coded bytes into the plain instruction stream, whose SKIP and ADD instructions build the new file from the old one](docs/patch-layers.svg)
+
+The price is on the device, so it is optional twice over: the C
+decoders only read coded patches when built with `TINYDELTA_CODER = 1`,
+and the encoder only makes one when told the size of the decoder's
+buffer for the coder's probability tables, needed for as long as it
+decodes (a local array is fine):
+
+| table layout | RAM | firmware, 176 updates | configuration, 316 updates |
+|---|---:|---:|---:|
+| plain, best of one and [two passes](#two-pass-patches) | 0 | 1,765,799 B | 51,109 B |
+| C: one shared byte table | 522 B | 1,207,085 B (−32%) | 46,416 B (−9%) |
+| B: `ADD_DIFF` bytes, and one for the rest | 777 B | 1,149,923 B (−35%) | 45,900 B (−10%) |
+| A: one table per kind of byte | 1,287 B | 1,145,110 B (−35%) | 44,582 B (−13%) |
+
+All patches of the [benchmark](#benchmark), added up; coded patches
+decode in one pass, against two for most of the plain row's firmware
+patches. With the coder, firmware patches are smaller than HPatchLite's
+(4 KB dictionary) in every update. On small configuration updates the
+plain patch is often smaller: a few bytes of coder setup outweigh the
+gain on a 20-byte patch, and the encoder then returns the plain one (in
+about two thirds of them).
+
+```sh
+tinydelta encode -coder-tables 777 old.bin new.bin update.td   # coded if smaller, with tables that fit 777 bytes
+```
+
+On the device (`TINYDELTA_CODER = 1`, plus `tinydelta_coder.c`):
+
+```c
+uint8_t tables[TINYDELTA_CODED_TABLES_B];   /* memory decoder: 777 B, short-lived */
+result = tinydelta_decode_coded(p_dict, dict_len, p_patch, patch_len, p_target, target_cap,
+                                tables, sizeof tables, &target_len);
+
+uint8_t page[256];                             /* callback decoder: its buffer, as for plain patches */
+io.p_buffer = page; io.buffer_size = sizeof page; io.page_size = 256u;
+io.p_tables = tables; io.tables_size = sizeof tables;
+result = tinydelta_decode_io(&io, &target_len);
+```
+
+`-coder-tables` is the size of the device's tables buffer
+(`tables_size`): one number links the two. A patch whose tables need
+more than the buffer, or a build without the coder, is rejected with
+`TINYDELTA_ERR_VERSION` before anything is written. The code it costs is under
+[Code size and stack](#code-size-and-stack); the format is under
+[Wire format](#coded-form).
+
 ## Two-pass patches
 
 For updates that change a lot, `encode -two-pass` (`EncodeOptions.TwoPass`)
@@ -278,6 +336,13 @@ but a few bytes changed (moved addresses, branch offsets) as the
 gives the same byte everywhere. tinydelta then compresses that patch: the
 second pass encodes it against an empty dictionary, and its repeats
 become short copies.
+
+![A two-pass patch: an outer instruction stream expands to the inner one, which builds the new file from the old one](docs/two-pass-layers.svg)
+
+The figure shows the mechanism on the small example from the
+[wire format](#example), which is too small to gain from it: there, one
+pass wins. The saving comes on firmware, where the same differences
+recur across thousands of addresses.
 
 ```text
 update server:  old + new ──v2──▶ inner ──v1──▶ outer     (sent)
@@ -339,62 +404,6 @@ With `-two-pass -coder-tables`, the outer patch can be coded too, so give
 pass 1 the tables as well (`p_tables`, `tables_size`).
 
 </details>
-
-## Coded patches
-
-A coded patch is a plain patch whose instruction stream is range-coded:
-every bit is coded with an adaptive probability chosen by what the bit
-belongs to (an instruction byte after a given previous instruction, an
-`ADD_DIFF` byte, a literal, ...). In firmware patches those are very
-regular: `SKIP` and `ADD_DIFF` alternate, and the same few difference
-values recur, so they cost a fraction of a bit each. The device decodes
-it in **one pass**, with no intermediate patch to store, and the
-instructions and their meaning are exactly those of a plain patch.
-
-The price is on the device, so it is optional twice over: the C
-decoders only read coded patches when built with `TINYDELTA_CODER = 1`,
-and the encoder only makes one when told the size of the decoder's
-buffer for the coder's probability tables, needed for as long as it
-decodes (a local array is fine):
-
-| table layout | RAM | firmware, 176 updates | configuration, 316 updates |
-|---|---:|---:|---:|
-| plain, best of one and two passes | 0 | 1,765,799 B | 51,109 B |
-| C: one shared byte table | 522 B | 1,207,085 B (−32%) | 46,416 B (−9%) |
-| B: `ADD_DIFF` bytes, and one for the rest | 777 B | 1,149,923 B (−35%) | 45,900 B (−10%) |
-| A: one table per kind of byte | 1,287 B | 1,145,110 B (−35%) | 44,582 B (−13%) |
-
-All patches of the [benchmark](#benchmark), added up; coded patches
-decode in one pass, against two for most of the plain row's firmware
-patches. With the coder, firmware patches are smaller than HPatchLite's
-(4 KB dictionary) in every update. On small configuration updates the
-plain patch is often smaller: a few bytes of coder setup outweigh the
-gain on a 20-byte patch, and the encoder then returns the plain one (in
-about two thirds of them).
-
-```sh
-tinydelta encode -coder-tables 777 old.bin new.bin update.td   # coded if smaller, with tables that fit 777 bytes
-```
-
-On the device (`TINYDELTA_CODER = 1`, plus `tinydelta_coder.c`):
-
-```c
-uint8_t tables[TINYDELTA_CODED_TABLES_B];   /* memory decoder: 777 B, short-lived */
-result = tinydelta_decode_coded(p_dict, dict_len, p_patch, patch_len, p_target, target_cap,
-                                tables, sizeof tables, &target_len);
-
-uint8_t page[256];                             /* callback decoder: its buffer, as for plain patches */
-io.p_buffer = page; io.buffer_size = sizeof page; io.page_size = 256u;
-io.p_tables = tables; io.tables_size = sizeof tables;
-result = tinydelta_decode_io(&io, &target_len);
-```
-
-`-coder-tables` is the size of the device's tables buffer
-(`tables_size`): one number links the two. A patch whose tables need
-more than the buffer, or a build without the coder, is rejected with
-`TINYDELTA_ERR_VERSION` before anything is written. The code it costs is under
-[Code size and stack](#code-size-and-stack); the format is under
-[Wire format](#coded-form).
 
 ## Why another delta format?
 
