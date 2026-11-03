@@ -39,7 +39,7 @@ concurrency:
 jobs:
   release:
     name: ${{ (inputs.tag || github.event.release.tag_name || github.ref_type == 'tag') && 'Build and publish' || 'Build only' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       # Empty for a build-only run.
       TAG: ${{ inputs.tag || github.event.release.tag_name || (github.ref_type == 'tag' && github.ref_name) || '' }}
@@ -100,7 +100,7 @@ jobs:
     name: Publish to PyPI
     needs: release
     if: inputs.tag || github.event.release.tag_name || github.ref_type == 'tag'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment:
       name: pypi
       url: https://pypi.org/p/tinydelta
