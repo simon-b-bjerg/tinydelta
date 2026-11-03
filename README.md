@@ -335,6 +335,8 @@ if (result == TINYDELTA_OK) {
 The final hash of the new firmware covers both passes. Encode with
 `-window 256` (`EncodeOptions.Window`) and neither pass reads its own
 output further back than the buffer holds: `target_read` can be `NULL`.
+With `-two-pass -coder-tables`, the outer patch can be coded too, so give
+pass 1 the tables as well (`p_tables`, `tables_size`).
 
 </details>
 
