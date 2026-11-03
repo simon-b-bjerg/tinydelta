@@ -1,7 +1,7 @@
 # tinydelta for Python
 
 Tiny binary patches for small devices: a minimal delta format with an
-optimizing encoder and a decoder that fits in under 1 KB of flash. This
+optimizing encoder and a decoder that fits in under 1 KB of Cortex-M flash. This
 package creates and applies tinydelta patches from Python by running the
 tinydelta command-line tool, which ships inside the wheel.
 
@@ -36,7 +36,8 @@ assert tinydelta.decode(old, patch, max_size=len(new)) == new
   target, decoding a `Patch` in its number of passes (`passes` for plain
   `bytes`).
   Set `max_size` when the expected size is known: a short patch can
-  describe a huge target.
+  describe a huge target. It must be at least 1, so leave it out for an
+  empty target.
 - Errors raise `tinydelta.Error`; a target over `max_size` raises its
   subclass `tinydelta.TooLargeError`.
 
@@ -60,7 +61,7 @@ assert tinydelta.decode(old, patch) == new
 the decoder has an N-byte buffer for its probability tables (522, 777
 or 1287 bytes for the three table layouts; see the
 [main README](https://github.com/simon-b-bjerg/tinydelta#coded-patches)).
-Firmware patches typically come out about 40% smaller; the smallest
+Firmware patches typically come out about a third smaller; the smallest
 patch is returned, so a tiny update that codes no smaller stays plain:
 
 ```python

@@ -42,7 +42,7 @@ static uint8_t *slurp(const char *f, uint32_t *n) {
 	return b;
 }
 static void args_from_file(int *argc, char ***argv) {
-	static char text[1024], *args[8];
+	static char text[1024], *args[10];
 	int count = 1;
 	size_t n;
 	FILE *fp;
@@ -51,7 +51,7 @@ static void args_from_file(int *argc, char ***argv) {
 	fclose(fp);
 	text[n] = 0;
 	args[0] = "driver";
-	for (char *s = text; *s && count < 7; count++) {
+	for (char *s = text; *s && count < 9; count++) {
 		args[count] = s;
 		while (*s && *s != '\n') s++;
 		if (*s) *s++ = 0;

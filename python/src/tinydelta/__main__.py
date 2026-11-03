@@ -10,7 +10,7 @@ import sys
 from . import Error, binary_path
 
 
-def main():
+def main() -> int:
     try:
         binary = binary_path()
     except Error as e:
