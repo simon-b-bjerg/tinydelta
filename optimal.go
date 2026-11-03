@@ -59,8 +59,9 @@ func encodeOptimal(dict, target, greedy []byte, maxLen, maxDistance int) []byte 
 		return nil
 	}
 	dm := newMatcher(dict)
+	dictEnds, selfEnds := matchEnds{}, matchEnds{}
 	dictMatches := func(q int) []match {
-		return chainMatches(dm.head, dm.next, dict, target, q)
+		return chainMatches(dm.head, dm.next, dict, target, q, dictEnds)
 	}
 
 	// Cursor offsets to track: 0, greedy's, and those where dictionary
@@ -138,6 +139,7 @@ func encodeOptimal(dict, target, greedy []byte, maxLen, maxDistance int) []byte 
 	runStart := make([]int, K)               // SKIP at offset o is valid only from runStart[o] on
 	sm := newSelfMatcher(target, maxDistance)
 	base := make([]int32, K)
+	var lengths []int // reused by matchLengths
 
 	for q := 0; q <= n; q++ {
 		if q == 0 {
@@ -196,7 +198,7 @@ func encodeOptimal(dict, target, greedy []byte, maxLen, maxDistance int) []byte 
 		// COPY_TARGET candidates (target already produced), keeping only
 		// the longest per delta cost.
 		bestSelf := map[int]match{}
-		for _, m := range chainMatches(sm.head, sm.next, target, target, q) {
+		for _, m := range chainMatches(sm.head, sm.next, target, target, q, selfEnds) {
 			if q-m.addr > maxDistance {
 				break // the chain runs from the nearest position back
 			}
@@ -223,14 +225,16 @@ func encodeOptimal(dict, target, greedy []byte, maxLen, maxDistance int) []byte 
 				o2 := offIndex[m.addr-q]
 				d := int64(m.addr - cursor)
 				dcost := int32(varintLen(zigzagEncode(d)))
-				for _, k := range matchLengths(min(m.length, maxLen)) {
+				lengths = matchLengths(lengths[:0], min(m.length, maxLen))
+				for _, k := range lengths {
 					relax(ix(q+k, o2), c0+int32(varintLen(uint64(k)<<2))+dcost, optStep{int32(o), int32(k), int32(d), opCopy})
 				}
 			}
 			for _, m := range bestSelf {
 				d := int64(m.addr - q)
 				dcost := int32(varintLen(zigzagEncode(d)))
-				for _, k := range matchLengths(min(m.length, maxLen)) {
+				lengths = matchLengths(lengths[:0], min(m.length, maxLen))
+				for _, k := range lengths {
 					relax(ix(q+k, o), c0+int32(varintLen(uint64(k)<<2|opTargetCopy))+dcost, optStep{int32(o), int32(k), int32(d), opTargetCopy})
 				}
 			}
@@ -277,9 +281,25 @@ func encodeOptimal(dict, target, greedy []byte, maxLen, maxDistance int) []byte 
 	return out
 }
 
+// matchSpan is the target range [start, end) of a match on one alignment.
+type matchSpan struct{ start, end int }
+
+// matchEnds remembers, per alignment (source position - target position),
+// the last match compared. Every position inside it, on the same
+// alignment, matches up to the same end, so chainMatches needn't compare
+// those bytes again. Without this, long runs such as padding cost time
+// quadratic in their length: each position compares the whole rest of the
+// run, for every candidate.
+type matchEnds map[int]matchSpan
+
+// maxMatchEnds bounds a matchEnds: it is only a shortcut, so forgetting
+// everything is always safe.
+const maxMatchEnds = 1 << 16
+
 // chainMatches returns the matches (all at least 4 bytes) for target[q:]
-// along one hash chain, up to optChain candidates.
-func chainMatches(head map[uint32]int32, next []int32, src, target []byte, q int) []match {
+// along one hash chain, up to optChain candidates. ends must be used with
+// one src and target only.
+func chainMatches(head map[uint32]int32, next []int32, src, target []byte, q int, ends matchEnds) []match {
 	if q+4 > len(target) {
 		return nil
 	}
@@ -289,7 +309,16 @@ func chainMatches(head map[uint32]int32, next []int32, src, target []byte, q int
 	}
 	var out []match
 	for probes := 0; c >= 0 && probes < optChain; probes, c = probes+1, next[c] {
-		if n := matchLen(src, int(c), target, q, len(target)-q); n >= 4 {
+		alignment := int(c) - q
+		span, known := ends[alignment]
+		if !known || q < span.start || q >= span.end {
+			if len(ends) >= maxMatchEnds {
+				clear(ends)
+			}
+			span = matchSpan{q, q + matchLen(src, int(c), target, q, len(target)-q)}
+			ends[alignment] = span
+		}
+		if n := span.end - q; n >= 4 {
 			out = append(out, match{int(c), n})
 		}
 	}
@@ -298,9 +327,8 @@ func chainMatches(head map[uint32]int32, next []int32, src, target []byte, q int
 
 // matchLengths lists the lengths tried for a match of length mlen: every
 // length up to optPrefixes, the longest length with each opcode-varint
-// size (31, 4095, ...) below mlen, and mlen itself.
-func matchLengths(mlen int) []int {
-	var ks []int
+// size (31, 4095, ...) below mlen, and mlen itself, appended to ks.
+func matchLengths(ks []int, mlen int) []int {
 	for k := 2; k <= min(mlen, optPrefixes); k++ {
 		ks = append(ks, k)
 	}
