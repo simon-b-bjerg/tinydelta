@@ -18,6 +18,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from typing import List, Optional, Union
 
 __all__ = ["encode", "decode", "Patch", "Error", "TooLargeError", "MAX_SIZE", "binary_path", "__version__"]
 
@@ -25,6 +26,9 @@ __version__ = "0.0.0.dev0"  # replaced in release wheels
 
 #: Largest dictionary or target the format supports: 2**30 - 1 bytes.
 MAX_SIZE = (1 << 30) - 1
+
+# What dictionaries, targets and patches may be.
+_BytesLike = Union[bytes, bytearray, memoryview]
 
 
 class Error(Exception):
@@ -37,7 +41,7 @@ class TooLargeError(Error):
     exceeds MAX_SIZE."""
 
 
-def binary_path():
+def binary_path() -> str:
     """Returns the path of the tinydelta command-line tool this package runs:
     $TINYDELTA_BIN if set, else the one bundled in the wheel."""
     override = os.environ.get("TINYDELTA_BIN")
@@ -60,14 +64,16 @@ class Patch(bytes):
     the result then against the dictionary. Send passes with the patch;
     it is not part of it. decode reads it from a Patch."""
 
-    def __new__(cls, data, passes=1):
+    passes: int
+
+    def __new__(cls, data: _BytesLike, passes: int = 1) -> "Patch":
         patch = super().__new__(cls, data)
         patch.passes = passes
         return patch
 
 
-def encode(dictionary, target, *, greedy=False, max_instruction_len=0,
-           coder_tables=0, window=0, two_pass=False):
+def encode(dictionary: _BytesLike, target: _BytesLike, *, greedy: bool = False, max_instruction_len: int = 0,
+           coder_tables: int = 0, window: int = 0, two_pass: bool = False) -> Patch:
     """Returns the smallest Patch that turns dictionary into target (both
     bytes-like) and that the device's decoder, described by the options,
     can decode.
@@ -107,7 +113,7 @@ def encode(dictionary, target, *, greedy=False, max_instruction_len=0,
         return Patch(result.stdout, passes)
 
 
-def decode(dictionary, patch, *, max_size=None, passes=None):
+def decode(dictionary: _BytesLike, patch: _BytesLike, *, max_size: Optional[int] = None, passes: Optional[int] = None) -> bytes:
     """Applies patch to dictionary (both bytes-like) and returns the target.
 
     passes is how many times the patch is decoded, 1 or 2 (a two-pass
@@ -134,14 +140,14 @@ def decode(dictionary, patch, *, max_size=None, passes=None):
         return _run(args + [dict_file, "-"], stdin=bytes(patch)).stdout
 
 
-def _write(directory, name, data):
+def _write(directory: str, name: str, data: _BytesLike) -> str:
     path = os.path.join(directory, name)
     with open(path, "wb") as f:
         f.write(data)
     return path
 
 
-def _run(args, stdin=b""):
+def _run(args: List[str], stdin: bytes = b"") -> "subprocess.CompletedProcess[bytes]":
     result = subprocess.run([binary_path()] + args, input=stdin, capture_output=True)
     if result.returncode != 0:
         message = result.stderr.decode("utf-8", "replace").strip()
