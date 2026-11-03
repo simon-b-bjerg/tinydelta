@@ -627,6 +627,9 @@ tinydelta_result_t tinydelta_decode(const uint8_t *p_dict, uint32_t dict_len,
 
 Writes the target into `p_target` and sets `*p_target_len`. It fails
 with `TINYDELTA_ERR_TOO_LARGE` rather than write past `target_cap`.
+`p_dict` and `p_target` must be valid pointers even when their size is 0,
+as they go to `memcpy`: for an empty dictionary, pass any buffer with
+`dict_len` 0.
 With `TINYDELTA_CODER`, `tinydelta_decode_coded` takes two more
 arguments, a buffer for a coded patch's tables and its size, and reads
 plain and coded patches.
