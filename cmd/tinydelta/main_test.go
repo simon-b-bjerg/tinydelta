@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/simon-b-bjerg/tinydelta"
 )
@@ -127,6 +128,36 @@ func TestDecodeMaxSize(t *testing.T) {
 	}
 	if r := runCLI([]byte(patch), "decode", "-max-size", itoa(len(want)), dict, "-"); r.code != exitOK {
 		t.Errorf("decode with -max-size exactly the target size: %+v", r)
+	}
+}
+
+// TestDecodeTwoPassMaxSize checks that -max-size also bounds the first
+// pass: these 9 bytes expand to almost 1 GiB if nothing stops them.
+func TestDecodeTwoPassMaxSize(t *testing.T) {
+	_, dict, _ := writeFiles(t)
+	patch := []byte{0x01, 0x05, 0x00, 0xFB, 0xFF, 0xFF, 0xFF, 0x0F, 0x01}
+	start := time.Now()
+	r := runCLI(patch, "decode", "-two-pass", "-max-size", "100", dict, "-")
+	if r.code != exitFailure || !strings.Contains(r.stderr, "size limit exceeded") {
+		t.Errorf("decode -two-pass -max-size 100: %+v", r)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("took %v: the first pass wasn't stopped early", elapsed)
+	}
+}
+
+// TestFirstPassLimit checks the limit and where it stops at MaxSize.
+func TestFirstPassLimit(t *testing.T) {
+	for _, c := range []struct{ maxSize, want int }{
+		{1, 4104},
+		{100, 4896},
+		{0, tinydelta.MaxSize},
+		{tinydelta.MaxSize, tinydelta.MaxSize},
+		{tinydelta.MaxSize / 8, tinydelta.MaxSize},
+	} {
+		if got := firstPassLimit(c.maxSize); got != c.want {
+			t.Errorf("firstPassLimit(%d) = %d, want %d", c.maxSize, got, c.want)
+		}
 	}
 }
 

@@ -505,7 +505,8 @@ encoder returns the smallest patch it can decode:
 | `-two-pass` | can decode twice ([Two-pass patches](#two-pass-patches)); prints `passes 1` or `passes 2` | one pass |
 
 `decode -max-size` rejects patches whose output would exceed
-the given size. The exit status is 0 on success, 1 on failure and 2 on
+the given size; with `-two-pass` it also caps the first pass, at 8 times
+that size plus 4 KB, enough for any valid intermediate patch. The exit status is 0 on success, 1 on failure and 2 on
 a usage error.
 
 ## Go library
