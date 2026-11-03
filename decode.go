@@ -27,12 +27,10 @@ func Decode(dict, patch []byte) ([]byte, error) {
 	return DecodeReaderLimit(dict, bytes.NewReader(patch), MaxSize)
 }
 
-// DecodeReader is Decode for a patch available only as a stream: it reads
-// exactly as many bytes as the patch needs and no more, so it composes
-// directly with another stream decoder instead of requiring the whole
-// patch to be buffered first (e.g. decoding straight off a network or
-// flash read, a chunk at a time). Malformed input returns an error
-// rather than panicking.
+// DecodeReader is Decode for a patch available only as a stream, so it
+// needn't be buffered first. A patch has no end marker, so it reads r to
+// EOF: r must hold the patch and nothing after it (see io.LimitReader).
+// Malformed input returns an error rather than panicking.
 func DecodeReader(dict []byte, r io.Reader) ([]byte, error) {
 	return DecodeReaderLimit(dict, r, MaxSize)
 }
