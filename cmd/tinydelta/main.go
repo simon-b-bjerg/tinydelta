@@ -204,6 +204,7 @@ func encodeCommand(args []string, stdout, stderr io.Writer) int {
 	if *verbose {
 		fmt.Fprintf(stderr, "dictionary %d B, target %d B -> patch %d B (%s of target)\n",
 			len(dict), len(target), len(patch.Bytes), percent(len(patch.Bytes), len(target)))
+		fmt.Fprintln(stderr, tinydelta.DescribePatch(patch.Bytes))
 	}
 	return exitOK
 }

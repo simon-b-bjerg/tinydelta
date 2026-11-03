@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // Coded patches: the instruction stream of a version-1 or version-2 patch,
@@ -504,4 +505,48 @@ func codedLayoutsWithin(ram int) []int {
 		}
 	}
 	return layouts
+}
+
+// DescribePatch summarises a patch's parts in bytes, for tinydelta encode
+// -v: for a coded patch the coder's layout, a relocation rule table or its
+// CRC, the relocation map (entries, data runs, RAM ranges) and the RAM
+// the decoder keeps it in, and the coded instruction stream.
+func DescribePatch(patch []byte) string {
+	if len(patch) < 2 || (patch[0] != codedFlag|FormatVersion && patch[0] != codedFlag|FormatVersion2) {
+		return fmt.Sprintf("plain patch: %d B", len(patch))
+	}
+	r, err := newCodedReader(patch, nil)
+	var b strings.Builder
+	fmt.Fprintf(&b, "coded patch, tables %d B: header 2 B", CodedTablesSize(int(patch[1]&3)))
+	used := 2
+	if err == nil && r.reloc != nil {
+		m := r.reloc
+		table := 0
+		if m.arch() == relocationRules {
+			table = 2
+			if m.ship {
+				table = len(appendVarint(nil, uint64(len(m.rules.table)))) + len(m.rules.table)
+				fmt.Fprintf(&b, ", rule table %d B (%s)", table, m.rules.name)
+			} else {
+				fmt.Fprintf(&b, ", rule table CRC 2 B")
+			}
+		}
+		base := len(appendVarint(nil, uint64(m.base)))
+		entries := len(appendEntries(nil, m.entries))
+		runs, outside := 0, 0
+		if m.carriesLists() {
+			runs = len(appendVarint(nil, uint64(len(m.data))))
+			end := uint32(0)
+			for _, d := range m.data {
+				runs += len(appendVarint(nil, uint64(d.start-end))) + len(appendVarint(nil, uint64(d.length)))
+				end = d.start + d.length
+			}
+			outside = len(appendEntries(nil, m.outside))
+		}
+		fmt.Fprintf(&b, "; relocation map %d B: base %d B, %d entries %d B, %d data runs %d B, %d RAM ranges %d B (decoder RAM %d B after the tables)",
+			base+entries+runs+outside, base, len(m.entries), entries, len(m.data), runs, len(m.outside), outside, m.ramSize())
+		used += table + base + entries + runs + outside
+	}
+	fmt.Fprintf(&b, "; instruction stream %d B", len(patch)-used)
+	return b.String()
 }

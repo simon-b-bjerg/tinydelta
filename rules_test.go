@@ -215,6 +215,11 @@ func TestRulesShippedAndNamed(t *testing.T) {
 		t.Fatalf("shipped table: %v", err)
 	}
 	t.Logf("named %d B, shipped %d B (table %d B)", len(named.Bytes), len(shipped.Bytes), len(custom.Table()))
+	for _, p := range [][]byte{named.Bytes, shipped.Bytes} {
+		if d := DescribePatch(p); !strings.Contains(d, "relocation map") || !strings.Contains(d, "rule table") {
+			t.Errorf("DescribePatch: %s", d)
+		}
+	}
 	// The built-in tables keep their numbers, which the C decoders know.
 	builtin, _ := EncodeWith(old, new, EncodeOptions{CoderTables: tables, Relocation: RelocationMSP430X, ImageBase: 0x10000})
 	if builtin.Bytes[1]>>2&3 != byte(RelocationMSP430X) {
