@@ -290,8 +290,8 @@ func TestEncodeOptionsEverywhere(t *testing.T) {
 		if !strings.Contains(usage.String(), "-"+n.flag+" ") && !strings.Contains(usage.String(), "-"+n.flag+"\n") {
 			t.Errorf("EncodeOptions.%s: encode has no -%s flag", name, n.flag)
 		}
-		if !strings.Contains(string(python), n.python+"=") || !strings.Contains(string(python), `"-`+n.flag+`"`) {
-			t.Errorf("EncodeOptions.%s: Python encode() lacks %s= or doesn't pass -%s", name, n.python, n.flag)
+		if !strings.Contains(string(python), n.python+":") || !strings.Contains(string(python), `"-`+n.flag+`"`) {
+			t.Errorf("EncodeOptions.%s: Python encode() lacks %s or doesn't pass -%s", name, n.python, n.flag)
 		}
 	}
 	if len(encodeOptionNames) != fields.NumField() {
