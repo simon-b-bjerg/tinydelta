@@ -19,6 +19,7 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"strings"
 
 	"github.com/simon-b-bjerg/tinydelta"
 )
@@ -228,7 +229,8 @@ func parseExit(err error) int {
 }
 
 func fail(stderr io.Writer, err error) int {
-	fmt.Fprintln(stderr, "tinydelta:", err)
+	// The library's errors already say where they're from.
+	fmt.Fprintln(stderr, "tinydelta:", strings.TrimPrefix(err.Error(), "tinydelta: "))
 	return exitFailure
 }
 

@@ -131,6 +131,15 @@ func TestDecodeMaxSize(t *testing.T) {
 	}
 }
 
+// TestErrorPrefix checks that errors name the tool once.
+func TestErrorPrefix(t *testing.T) {
+	_, dict, _ := writeFiles(t)
+	r := runCLI([]byte{0x7F}, "decode", dict, "-")
+	if r.code != exitFailure || strings.Count(r.stderr, "tinydelta:") != 1 {
+		t.Errorf("%+v", r)
+	}
+}
+
 // TestFlagAfterFileNames checks that a flag in the output's place is a
 // usage error, not a file of that name.
 func TestFlagAfterFileNames(t *testing.T) {
