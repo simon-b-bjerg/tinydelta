@@ -26,9 +26,20 @@ typedef struct {
 	uint32_t pos, size; /* the file's position; its size, for reads */
 } region_t;
 
+/* Moves to off for reading. Forward by reading, as GNU's MSP430 simulator
+ * can't seek past 64 KB; only ever back to the start. */
 static int place(region_t *r, uint32_t off) {
-	if (off != r->pos && fseek(r->fp, (long)off, SEEK_SET) != 0) return 0;
-	r->pos = off;
+	static uint8_t skipped[256];
+	if (off < r->pos) {
+		if (fseek(r->fp, 0, SEEK_SET) != 0) return 0;
+		r->pos = 0;
+	}
+	while (r->pos < off) {
+		uint32_t n = off - r->pos;
+		if (n > sizeof skipped) n = sizeof skipped;
+		if (fread(skipped, 1, n, r->fp) != n) return 0;
+		r->pos += n;
+	}
 	return 1;
 }
 static int region_rd(void *c, uint32_t off, uint8_t *b, uint32_t n) {
@@ -38,18 +49,27 @@ static int region_rd(void *c, uint32_t off, uint8_t *b, uint32_t n) {
 	r->pos += n;
 	return 0;
 }
-static int region_wr(void *c, uint32_t off, const uint8_t *b, uint32_t n) {
-	region_t *r = c;
-	if (off != r->size) { printf("write not sequential\n"); exit(3); }
-	if (!place(r, off) || fwrite(b, 1, n, r->fp) != n) return 1;
-	r->pos += n;
-	r->size += n;
+
+/* The target: written in order through one handle, read back through
+ * another, unbuffered. */
+static FILE *target_out;
+static region_t target;
+static int target_wr(void *c, uint32_t off, const uint8_t *b, uint32_t n) {
+	(void)c;
+	if (off != target.size) { printf("write not sequential\n"); exit(3); }
+	if (fwrite(b, 1, n, target_out) != n || fflush(target_out) != 0) return 1;
+	target.size += n;
 	return 0;
+}
+static int target_rd(void *c, uint32_t off, uint8_t *b, uint32_t n) {
+	(void)c;
+	clearerr(target.fp);
+	return region_rd(&target, off, b, n);
 }
 
 int main(int argc, char **argv) {
 	unsigned long buffer_size, page_size, tables_size;
-	region_t dict = {0}, patch = {0}, target = {0};
+	region_t dict = {0}, patch = {0};
 	uint32_t n = 0;
 	int use_read, rc;
 	char *rest;
@@ -65,15 +85,17 @@ int main(int argc, char **argv) {
 	tables_size = strtoul(rest, &rest, 10);
 	dict.fp = fopen(argv[2], "rb");
 	patch.fp = fopen(argv[3], "rb");
-	target.fp = fopen(argv[4], "w+b");
-	if (!dict.fp || !patch.fp || !target.fp) return 2;
+	target_out = fopen(argv[4], "wb");
+	target.fp = fopen(argv[4], "rb");
+	if (!dict.fp || !patch.fp || !target_out || !target.fp) return 2;
+	setvbuf(target.fp, NULL, _IONBF, 0);
 	dict.size = (uint32_t)strtoul(argv[6], NULL, 10); /* not asked of the files: a simulator's fseek may not reach their end */
 	patch.size = (uint32_t)strtoul(argv[7], NULL, 10);
 	tinydelta_io_t io = {
 		.patch_read = region_rd, .p_patch_ctx = &patch, .patch_len = patch.size,
 		.dict_read = region_rd, .p_dict_ctx = &dict, .dict_len = dict.size,
-		.target_write = region_wr, .target_read = use_read ? region_rd : NULL,
-		.p_target_ctx = &target, .target_cap = (uint32_t)strtoul(argv[5], NULL, 10),
+		.target_write = target_wr, .target_read = use_read ? target_rd : NULL,
+		.target_cap = (uint32_t)strtoul(argv[5], NULL, 10),
 		.p_buffer = malloc(buffer_size), .buffer_size = (uint32_t)buffer_size, .page_size = (uint32_t)page_size,
 		.p_tables = tables_size ? malloc(tables_size) : NULL, .tables_size = (uint32_t)tables_size,
 	};
@@ -83,7 +105,7 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 	if (n != target.size) { printf("length disagrees with bytes written\n"); return 3; }
-	fclose(target.fp);
+	fclose(target_out);
 	return 0;
 }
 `
