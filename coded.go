@@ -15,9 +15,11 @@ import (
 //
 //	byte 0     0x80 | instruction set (0x81: version 1's, 0x82: version 2's)
 //	byte 1     features: bits 0-1 the table layout (codedLayoutC/B/A), bits
-//	           2-3 the relocation rule (Relocation; 0 none), bits 4-7
-//	           reserved, 0
-//	map        with a relocation rule only: the relocation map (reloc.go)
+//	           2-3 the relocation rule (Relocation; 0 none, 3 a rule
+//	           table, rules.go), bit 4 with 3: the table is in the patch,
+//	           bits 5-7 reserved, 0
+//	map        with a relocation rule only: the rule table or its CRC (3
+//	           only), then the relocation map (reloc.go)
 //	varint     n, the length of the uncoded instruction stream in bytes
 //	rest       the range-coded instruction stream
 //
@@ -400,7 +402,10 @@ func encodeCodedReloc(plain []byte, layout int, reloc *relocMap) []byte {
 	}
 	out := []byte{codedFlag | version, byte(layout)}
 	if reloc != nil {
-		out[1] |= byte(reloc.arch) << 2
+		out[1] |= byte(reloc.arch()) << 2
+		if reloc.arch() == relocationRules && reloc.ship {
+			out[1] |= codedShippedRules
+		}
 		out = reloc.appendHeader(out)
 	}
 	out = appendVarint(out, uint64(len(stream)))
@@ -421,20 +426,21 @@ type codedReader struct {
 	err     error  // the error to return once the bytes before it are read
 }
 
-// newCodedReader reads a coded patch's header.
-func newCodedReader(patch []byte) (*codedReader, error) {
+// newCodedReader reads a coded patch's header; rules is a rule table the
+// patch may name by CRC besides the built-in ones (nil for none).
+func newCodedReader(patch []byte, rules *Rules) (*codedReader, error) {
 	if len(patch) < 2 {
 		return nil, errors.New("tinydelta: coded patch has no features byte")
 	}
 	version, features := patch[0]&^codedFlag, int(patch[1])
-	layout, arch := features&3, Relocation(features>>2&3)
-	if features&^0xF != 0 || layout == 0 || arch > RelocationMSP430X {
+	layout, arch, shipped := features&3, Relocation(features>>2&3), features&codedShippedRules != 0
+	if features&^0x1F != 0 || layout == 0 || (shipped && arch != relocationRules) {
 		return nil, fmt.Errorf("%w: coded patch features 0x%02x", ErrUnsupportedVersion, features)
 	}
 	pos := 2
 	var reloc *relocMap
 	if arch != RelocationNone {
-		m, used, err := parseRelocMap(arch, patch[pos:])
+		m, used, err := parseRelocMap(arch, shipped, patch[pos:], rules)
 		if err != nil {
 			return nil, err
 		}
@@ -478,7 +484,7 @@ func (r *codedReader) Read(p []byte) (int, error) {
 // decodeCoded turns a coded patch back into the plain patch it codes.
 // maxStream caps the uncoded instruction stream's length.
 func decodeCoded(patch []byte, maxStream int) ([]byte, error) {
-	r, err := newCodedReader(patch)
+	r, err := newCodedReader(patch, nil)
 	if err != nil {
 		return nil, err
 	}

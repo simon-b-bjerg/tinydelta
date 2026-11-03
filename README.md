@@ -455,6 +455,16 @@ the calls that moved (the right base explains nearly all). It prints
 counts, offsets and instruction words only, so it can be shared where
 the images can't.
 
+Which instruction forms hold addresses is data, not code: the two rules
+are the rule files [`rules/thumb.yaml`](rules/thumb.yaml) and
+[`rules/msp430x.yaml`](rules/msp430x.yaml) (format and engine:
+[docs/relocation-rules.md](docs/relocation-rules.md), a draft). To try
+another rule, copy one, edit it, and pass it with `-rules` instead of
+`-reloc` to `encode` and `relocstats`; `tinydelta rules check` validates
+a file. Patches made with a file of your own name its table by CRC, so a
+decoder needs that table built in (the C engine for tables is still to
+come), or carry the table with `-ship-rules` (experimental).
+
 On the device, build with `TINYDELTA_CODER = 1` and
 `TINYDELTA_RELOC = TINYDELTA_RELOC_MSP430X` (or `_THUMB`), and add
 `tinydelta_reloc.c`. Nothing else changes: the tables buffer you

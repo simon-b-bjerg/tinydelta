@@ -13,9 +13,9 @@ import (
 // leaves to the patch: experimental, for tuning the relocation rules on
 // images that can't be shared (tinydelta relocstats). It reports counts
 // and instruction words only, no image content beyond those.
-func RelocationStats(dict, target []byte, rule Relocation, base uint32) string {
+func RelocationStats(dict, target []byte, rules *Rules, base uint32) string {
 	var b strings.Builder
-	m := relocMapFrom(dict, target, rule, base).withDataRuns(dict, target).withOutside(dict, target)
+	m := relocMapFrom(dict, target, rules, base).withDataRuns(dict, target).withOutside(dict, target)
 	rd := m.relocate(dict)
 	moved := 0
 	for i := range dict {
@@ -115,19 +115,18 @@ func RelocationStats(dict, target []byte, rule Relocation, base uint32) string {
 		}
 		fmt.Fprintf(&b, "  %5d  0x%04x       0x%04x\n", c.v, c.k.prev, c.k.next)
 	}
-	if rule == RelocationMSP430X {
-		msp430xStats(&b, m, dict, rd, target, base)
-		msp430xBaseCheck(&b, dict, target, base)
-	}
+	fieldStats(&b, m, dict, rd, target)
+	baseCheck(&b, m.rules, dict, target, base)
 	return b.String()
 }
 
-// msp430xStats sorts the address fields relocation left wrong by why: the
-// instruction is in a data run, the decode took it for an operand word,
-// its address isn't in the image, or the map gave it another shift than
-// where the address really moved.
-func msp430xStats(b *strings.Builder, m *relocMap, dict, rd, target []byte, base uint32) {
+// fieldStats sorts the address fields relocation left wrong by why: in a
+// data run, not an instruction start (the sync decode took it for part of
+// another instruction), excluded by unless, an address outside the image
+// with no RAM range, or a shift other than the one the address needed.
+func fieldStats(b *strings.Builder, m *relocMap, dict, rd, target []byte) {
 	const none = int(^uint(0) >> 1)
+	r := m.rules
 	moved := make([]int, len(dict)) // where each old byte really went, from the covers
 	for i := range moved {
 		moved[i] = none
@@ -140,53 +139,64 @@ func msp430xStats(b *strings.Builder, m *relocMap, dict, rd, target []byte, base
 			}
 		}
 	}
-	word := func(img []byte, i int) uint32 { return uint32(img[i]) | uint32(img[i+1])<<8 }
 	type pair struct{ mapShift, needed int64 }
 	reasons := map[string]int{}
 	wrong := map[pair]int{}
-	rejected := map[[4]uint16]int{}
+	rejected := map[[4]uint32]int{}
 	right := 0
 	for _, c := range covers {
 		if c.extra > 0 {
 			continue
 		}
-		for k := 0; k+4 <= c.length; k++ {
-			h, n := c.oldPos+k, c.newPos+k
-			l, f, nf := msp430xCandidate(&relocMap{arch: m.arch, base: m.base, entries: m.entries}, dict, base, h)
-			if l == 0 || k+l > c.length {
+		for k := 0; k < c.length; k++ {
+			p, n := c.oldPos+k, c.newPos+k
+			if (m.base+uint32(p))%uint32(r.unit) != 0 {
 				continue
 			}
-			for i := 0; i < nf; i++ {
-				at := f[i].lo - h
-				oldAddr := word(dict, f[i].lo) | (word(dict, h)>>uint32(f[i].shift)&0xF)<<16
-				newAddr := word(target, n+at) | (word(target, n)>>uint32(f[i].shift)&0xF)<<16
-				if oldAddr == newAddr {
+			i := r.first(ruleCode, dict, m.base, p)
+			if i < 0 || len(r.lists[ruleCode][i].addrs) == 0 || k+r.lists[ruleCode][i].size > c.length {
+				continue
+			}
+			ru := &r.lists[ruleCode][i]
+			if !r.sameBesideAddresses(ru, dict, p, target, n) {
+				continue // another instruction
+			}
+			for _, a := range ru.addrs {
+				oldV, newV := r.join(dict, p, a), r.join(target, n, a)
+				if oldV == newV {
 					continue
 				}
-				if word(rd, f[i].lo) == word(target, n+at) && word(rd, h)>>uint32(f[i].shift)&0xF == word(target, n)>>uint32(f[i].shift)&0xF {
+				if r.join(rd, p, a) == newV {
 					right++
 					continue
 				}
-				switch lv, _, _ := msp430xValid(m, dict, base, h); {
-				case m.inData(h):
+				switch {
+				case m.inData(p):
 					reasons["in a data run"]++
-				case lv == 0:
-					reasons["taken for an operand word by the instruction decode"]++
-					var ctx [4]uint16
+				case r.sync > 0 && !r.starts(m, dict, p):
+					reasons["taken for part of another instruction by the instruction-start decode"]++
+					var ctx [4]uint32
 					for j := range ctx {
-						if p := h - 8 + 2*j; p >= 0 {
-							ctx[j] = uint16(word(dict, p))
+						if q := p - (4-j)*r.unit; q >= 0 && q+r.wordBytes <= len(dict) {
+							ctx[j] = r.word(dict, q, 0)
 						}
 					}
 					rejected[ctx]++
-				case oldAddr < base || uint64(oldAddr-base) >= uint64(len(dict)):
-					reasons["address outside the old image"]++
+				case r.ruleAt(m, dict, p) == nil:
+					reasons["excluded by unless"]++
+				case ru.relative:
+					reasons["relative: the map's shifts don't give the new offset"]++
 				default:
-					s := m.addressShift(oldAddr, len(dict))
-					needed := int64(newAddr) - int64(oldAddr)
-					if mv := moved[oldAddr-base]; mv != none && int64(mv) == needed {
+					a64 := int64(oldV)
+					s := m.shiftOf(a64, len(dict), ru.space)
+					needed := int64(newV) - a64
+					inside := inImage(m.base, len(dict), uint64(oldV))
+					switch {
+					case !inside && s == 0:
+						reasons["address outside the image, in no RAM range"]++
+					case inside && moved[oldV-m.base] != none && int64(moved[oldV-m.base]) == needed:
 						reasons["map shift differs from where the address really moved"]++
-					} else {
+					default:
 						reasons["map shift differs, and the address's target changed too"]++
 					}
 					wrong[pair{s, needed}]++
@@ -194,12 +204,14 @@ func msp430xStats(b *strings.Builder, m *relocMap, dict, rd, target []byte, base
 			}
 		}
 	}
-	fmt.Fprintf(b, "\nMSP430X address fields that moved: %d relocated right; left wrong:\n", right)
+	fmt.Fprintf(b, "\naddress fields that moved: %d relocated right; left wrong:\n", right)
 	var rk []string
 	for k := range reasons {
 		rk = append(rk, k)
 	}
-	sort.Slice(rk, func(i, j int) bool { return reasons[rk[i]] > reasons[rk[j]] })
+	sort.Slice(rk, func(i, j int) bool {
+		return reasons[rk[i]] > reasons[rk[j]] || (reasons[rk[i]] == reasons[rk[j]] && rk[i] < rk[j])
+	})
 	for _, k := range rk {
 		fmt.Fprintf(b, "  %6d  %s\n", reasons[k], k)
 	}
@@ -211,7 +223,9 @@ func msp430xStats(b *strings.Builder, m *relocMap, dict, rd, target []byte, base
 	for k, v := range wrong {
 		ps = append(ps, pc{k, v})
 	}
-	sort.Slice(ps, func(i, j int) bool { return ps[i].v > ps[j].v })
+	sort.Slice(ps, func(i, j int) bool {
+		return ps[i].v > ps[j].v || (ps[i].v == ps[j].v && ps[i].p.needed < ps[j].p.needed)
+	})
 	fmt.Fprintf(b, "\nwrong shift, by map shift and the shift needed (top 15):\n  count  map  needed\n")
 	for i, p := range ps {
 		if i == 15 {
@@ -220,28 +234,34 @@ func msp430xStats(b *strings.Builder, m *relocMap, dict, rd, target []byte, base
 		fmt.Fprintf(b, "  %5d  %+d  %+d\n", p.v, p.p.mapShift, p.p.needed)
 	}
 	type rc struct {
-		k [4]uint16
+		k [4]uint32
 		v int
 	}
 	var rs []rc
 	for k, v := range rejected {
 		rs = append(rs, rc{k, v})
 	}
-	sort.Slice(rs, func(i, j int) bool { return rs[i].v > rs[j].v })
-	fmt.Fprintf(b, "\ntaken for operands, by the 4 words before the instruction (top 15):\n")
-	for i, r := range rs {
+	sort.Slice(rs, func(i, j int) bool {
+		return rs[i].v > rs[j].v || (rs[i].v == rs[j].v && fmt.Sprint(rs[i].k) < fmt.Sprint(rs[j].k))
+	})
+	fmt.Fprintf(b, "\ntaken for part of another instruction, by the 4 words before it (top 15):\n")
+	for i, x := range rs {
 		if i == 15 {
 			break
 		}
-		fmt.Fprintf(b, "  %5d  %04x %04x %04x %04x\n", r.v, r.k[0], r.k[1], r.k[2], r.k[3])
+		fmt.Fprintf(b, "  %5d ", x.v)
+		for _, w := range x.k {
+			fmt.Fprintf(b, " %0*x", 2*r.wordBytes, w)
+		}
+		fmt.Fprintln(b)
 	}
 }
 
-// msp430xBaseCheck tests the image base: for each CALLA #imm whose callee
-// address changed, the base is right where the old image's bytes at the
-// callee moved by that change. It reports how many calls the given base
-// explains and the bases that explain most.
-func msp430xBaseCheck(b *strings.Builder, dict, target []byte, base uint32) {
+// baseCheck tests the image base: for each absolute address in a code rule
+// whose value changed, the base is right where the old image's bytes at
+// that address moved by the same amount. It reports how many the given
+// base explains and the bases near it that explain most.
+func baseCheck(b *strings.Builder, r *Rules, dict, target []byte, base uint32) {
 	const none = int(^uint(0) >> 1)
 	moved := make([]int, len(dict))
 	for i := range moved {
@@ -255,61 +275,70 @@ func msp430xBaseCheck(b *strings.Builder, dict, target []byte, base uint32) {
 			}
 		}
 	}
-	type call struct {
+	type addr struct {
 		addr   uint32
 		needed int
 	}
-	var calls []call
+	var addrs []addr
 	for _, c := range covers {
 		if c.extra > 0 {
 			continue
 		}
-		for k := 0; k+4 <= c.length; k++ {
-			h, n := c.oldPos+k, c.newPos+k
-			w := uint32(dict[h]) | uint32(dict[h+1])<<8
-			if w&0xFFF0 != 0x13B0 || uint32(target[n])|uint32(target[n+1])<<8 != w&0xFFF0|uint32(target[n])&0xF {
+		for k := 0; k < c.length; k++ {
+			p, n := c.oldPos+k, c.newPos+k
+			if (base+uint32(p))%uint32(r.unit) != 0 {
 				continue
 			}
-			oldAddr := (w&0xF)<<16 | uint32(dict[h+2]) | uint32(dict[h+3])<<8
-			newAddr := uint32(target[n]&0xF)<<16 | uint32(target[n+2]) | uint32(target[n+3])<<8
-			if oldAddr != newAddr {
-				calls = append(calls, call{oldAddr, int(newAddr) - int(oldAddr)})
+			i := r.first(ruleCode, dict, base, p)
+			if i < 0 {
+				continue
+			}
+			ru := &r.lists[ruleCode][i]
+			if len(ru.addrs) == 0 || ru.relative || k+ru.size > c.length || !r.sameBesideAddresses(ru, dict, p, target, n) {
+				continue
+			}
+			for _, a := range ru.addrs {
+				if o, nw := r.join(dict, p, a), r.join(target, n, a); o != nw {
+					addrs = append(addrs, addr{o, int(nw) - int(o)})
+				}
 			}
 		}
 	}
-	explained := func(bs uint32) int {
+	explained := func(bs int64) int {
 		k := 0
-		for _, c := range calls {
-			if o := int64(c.addr) - int64(bs); o >= 0 && o < int64(len(dict)) && moved[o] == c.needed {
+		for _, c := range addrs {
+			if o := int64(c.addr) - bs; o >= 0 && o < int64(len(dict)) && moved[o] == c.needed {
 				k++
 			}
 		}
 		return k
 	}
-	// Bases explaining the most calls, as ranges of neighbouring bases.
+	// Bases explaining the most addresses within 128 KB of the given one,
+	// as ranges of neighbouring bases.
 	type rng struct {
-		from, to uint32
+		from, to int64
 		k        int
 	}
 	var rs []rng
-	for bs := uint32(0); bs < 0x40000; bs += 2 {
+	step := int64(r.unit)
+	for bs := max(0, int64(base)-0x20000) / step * step; bs <= int64(base)+0x20000; bs += step {
 		k := explained(bs)
 		if k == 0 {
 			continue
 		}
-		if l := len(rs) - 1; l >= 0 && rs[l].to+2 == bs && rs[l].k == k {
+		if l := len(rs) - 1; l >= 0 && rs[l].to+step == bs && rs[l].k == k {
 			rs[l].to = bs
 			continue
 		}
 		rs = append(rs, rng{bs, bs, k})
 	}
 	sort.Slice(rs, func(i, j int) bool { return rs[i].k > rs[j].k || (rs[i].k == rs[j].k && rs[i].from < rs[j].from) })
-	fmt.Fprintf(b, "\nimage base check: %d CALLA #imm whose callee moved; base 0x%05x explains %d of them; best bases:", len(calls), base, explained(base))
-	for i, r := range rs {
+	fmt.Fprintf(b, "\nimage base check: %d absolute addresses that changed; base 0x%05x explains %d of them; best bases:", len(addrs), base, explained(int64(base)))
+	for i, x := range rs {
 		if i == 5 {
 			break
 		}
-		fmt.Fprintf(b, " 0x%05x-0x%05x (%d)", r.from, r.to, r.k)
+		fmt.Fprintf(b, " 0x%05x-0x%05x (%d)", x.from, x.to, x.k)
 	}
 	fmt.Fprintf(b, "\n")
 }

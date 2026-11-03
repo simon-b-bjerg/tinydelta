@@ -1,7 +1,10 @@
 # Relocation rules
 
-Status: **draft for review**. Nothing here is implemented yet; the format
-will change until it is.
+Status: **draft**. The Go side is implemented (rules.go, yamlsubset.go,
+`tinydelta rules`, `-rules`): the rule files relocate byte for byte as the
+hand-written rules on 66 real firmware updates and 40,000 random images.
+The C decoders still run the hand-written rules (TINYDELTA_RELOC 1 and 2),
+which the built-in tables reproduce; the C table engine comes next.
 
 Relocation (README, "Relocation") rewrites the addresses in the old image
 before the patch applies, through a map of how code and data moved. Which
@@ -58,7 +61,12 @@ engine writes `0x394DA` back through the same slices: `w0[3:0] = 3`,
 
 YAML, one file per instruction set; [`rules/msp430x.yaml`](../rules/msp430x.yaml)
 and [`rules/thumb.yaml`](../rules/thumb.yaml) are complete examples.
-Unknown keys are errors.
+Unknown keys are errors. tinydelta reads a strict subset of YAML (its own
+reader, no dependency): block mappings and lists by indentation,
+single-line `{...}` and `[...]`, plain and quoted strings, `#` comments.
+Anchors, tags, multi-line strings and tabs are errors with a line number.
+Quote any text with ` #` in it (`name: "CALLA #imm20"`), as YAML reads
+the rest as a comment.
 
 ### Header
 
@@ -141,7 +149,10 @@ inside it is still found.
 
 At each `p` the engine takes the `data` list if `p` is in a data run,
 else the `code` list, and finds the first rule that matches (its `align`,
-conditions and words inside the image). Then:
+and its conditions, on words inside the image; with `require`, also its
+address). A rule that matches but whose `size` runs past the end of the
+image (an instruction cut off) is still the one chosen, and moves
+nothing. Then:
 
 1. no rule, or an exclusion: nothing at `p`;
 2. a code rule with `sync > 0` and `p` not an [instruction start](#sync):
@@ -190,9 +201,11 @@ above; it is written back if it changed and fits (in `sign_extend` bits,
 fixed bits included).
 
 Writing back puts each slice's bits into its word and leaves every other
-bit alone. Positions are handled in increasing order, so if two writes
-touch one byte, the later position's wins (the shipped rules never do).
-The decoder writes only the bytes inside the span.
+bit alone, so where two overlapping matches both move addresses (data
+that happens to look like two instructions), each keeps the other's
+bits; only bits both write go to the later position. The hand-written
+MSP430X rule rewrote the whole first word from the raw image there, and
+was changed to match. The decoder writes only the bytes inside the span.
 
 ## Binary table
 
@@ -216,10 +229,14 @@ condition = word (1: bits 0-6 index, bit 7 negate) + value (word bytes) + mask (
 slice     = word (1: 0xFF for fixed bits) + hi (1) + lo (1)        fixed bits: count in hi, value in lo
 ```
 
-Exact field order may still change; the CRC is over these bytes.
+Every rule has the same layout: flags, align, size, `n` (a prefix's skip
+or a length rule's length, else 0), the condition count and conditions,
+the addresses, the relative fields, the unless count and entries. The
+CRC is CRC-16/CCITT-FALSE (polynomial 0x1021, initial 0xFFFF) over the
+whole table.
 
-Size: `rules/msp430x.yaml` compiles to roughly 600 B (lengths about 170,
-code rules about 400, data about 25), `rules/thumb.yaml` to about 40 B.
+Size: `rules/msp430x.yaml` compiles to 717 B: header 9, prefix 11,
+lengths 264 (24 rules), code 407 (20), data 26. `rules/thumb.yaml`: 55 B.
 
 ## In the patch
 
@@ -228,16 +245,17 @@ The coded header's features byte changes meaning for relocation:
 | bits | meaning |
 |---|---|
 | 0-1 | layout, as before |
-| 2-3 | 0 no relocation; **1 relocation by rule table**; 2, 3 reserved (the hand-written Thumb and MSP430X rules go away; the format was never released) |
-| 4 | the rule table is in the patch |
+| 2-3 | 0 no relocation; 1 the built-in Thumb table; 2 the built-in MSP430X table; **3 another rule table** (named by CRC, or shipped) |
+| 4 | with 3: the rule table is in the patch |
 | 5-7 | reserved, 0 |
 
-After the features byte, with relocation: if bit 4 is set, the table
+Values 1 and 2 keep the patches the current C decoders read. After the
+features byte, with value 3: if bit 4 is set, the table
 (varint length, then the bytes); else a 2-byte CRC-16 (CCITT, little-endian)
 of the table the encoder used, which must equal the decoder's built-in
 table's, else `TINYDELTA_ERR_VERSION`. Then the map as now (base,
-entries, data runs, RAM ranges); data runs and RAM ranges are always
-present, empty where unused.
+entries, data runs, RAM ranges); data runs and RAM ranges are present
+for values 2 and 3, empty where unused.
 
 A shipped table goes into the tables buffer before the map: about 600 B for
 MSP430X, on top of the coder's tables and the map. It is only for
@@ -281,8 +299,10 @@ tinydelta relocstats -rules rules/msp430x.yaml -base 0xDF80 old.bin new.bin
 ```
 
 `-reloc thumb` and `-reloc msp430x` stay as shorthands for the two files,
-which are built into the CLI. Go: `EncodeOptions.Rules` (a compiled
-table, from `ParseRules`); Python: `rules=` (a path).
+which are built into the CLI; `decode -rules FILE` decodes a patch that
+names a table by CRC. Go: `ParseRules`, `BuiltinRules`,
+`EncodeOptions.Rules` and `ShipRules`, `DecodeRules`; Python: `rules=`
+(a path) and `ship_rules=` in `encode`, `rules=` in `decode`.
 
 The C decoder is built with `TINYDELTA_RELOC = 1` and a built-in table
 (`TINYDELTA_RELOC_RULES`, the generated header); `TINYDELTA_RELOC_SHIPPED

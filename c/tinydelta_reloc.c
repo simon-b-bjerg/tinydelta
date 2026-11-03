@@ -142,14 +142,16 @@ static uint32_t raw16(const tinydelta_reloc_t *p_reloc, uint32_t index) {
 }
 
 /* Stores a relocated 16-bit word at index: the bytes of it in the span. */
-static void put16(const span_t *p_span, uint32_t index, uint32_t word) {
+static void put16(const span_t *p_span, uint32_t index, uint32_t word, uint32_t mask) {
     for (uint32_t byte_index = 0u; byte_index < 2u; byte_index++) {
         uint32_t position = (index + byte_index) - p_span->offset; /* wraps around below the span */
 
         if (position < p_span->length) {
-            p_span->p_out[position] = (uint8_t)word; /* Cast: keeps the low byte. */
+            /* Cast: keeps the low byte. Only the mask's bits change, so moved bits of an overlapping instruction stay. */
+            p_span->p_out[position] = (uint8_t)((p_span->p_out[position] & ~mask) | (word & mask));
         }
         word >>= 8;
+        mask >>= 8;
     }
 }
 
@@ -185,8 +187,8 @@ void tinydelta_reloc_span(const tinydelta_reloc_t *p_reloc, uint32_t offset, uin
             }
             if ((next != branch) && ((next & 1u) == 0u) && ((next + 0x400000u) < 0x800000u)) {
                 field = next >> 1;
-                put16(&span, h, 0xF000u | ((field >> 11) & 0x7FFu));
-                put16(&span, h + 2u, 0xF800u | (field & 0x7FFu));
+                put16(&span, h, 0xF000u | ((field >> 11) & 0x7FFu), 0xFFFFu);
+                put16(&span, h + 2u, 0xF800u | (field & 0x7FFu), 0xFFFFu);
             }
         } else if ((((p_reloc->base + h) & 3u) == 0u) && even_fits(p_reloc, h, 4u) && !((h >= 2u) && thumb_bl(p_reloc, h - 2u)) && !thumb_bl(p_reloc, h + 2u)) {
             /* An aligned 32-bit pointer into the image that no BL overlaps. */
@@ -195,8 +197,8 @@ void tinydelta_reloc_span(const tinydelta_reloc_t *p_reloc, uint32_t offset, uin
 
             if (shift != 0u) {
                 pointer += shift;
-                put16(&span, h, pointer);
-                put16(&span, h + 2u, pointer >> 16);
+                put16(&span, h, pointer, 0xFFFFu);
+                put16(&span, h + 2u, pointer >> 16, 0xFFFFu);
             }
         } else {
             /* nothing to relocate at h */
@@ -360,8 +362,8 @@ void tinydelta_reloc_span(const tinydelta_reloc_t *p_reloc, uint32_t offset, uin
 
                 pointer += shift;
                 if ((shift != 0u) && (pointer < 0x100000u)) {
-                    put16(&span, h, pointer);
-                    put16(&span, h + 2u, pointer >> 16);
+                    put16(&span, h, pointer, 0xFFFFu);
+                    put16(&span, h + 2u, pointer >> 16, 0xFFFFu);
                 }
             }
             continue;
@@ -381,11 +383,10 @@ void tinydelta_reloc_span(const tinydelta_reloc_t *p_reloc, uint32_t offset, uin
 
                 address += shift;
                 if ((shift != 0u) && (address < 0x100000u)) {
-                    w0 = (w0 & ~(0xFu << high)) | ((address >> 16) << high);
-                    put16(&span, at, address);
+                    put16(&span, h, (address >> 16) << high, 0xFu << high); /* the high bits only */
+                    put16(&span, at, address, 0xFFFFu);
                 }
             }
-            put16(&span, h, w0);
         }
     }
 }

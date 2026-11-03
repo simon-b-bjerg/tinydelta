@@ -148,7 +148,7 @@ func TestRelocationRoundTrip(t *testing.T) {
 		if reloc.Bytes[1]>>2 != byte(c.arch) {
 			t.Fatalf("%v: relocation not chosen (features 0x%02x)", c.arch, reloc.Bytes[1])
 		}
-		if r, _ := newCodedReader(reloc.Bytes); c.arch == RelocationMSP430X && len(r.reloc.data) == 0 {
+		if r, _ := newCodedReader(reloc.Bytes, nil); c.arch == RelocationMSP430X && len(r.reloc.data) == 0 {
 			t.Errorf("%v: no data runs for the pointer table", c.arch)
 		}
 		if len(reloc.Bytes)*2 > len(plain.Bytes) {
@@ -178,25 +178,25 @@ func TestRelocationOptions(t *testing.T) {
 }
 
 func TestRelocationMapHeader(t *testing.T) {
-	m := &relocMap{arch: RelocationThumb, base: 0x08000000, entries: []relocEntry{{16, 100, -8}, {116, 4, 32}, {1000, 1 << 20, 1 << 30}}}
+	m := &relocMap{rules: builtinThumb, base: 0x08000000, entries: []relocEntry{{16, 100, -8}, {116, 4, 32}, {1000, 1 << 20, 1 << 30}}}
 	b := m.appendHeader(nil)
-	got, n, err := parseRelocMap(RelocationThumb, b)
+	got, n, err := parseRelocMap(RelocationThumb, false, b, nil)
 	if err != nil || n != len(b) || fmt.Sprint(got) != fmt.Sprint(m) {
 		t.Fatalf("parse: %+v %d %v", got, n, err)
 	}
 	for cut := 0; cut < len(b); cut++ {
-		if _, _, err := parseRelocMap(RelocationThumb, b[:cut]); err == nil {
+		if _, _, err := parseRelocMap(RelocationThumb, false, b[:cut], nil); err == nil {
 			t.Errorf("truncated map (%d of %d bytes) accepted", cut, len(b))
 		}
 	}
 	// MSP430X: data runs and addresses outside the image too.
-	mx := &relocMap{arch: RelocationMSP430X, base: 0xDF80, entries: []relocEntry{{16, 100, 8}}, data: []relocRun{{3, 2}}, outside: []relocEntry{{0x1C00, 0x40, 6}, {0x1C80, 0x10, -4}}}
+	mx := &relocMap{rules: builtinMSP430X, base: 0xDF80, entries: []relocEntry{{16, 100, 8}}, data: []relocRun{{3, 2}}, outside: []relocEntry{{0x1C00, 0x40, 6}, {0x1C80, 0x10, -4}}}
 	bx := mx.appendHeader(nil)
-	if got, n, err := parseRelocMap(RelocationMSP430X, bx); err != nil || n != len(bx) || fmt.Sprint(got) != fmt.Sprint(mx) {
+	if got, n, err := parseRelocMap(RelocationMSP430X, false, bx, nil); err != nil || n != len(bx) || fmt.Sprint(got) != fmt.Sprint(mx) {
 		t.Fatalf("parse MSP430X: %+v %d %v", got, n, err)
 	}
 	for cut := 0; cut < len(bx); cut++ {
-		if _, _, err := parseRelocMap(RelocationMSP430X, bx[:cut]); err == nil {
+		if _, _, err := parseRelocMap(RelocationMSP430X, false, bx[:cut], nil); err == nil {
 			t.Errorf("truncated MSP430X map (%d of %d bytes) accepted", cut, len(bx))
 		}
 	}
@@ -204,7 +204,7 @@ func TestRelocationMapHeader(t *testing.T) {
 		t.Error("addressShift outside the image")
 	}
 	// An entry past 32 bits.
-	if _, _, err := parseRelocMap(RelocationThumb, appendVarint(appendVarint(appendVarint(appendVarint(appendVarint(nil, 0), 1), 0xFFFFFFF0), 0x20), 0)); err == nil {
+	if _, _, err := parseRelocMap(RelocationThumb, false, appendVarint(appendVarint(appendVarint(appendVarint(appendVarint(nil, 0), 1), 0xFFFFFFF0), 0x20), 0), nil); err == nil {
 		t.Error("entry past 32 bits accepted")
 	}
 }
@@ -238,7 +238,7 @@ func TestCRelocation(t *testing.T) {
 		}
 		var patches [][]byte
 		for _, layout := range []int{codedLayoutA, codedLayoutB, codedLayoutC} {
-			m := relocMapFrom(old, new, c.arch, c.base).withDataRuns(old, new).withOutside(old, new)
+			m := relocMapFrom(old, new, rulesFor(c.arch), c.base).withDataRuns(old, new).withOutside(old, new)
 			if c.arch == RelocationMSP430X && (len(m.data) == 0 || len(m.outside) == 0) {
 				t.Fatalf("%v: no data runs or RAM entries to test", c.arch)
 			}
@@ -306,7 +306,7 @@ func TestCRelocation(t *testing.T) {
 func TestRelocationStats(t *testing.T) {
 	r := rand.New(rand.NewSource(75))
 	old, new := fakeFirmware(r, RelocationMSP430X, 0x10000, 60)
-	s := RelocationStats(old, new, RelocationMSP430X, 0x10000)
+	s := RelocationStats(old, new, builtinMSP430X, 0x10000)
 	for _, want := range []string{"map: ", "left to the patch:", "differing 16-bit words:", "by 4 KB of the new image", "by the words around them"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("RelocationStats lacks %q:\n%s", want, s)

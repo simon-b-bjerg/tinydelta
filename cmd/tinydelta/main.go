@@ -3,8 +3,10 @@
 
 // Command tinydelta creates and applies tinydelta patches.
 //
-//	tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-reloc thumb|msp430x -base ADDR] [-max-len N] [-v] <dictionary> <target> [<patch>]
-//	tinydelta decode [-two-pass] [-max-size N] [-v] <dictionary> <patch> [<target>]
+//	tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-reloc thumb|msp430x | -rules FILE [-ship-rules] -base ADDR] [-max-len N] [-v] <dictionary> <target> [<patch>]
+//	tinydelta decode [-two-pass] [-max-size N] [-rules FILE] [-v] <dictionary> <patch> [<target>]
+//	tinydelta relocstats [-reloc thumb|msp430x | -rules FILE] -base ADDR <old image> <new image>
+//	tinydelta rules check|compile [-o table.bin] [-c rules.h] <rules.yaml>
 //	tinydelta version
 //
 // An omitted output file, or "-", means standard output; a patch of "-"
@@ -37,15 +39,19 @@ MIT License: https://github.com/simon-b-bjerg/tinydelta/blob/main/LICENSE
 const usageText = `tinydelta creates and applies compact binary patches.
 
 Usage:
-  tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-reloc thumb|msp430x -base ADDR] [-max-len N] [-v] <dictionary> <target> [<patch>]
-  tinydelta decode [-two-pass] [-max-size N] [-v] <dictionary> <patch> [<target>]
+  tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-reloc thumb|msp430x | -rules FILE [-ship-rules] -base ADDR] [-max-len N] [-v] <dictionary> <target> [<patch>]
+  tinydelta decode [-two-pass] [-max-size N] [-rules FILE] [-v] <dictionary> <patch> [<target>]
+  tinydelta relocstats [-reloc thumb|msp430x | -rules FILE] -base ADDR <old image> <new image>
+  tinydelta rules check|compile [-o table.bin] [-c rules.h] <rules.yaml>
   tinydelta version
 
 encode writes a patch that turns <dictionary> (the old file) into
 <target> (the new file). decode applies it. An omitted output file, or
 "-", means standard output; a <patch> of "-" is read from standard input.
-Flags go before the file names. Run "tinydelta <command> -h" for a
-command's flags.
+relocstats shows what relocation leaves to the patch of a firmware
+update (experimental); rules checks or compiles a relocation rule file
+(docs/relocation-rules.md). Flags go before the file names. Run
+"tinydelta <command> -h" for a command's flags.
 `
 
 // Exit codes.
@@ -67,6 +73,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "encode":
 		return encodeCommand(args[1:], stdout, stderr)
+	case "rules":
+		return rulesCommand(args[1:], stdout, stderr)
 	case "relocstats":
 		return relocstatsCommand(args[1:], stdout, stderr)
 	case "decode":
@@ -89,19 +97,23 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 func relocstatsCommand(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("relocstats", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	reloc := fs.String("reloc", "msp430x", "instruction set: thumb or msp430x")
+	reloc := fs.String("reloc", "msp430x", "instruction set: thumb or msp430x (built-in rule tables)")
+	rulesFile := fs.String("rules", "", "a relocation rule file (YAML) instead of -reloc")
 	base := fs.String("base", "0", "the address the image starts at on the device")
 	if err := fs.Parse(args); err != nil {
 		return parseExit(err)
 	}
 	if fs.NArg() != 2 {
-		fmt.Fprintln(stderr, "Usage: tinydelta relocstats -reloc thumb|msp430x -base ADDR <old image> <new image>")
+		fmt.Fprintln(stderr, "Usage: tinydelta relocstats [-reloc thumb|msp430x | -rules FILE] -base ADDR <old image> <new image>")
 		return exitUsage
 	}
-	rule := map[string]tinydelta.Relocation{"thumb": tinydelta.RelocationThumb, "msp430x": tinydelta.RelocationMSP430X}[*reloc]
+	rules, code := loadRules(*rulesFile, *reloc, stderr)
+	if rules == nil {
+		return code
+	}
 	imageBase, err := strconv.ParseUint(*base, 0, 32)
-	if rule == tinydelta.RelocationNone || err != nil {
-		fmt.Fprintln(stderr, "tinydelta: relocstats: -reloc thumb|msp430x and -base ADDR")
+	if err != nil {
+		fmt.Fprintln(stderr, "tinydelta: relocstats: -base ADDR, e.g. 0x10000")
 		return exitUsage
 	}
 	dict, err := os.ReadFile(fs.Arg(0))
@@ -112,7 +124,7 @@ func relocstatsCommand(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, err)
 	}
-	fmt.Fprint(stdout, tinydelta.RelocationStats(dict, target, rule, uint32(imageBase)))
+	fmt.Fprint(stdout, tinydelta.RelocationStats(dict, target, rules, uint32(imageBase)))
 	return 0
 }
 
@@ -124,11 +136,13 @@ func encodeCommand(args []string, stdout, stderr io.Writer) int {
 	window := fs.Int("window", 0, "keep copies from the target already produced within this many bytes, so\nthe decoder reads them from its RAM buffer only (C: buffer_size, with\ntarget_read NULL; 0 means no limit)")
 	twoPass := fs.Bool("two-pass", false, "allow a patch the device decodes twice (decode -two-pass); prints the\nnumber of passes, 1 or 2, to standard error")
 	reloc := fs.String("reloc", "", "firmware images: the decoder relocates addresses for this instruction set\n(C: TINYDELTA_RELOC): thumb (ARM Cortex-M) or msp430x (large code model);\nneeds -coder-tables, with 12 bytes more per map entry")
-	base := fs.String("base", "0", "with -reloc: the address the image starts at on the device, e.g. 0x10000")
+	rulesFile := fs.String("rules", "", "firmware images: a relocation rule file (YAML; docs/relocation-rules.md)\ninstead of -reloc; the patch names the table by CRC, so the decoder must\nhave it built in, unless -ship-rules")
+	shipRules := fs.Bool("ship-rules", false, "with -rules or -reloc: put the rule table in the patch (experimental)")
+	base := fs.String("base", "0", "with -reloc or -rules: the address the image starts at on the device, e.g. 0x10000")
 	maxLen := fs.Int("max-len", 0, "limit the target bytes any one instruction produces\n(0 means no limit)")
 	verbose := fs.Bool("v", false, "print sizes to standard error")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "Usage: tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-reloc thumb|msp430x -base ADDR] [-max-len N] [-v] <dictionary> <target> [<patch>]")
+		fmt.Fprintln(stderr, "Usage: tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-reloc thumb|msp430x | -rules FILE [-ship-rules] -base ADDR] [-max-len N] [-v] <dictionary> <target> [<patch>]")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -154,6 +168,17 @@ func encodeCommand(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "tinydelta: -base %q: want an address such as 0x10000\n", *base)
 		return exitUsage
 	}
+	var rules *tinydelta.Rules
+	if *rulesFile != "" {
+		if *reloc != "" {
+			fmt.Fprintln(stderr, "tinydelta: -reloc and -rules: give one")
+			return exitUsage
+		}
+		var code int
+		if rules, code = loadRules(*rulesFile, "", stderr); rules == nil {
+			return code
+		}
+	}
 
 	dict, err := os.ReadFile(fs.Arg(0))
 	if err != nil {
@@ -165,7 +190,7 @@ func encodeCommand(args []string, stdout, stderr io.Writer) int {
 	}
 	patch, err := tinydelta.EncodeWith(dict, target, tinydelta.EncodeOptions{
 		Greedy: *greedy, CoderTables: *coderTables, Window: *window, TwoPass: *twoPass, MaxInstructionLen: *maxLen,
-		Relocation: relocation, ImageBase: uint32(imageBase),
+		Relocation: relocation, ImageBase: uint32(imageBase), Rules: rules, ShipRules: *shipRules,
 	})
 	if err != nil {
 		return fail(stderr, err)
@@ -189,8 +214,9 @@ func decodeCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	maxSize := fs.Int("max-size", tinydelta.MaxSize, "fail if the target would exceed this many bytes")
 	twoPass := fs.Bool("two-pass", false, "the patch takes two passes (encode -two-pass printed \"passes 2\")")
 	verbose := fs.Bool("v", false, "print sizes to standard error")
+	rulesFile := fs.String("rules", "", "the relocation rule file (YAML) a patch made with encode -rules names")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "Usage: tinydelta decode [-two-pass] [-max-size N] [-v] <dictionary> <patch> [<target>]")
+		fmt.Fprintln(stderr, "Usage: tinydelta decode [-two-pass] [-max-size N] [-rules FILE] [-v] <dictionary> <patch> [<target>]")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -221,7 +247,14 @@ func decodeCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		}
 		patch = bytes.NewReader(inner)
 	}
-	target, err := tinydelta.DecodeReaderLimit(dict, patch, *maxSize)
+	var rules *tinydelta.Rules
+	if *rulesFile != "" {
+		var code int
+		if rules, code = loadRules(*rulesFile, "", stderr); rules == nil {
+			return code
+		}
+	}
+	target, err := tinydelta.DecodeRules(dict, patch, *maxSize, rules)
 	if err != nil {
 		return fail(stderr, err)
 	}
@@ -305,4 +338,76 @@ func versionString() string {
 		return info.Main.Version
 	}
 	return "dev"
+}
+
+// loadRules reads a rule file, or else the built-in table named by reloc;
+// nil and an exit code if neither works.
+func loadRules(file, reloc string, stderr io.Writer) (*tinydelta.Rules, int) {
+	if file != "" {
+		src, err := os.ReadFile(file)
+		if err != nil {
+			return nil, fail(stderr, err)
+		}
+		r, err := tinydelta.ParseRules(src)
+		if err != nil {
+			fmt.Fprintf(stderr, "tinydelta: %s: %v\n", file, err)
+			return nil, exitFailure
+		}
+		return r, exitOK
+	}
+	r, err := tinydelta.BuiltinRules(reloc)
+	if err != nil {
+		fmt.Fprintf(stderr, "tinydelta: -reloc %q: want thumb or msp430x\n", reloc)
+		return nil, exitUsage
+	}
+	return r, exitOK
+}
+
+// rulesCommand checks or compiles a relocation rule file.
+func rulesCommand(args []string, stdout, stderr io.Writer) int {
+	usage := func() int {
+		fmt.Fprintln(stderr, "Usage: tinydelta rules check <rules.yaml>\n       tinydelta rules compile [-o table.bin] [-c rules.h] <rules.yaml>")
+		return exitUsage
+	}
+	if len(args) == 0 {
+		return usage()
+	}
+	fs := flag.NewFlagSet("rules "+args[0], flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	out := fs.String("o", "", "write the binary table to this file")
+	header := fs.String("c", "", "write the table as a C header (a const array and its CRC) to this file")
+	if err := fs.Parse(args[1:]); err != nil {
+		return parseExit(err)
+	}
+	if fs.NArg() != 1 || (args[0] != "check" && args[0] != "compile") || (args[0] == "check" && (*out != "" || *header != "")) {
+		return usage()
+	}
+	rules, code := loadRules(fs.Arg(0), "", stderr)
+	if rules == nil {
+		return code
+	}
+	table := rules.Table()
+	fmt.Fprintf(stdout, "%s: %d-byte table, CRC %04x\n", rules.Name(), len(table), rules.CRC())
+	if *out != "" {
+		if err := os.WriteFile(*out, table, 0o644); err != nil {
+			return fail(stderr, err)
+		}
+	}
+	if *header != "" {
+		var b strings.Builder
+		fmt.Fprintf(&b, "/* Generated by tinydelta rules compile from %s: relocation rules %q. */\n", fs.Arg(0), rules.Name())
+		fmt.Fprintf(&b, "#define TINYDELTA_RELOC_RULES_CRC 0x%04Xu\n#define TINYDELTA_RELOC_RULES_SIZE %du\n", rules.CRC(), len(table))
+		fmt.Fprintf(&b, "static const uint8_t tinydelta_reloc_rules[TINYDELTA_RELOC_RULES_SIZE] = {")
+		for i, c := range table {
+			if i%16 == 0 {
+				b.WriteString("\n    ")
+			}
+			fmt.Fprintf(&b, "0x%02X,", c)
+		}
+		b.WriteString("\n};\n")
+		if err := os.WriteFile(*header, []byte(b.String()), 0o644); err != nil {
+			return fail(stderr, err)
+		}
+	}
+	return exitOK
 }
