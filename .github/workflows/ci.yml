@@ -185,6 +185,41 @@ jobs:
           "$RUNNER_TEMP/venv/bin/tinydelta" version
           cd "$RUNNER_TEMP" && "$RUNNER_TEMP/venv/bin/python" -m unittest discover \
             -s "$GITHUB_WORKSPACE/python/tests" -t "$GITHUB_WORKSPACE/python/tests" -v
+      - name: Keep the wheels for the other platforms
+        if: runner.os == 'Linux' && matrix.python == '3.x'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels
+          path: ${{ runner.temp }}/wheels/
+
+  wheels:
+    name: Wheel on ${{ matrix.os }}
+    needs: python
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04-arm, windows-latest, windows-11-arm]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.x
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels
+          path: ${{ runner.temp }}/wheels
+      - name: Install this platform's wheel and run the tests against it
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          bin="$RUNNER_TEMP/venv/bin"; [ -d "$bin" ] || bin="$RUNNER_TEMP/venv/Scripts"
+          "$bin/python" -m pip install -q --no-index --find-links "$RUNNER_TEMP/wheels" tinydelta
+          "$bin/tinydelta" version
+          cd "$RUNNER_TEMP" && "$bin/python" -m unittest discover \
+            -s "$GITHUB_WORKSPACE/python/tests" -t "$GITHUB_WORKSPACE/python/tests" -v
 
   windows:
     name: Go tests on Windows
