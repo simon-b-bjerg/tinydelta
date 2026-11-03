@@ -23,6 +23,10 @@
 
 #include "tinydelta.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* What callbacks return. Anything other than TINYDELTA_CALLBACK_OK aborts
  * decoding with TINYDELTA_ERR_IO. */
 enum {
@@ -79,5 +83,9 @@ typedef struct {
  * not as required. No allocation; about 185 bytes of stack on Cortex-M0
  * besides the buffer and your callbacks. */
 tinydelta_result_t tinydelta_decode_io(const tinydelta_io_t *p_io, uint32_t *p_target_len);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

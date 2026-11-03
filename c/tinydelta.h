@@ -15,6 +15,10 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Largest dictionary or target the format supports: 2^30 - 1 bytes.
  * This bound keeps every value in a patch within 32 bits. */
 #define TINYDELTA_MAX_SIZE 0x3FFFFFFFu
@@ -79,6 +83,10 @@ tinydelta_result_t tinydelta_decode_coded(const uint8_t *p_dict,
                                           uint8_t *p_tables,
                                           uint32_t tables_size,
                                           uint32_t *p_target_len);
+#endif
+
+#ifdef __cplusplus
+}
 #endif
 
 #endif
