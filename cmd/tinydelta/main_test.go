@@ -131,6 +131,35 @@ func TestDecodeMaxSize(t *testing.T) {
 	}
 }
 
+// TestFlagAfterFileNames checks that a flag in the output's place is a
+// usage error, not a file of that name.
+func TestFlagAfterFileNames(t *testing.T) {
+	dir, dict, target := writeFiles(t)
+	patch := filepath.Join(dir, "patch")
+	if r := runCLI(nil, "encode", dict, target, patch); r.code != exitOK {
+		t.Fatalf("encode: %+v", r)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(wd) })
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"encode", dict, target, "-greedy"}, {"decode", dict, patch, "-v"}} {
+		if r := runCLI(nil, args...); r.code != exitUsage {
+			t.Errorf("%v: %+v", args, r)
+		}
+		if _, err := os.Stat(args[3]); err == nil {
+			t.Errorf("%v wrote a file called %s", args, args[3])
+		}
+	}
+	if r := runCLI(nil, "encode", dict, target, "-"); r.code != exitOK {
+		t.Errorf("- as the output: %+v", r)
+	}
+}
+
 // TestDecodeMaxSizeBelowOne checks that a limit that can't be meant
 // is a usage error, not no limit at all.
 func TestDecodeMaxSizeBelowOne(t *testing.T) {
