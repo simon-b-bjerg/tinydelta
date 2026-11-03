@@ -351,6 +351,8 @@ values recur, so they cost a fraction of a bit each. The device decodes
 it in **one pass**, with no intermediate patch to store, and the
 instructions and their meaning are exactly those of a plain patch.
 
+![The layers of a coded patch: the range coder turns the coded bytes into the plain instruction stream, whose SKIP and ADD instructions build the new file from the old one](docs/patch-layers.svg)
+
 The price is on the device, so it is optional twice over: the C
 decoders only read coded patches when built with `TINYDELTA_CODER = 1`,
 and the encoder only makes one when told the size of the decoder's
