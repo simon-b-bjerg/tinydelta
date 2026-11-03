@@ -140,8 +140,13 @@ func EncodeWith(dict, target []byte, opts EncodeOptions) (Patch, error) {
 	}
 	if opts.Relocation != RelocationNone && len(layouts) > 0 {
 		full := relocMapFrom(dict, target, opts.Relocation, opts.ImageBase)
+		withOutside := full.withOutside(dict, target)
 		for _, layout := range layouts {
-			m := full.limitTo(opts.CoderTables - CodedTablesSize(layout))
+			// With the addresses outside the image that moved if they fit.
+			m := withOutside.limitTo(opts.CoderTables - CodedTablesSize(layout))
+			if m == nil || len(m.entries) == 0 {
+				m = full.limitTo(opts.CoderTables - CodedTablesSize(layout))
+			}
 			if m == nil || len(m.entries) == 0 {
 				continue
 			}

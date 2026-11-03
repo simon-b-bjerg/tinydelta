@@ -75,8 +75,9 @@ tinydelta_result_t
 tinydelta_reloc_read_map(tinydelta_reloc_t *p_reloc, tinydelta_varint_fn_t varint, void *p_varint_ctx, uint8_t *p_storage, uint32_t storage_size) {
     tinydelta_result_t result = varint(p_varint_ctx, &p_reloc->base);
 
-    p_reloc->p_entries = p_storage;
-    p_reloc->run_count = 0u;
+    p_reloc->p_entries     = p_storage;
+    p_reloc->run_count     = 0u;
+    p_reloc->outside_count = 0u;
     if (result == TINYDELTA_OK) {
         result = read_list(varint, p_varint_ctx, &p_storage, &storage_size, 3u, &p_reloc->count);
     }
@@ -86,30 +87,44 @@ tinydelta_reloc_read_map(tinydelta_reloc_t *p_reloc, tinydelta_varint_fn_t varin
     if (result == TINYDELTA_OK) {
         result = read_list(varint, p_varint_ctx, &p_storage, &storage_size, 2u, &p_reloc->run_count);
     }
+    /* Addresses outside the image that moved. */
+    p_reloc->p_outside = p_storage;
+    if (result == TINYDELTA_OK) {
+        result = read_list(varint, p_varint_ctx, &p_storage, &storage_size, 3u, &p_reloc->outside_count);
+    }
 #endif
     return result;
 }
 
-/* The shift of an address, if it points into the old image; else 0. */
-static uint32_t address_shift(const tinydelta_reloc_t *p_reloc, uint32_t address) {
-    const uint8_t *p_entry = p_reloc->p_entries;
-    uint32_t offset        = address - p_reloc->base;
-
-    if ((address < p_reloc->base) || (offset >= p_reloc->dict_len)) {
-        return 0u;
-    }
-    for (uint32_t index = 0u; index < p_reloc->count; index++) {
+/* The shift of the entry holding key among count entries; 0 if none. */
+static uint32_t entry_shift(const uint8_t *p_entry, uint32_t count, uint32_t key) {
+    for (uint32_t index = 0u; index < count; index++) {
         uint32_t start = load_le32(p_entry);
 
-        if (start > offset) {
+        if (start > key) {
             break; /* entries are in order */
         }
-        if ((offset - start) < load_le32(p_entry + 4u)) {
+        if ((key - start) < load_le32(p_entry + 4u)) {
             return load_le32(p_entry + 8u);
         }
         p_entry += TINYDELTA_RELOC_ENTRY_SIZE;
     }
     return 0u;
+}
+
+/* The shift of an address: by its offset if it points into the old
+ * image, else (MSP430X) by the address itself. */
+static uint32_t address_shift(const tinydelta_reloc_t *p_reloc, uint32_t address) {
+    uint32_t offset = address - p_reloc->base;
+
+    if ((address < p_reloc->base) || (offset >= p_reloc->dict_len)) {
+#if TINYDELTA_RELOC == TINYDELTA_RELOC_MSP430X
+        return entry_shift(p_reloc->p_outside, p_reloc->outside_count, address);
+#else
+        return 0u;
+#endif
+    }
+    return entry_shift(p_reloc->p_entries, p_reloc->count, offset);
 }
 
 /* The raw 16-bit little-endian word at index and index + 1 (within the

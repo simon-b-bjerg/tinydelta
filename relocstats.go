@@ -15,7 +15,7 @@ import (
 // and instruction words only, no image content beyond those.
 func RelocationStats(dict, target []byte, rule Relocation, base uint32) string {
 	var b strings.Builder
-	m := relocMapFrom(dict, target, rule, base).withDataRuns(dict, target)
+	m := relocMapFrom(dict, target, rule, base).withDataRuns(dict, target).withOutside(dict, target)
 	rd := m.relocate(dict)
 	moved := 0
 	for i := range dict {
@@ -27,7 +27,7 @@ func RelocationStats(dict, target []byte, rule Relocation, base uint32) string {
 	for _, r := range m.data {
 		blocks += int(r.length)
 	}
-	fmt.Fprintf(&b, "map: %d entries, %d data runs (%d blocks of %d B); relocation changed %d bytes of the old image\n", len(m.entries), len(m.data), blocks, relocDataBlock, moved)
+	fmt.Fprintf(&b, "map: %d entries, %d data runs (%d blocks of %d B), %d entries outside the image; relocation changed %d bytes of the old image\n", len(m.entries), len(m.data), blocks, relocDataBlock, len(m.outside), moved)
 	shifts := map[uint16]bool{}
 	for _, e := range m.entries {
 		shifts[uint16(e.shift)] = true

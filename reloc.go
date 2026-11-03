@@ -90,6 +90,9 @@ type relocMap struct {
 	base    uint32
 	entries []relocEntry
 	data    []relocRun // MSP430X only
+	// MSP430X only: addresses outside the old image that moved (RAM:
+	// variables), start and length as addresses.
+	outside []relocEntry
 }
 
 // inData reports whether old-image offset h is in a data run.
@@ -100,10 +103,13 @@ func (m *relocMap) inData(h int) bool {
 }
 
 // shiftAt is the shift of old-image offset o, 0 outside every entry.
-func (m *relocMap) shiftAt(o int64) int64 {
-	i := sort.Search(len(m.entries), func(i int) bool { return int64(m.entries[i].start)+int64(m.entries[i].length) > o })
-	if i < len(m.entries) && int64(m.entries[i].start) <= o {
-		return int64(m.entries[i].shift)
+func (m *relocMap) shiftAt(o int64) int64 { return entryShift(m.entries, o) }
+
+// entryShift is the shift of the entry holding o, 0 if none.
+func entryShift(es []relocEntry, o int64) int64 {
+	i := sort.Search(len(es), func(i int) bool { return int64(es[i].start)+int64(es[i].length) > o })
+	if i < len(es) && int64(es[i].start) <= o {
+		return int64(es[i].shift)
 	}
 	return 0
 }
@@ -112,32 +118,42 @@ func (m *relocMap) shiftAt(o int64) int64 {
 // image of n bytes; 0 if not.
 func (m *relocMap) addressShift(addr uint32, n int) int64 {
 	if addr < m.base || uint64(addr-m.base) >= uint64(n) {
-		return 0
+		return entryShift(m.outside, int64(addr))
 	}
 	return m.shiftAt(int64(addr - m.base))
 }
 
-func (m *relocMap) ramSize() int { return relocEntrySize*len(m.entries) + relocRunSize*len(m.data) }
+func (m *relocMap) ramSize() int {
+	return relocEntrySize*(len(m.entries)+len(m.outside)) + relocRunSize*len(m.data)
+}
 
 // appendHeader appends the map as the coded header carries it.
 func (m *relocMap) appendHeader(b []byte) []byte {
 	b = appendVarint(b, uint64(m.base))
-	b = appendVarint(b, uint64(len(m.entries)))
-	end := uint32(0)
-	for _, e := range m.entries {
-		b = appendVarint(b, uint64(e.start-end))
-		b = appendVarint(b, uint64(e.length))
-		b = appendVarint(b, zigzagEncode(int64(e.shift)))
-		end = e.start + e.length
-	}
-	if m.arch == RelocationMSP430X { // data runs, in blocks
+	b = appendEntries(b, m.entries)
+	if m.arch == RelocationMSP430X { // data runs, in blocks; addresses outside the image
 		b = appendVarint(b, uint64(len(m.data)))
-		end = 0
+		end := uint32(0)
 		for _, r := range m.data {
 			b = appendVarint(b, uint64(r.start-end))
 			b = appendVarint(b, uint64(r.length))
 			end = r.start + r.length
 		}
+		b = appendEntries(b, m.outside)
+	}
+	return b
+}
+
+// appendEntries writes a count, then per entry the gap since the previous
+// one's end, its length and its shift (zigzag).
+func appendEntries(b []byte, es []relocEntry) []byte {
+	b = appendVarint(b, uint64(len(es)))
+	end := uint32(0)
+	for _, e := range es {
+		b = appendVarint(b, uint64(e.start-end))
+		b = appendVarint(b, uint64(e.length))
+		b = appendVarint(b, zigzagEncode(int64(e.shift)))
+		end = e.start + e.length
 	}
 	return b
 }
@@ -160,35 +176,39 @@ func parseRelocMap(arch Relocation, b []byte) (*relocMap, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	count, err := next()
-	if err != nil {
-		return nil, 0, err
-	}
-	if count > uint64(len(b)) { // each entry takes at least 3 bytes
-		return nil, 0, errRelocMap
+	entries := func() ([]relocEntry, error) {
+		count, err := next()
+		if err != nil || count > uint64(len(b)) { // each entry takes at least 3 bytes
+			return nil, errRelocMap
+		}
+		var es []relocEntry
+		end := uint64(0)
+		for i := uint64(0); i < count; i++ {
+			gap, err1 := next()
+			length, err2 := next()
+			z, err3 := next()
+			if err1 != nil || err2 != nil || err3 != nil {
+				return nil, errRelocMap
+			}
+			start := end + gap
+			if start+length > 0xFFFFFFFF {
+				return nil, errRelocMap
+			}
+			es = append(es, relocEntry{uint32(start), uint32(length), int32(zigzagDecode(z))})
+			end = start + length
+		}
+		return es, nil
 	}
 	m := &relocMap{arch: arch, base: uint32(base)}
-	end := uint64(0)
-	for i := uint64(0); i < count; i++ {
-		gap, err1 := next()
-		length, err2 := next()
-		z, err3 := next()
-		if err1 != nil || err2 != nil || err3 != nil {
-			return nil, 0, errRelocMap
-		}
-		start := end + gap
-		if start+length > 0xFFFFFFFF {
-			return nil, 0, errRelocMap
-		}
-		m.entries = append(m.entries, relocEntry{uint32(start), uint32(length), int32(zigzagDecode(z))})
-		end = start + length
+	if m.entries, err = entries(); err != nil {
+		return nil, 0, err
 	}
 	if arch == RelocationMSP430X {
 		runs, err := next()
 		if err != nil || runs > uint64(len(b)) {
 			return nil, 0, errRelocMap
 		}
-		end = 0
+		end := uint64(0)
 		for i := uint64(0); i < runs; i++ {
 			gap, err1 := next()
 			length, err2 := next()
@@ -201,6 +221,9 @@ func parseRelocMap(arch Relocation, b []byte) (*relocMap, int, error) {
 			}
 			m.data = append(m.data, relocRun{uint32(start), uint32(length)})
 			end = start + length
+		}
+		if m.outside, err = entries(); err != nil {
+			return nil, 0, err
 		}
 	}
 	return m, pos, nil
@@ -293,14 +316,15 @@ func (m *relocMap) filled(n int) *relocMap {
 		}
 		es = append(es, e)
 	}
-	return &relocMap{arch: m.arch, base: m.base, entries: es, data: m.data}
+	return &relocMap{arch: m.arch, base: m.base, entries: es, data: m.data, outside: m.outside}
 }
 
 // limitTo keeps the longest entries that fit ram bytes of decoder RAM,
-// after the data runs (all kept; nil if they don't fit), and stretches
+// after the data runs and the entries outside the image (all kept; nil if
+// they don't fit), and stretches
 // them over the ones dropped.
 func (m *relocMap) limitTo(ram int) *relocMap {
-	ram -= relocRunSize * len(m.data)
+	ram -= relocRunSize*len(m.data) + relocEntrySize*len(m.outside)
 	if ram < 0 {
 		return nil
 	}
@@ -317,7 +341,7 @@ func (m *relocMap) limitTo(ram int) *relocMap {
 		last := m.entries[len(m.entries)-1]
 		end = last.start + last.length
 	}
-	return (&relocMap{arch: m.arch, base: m.base, entries: es, data: m.data}).filled(int(end))
+	return (&relocMap{arch: m.arch, base: m.base, entries: es, data: m.data, outside: m.outside}).filled(int(end))
 }
 
 // withDataRuns picks the MSP430X data runs for an update: the blocks of
@@ -361,7 +385,98 @@ func (m *relocMap) withDataRuns(dict, target []byte) *relocMap {
 	if len(runs) == 0 {
 		return m
 	}
-	return &relocMap{arch: m.arch, base: m.base, entries: m.entries, data: runs}
+	return &relocMap{arch: m.arch, base: m.base, entries: m.entries, data: runs, outside: m.outside}
+}
+
+// withOutside adds, for MSP430X, the addresses outside the old image that
+// moved (RAM: variables added or removed): per address the old image's
+// aligned instructions hold, the shift most of them show in the target;
+// then ranges of neighbouring addresses with the same shift, each reaching
+// to the next range. Returns m itself if none moved.
+func (m *relocMap) withOutside(dict, target []byte) *relocMap {
+	if m.arch != RelocationMSP430X || len(dict) == 0 {
+		return m
+	}
+	votes := map[uint32]map[int32]int{}
+	word := func(img []byte, i int) uint32 { return uint32(img[i]) | uint32(img[i+1])<<8 }
+	for _, c := range findCovers(m.relocate(dict), target) {
+		if c.extra > 0 {
+			continue
+		}
+		for k := 0; k+4 <= c.length; k += 2 {
+			h, n := c.oldPos+k, c.newPos+k
+			l, f, nf := msp430xValid(m, dict, m.base, h)
+			if l == 0 || k+l > c.length {
+				continue
+			}
+			mask := uint32(0xFFFF) // the first word without the fields' high bits
+			for i := 0; i < nf; i++ {
+				mask &^= 0xF << uint32(f[i].shift)
+			}
+			if word(dict, h)&mask != word(target, n)&mask {
+				continue // another instruction
+			}
+			for i := 0; i < nf; i++ {
+				hb := uint32(f[i].shift)
+				oldAddr := word(dict, f[i].lo) | (word(dict, h)>>hb&0xF)<<16
+				if oldAddr >= m.base && uint64(oldAddr-m.base) < uint64(len(dict)) {
+					continue
+				}
+				newAddr := word(target, n+f[i].lo-h) | (word(target, n)>>hb&0xF)<<16
+				if votes[oldAddr] == nil {
+					votes[oldAddr] = map[int32]int{}
+				}
+				votes[oldAddr][int32(newAddr)-int32(oldAddr)]++
+			}
+		}
+	}
+	addrs := make([]uint32, 0, len(votes))
+	for a := range votes {
+		addrs = append(addrs, a)
+	}
+	sort.Slice(addrs, func(i, j int) bool { return addrs[i] < addrs[j] })
+	type level struct {
+		start uint32
+		shift int32
+	}
+	var levels []level // where the shift changes
+	for _, a := range addrs {
+		var shift int32
+		best := 0
+		for s, v := range votes[a] {
+			if v > best || (v == best && abs64(int64(s)) < abs64(int64(shift))) {
+				shift, best = s, v
+			}
+		}
+		if len(levels) == 0 || levels[len(levels)-1].shift != shift {
+			levels = append(levels, level{a, shift})
+		}
+	}
+	var out []relocEntry
+	for i, lv := range levels {
+		if lv.shift == 0 {
+			continue
+		}
+		end := addrs[len(addrs)-1] + 2
+		if i+1 < len(levels) {
+			end = levels[i+1].start
+		}
+		if lv.start < m.base && end > m.base { // stay outside the image
+			end = m.base
+		}
+		out = append(out, relocEntry{lv.start, end - lv.start, lv.shift})
+	}
+	if len(out) == 0 {
+		return m
+	}
+	return &relocMap{arch: m.arch, base: m.base, entries: m.entries, data: m.data, outside: out}
+}
+
+func abs64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 // relocate returns the old image as the decoder sees it: every address

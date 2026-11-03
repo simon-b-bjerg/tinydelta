@@ -20,7 +20,11 @@ import (
 // middle and a few changed, so everything after the insertion moves and
 // every call and pointer into it changes.
 func fakeFirmware(r *rand.Rand, arch Relocation, base uint32, functions int) (old, new []byte) {
-	type fn struct{ body []byte }
+	type fn struct {
+		body []byte
+		v    int // MSP430X: the RAM variable it reads
+	}
+	const vars, ram = 40, 0x1C00   // MSP430X: variables of 4 bytes in RAM
 	filler := func(n int) []byte { // code words that look like neither rule's patterns
 		b := make([]byte, n)
 		for i := 0; i+1 < n; i += 2 {
@@ -32,18 +36,21 @@ func fakeFirmware(r *rand.Rand, arch Relocation, base uint32, functions int) (ol
 	fns := make([]fn, functions)
 	calls := make([][]int, functions)
 	for i := range fns {
-		fns[i].body = filler(40 + 2*r.Intn(80))
+		fns[i].body, fns[i].v = filler(40+2*r.Intn(80)), r.Intn(vars)
 		for k := 0; k < 3; k++ {
 			calls[i] = append(calls[i], r.Intn(functions))
 		}
 	}
-	build := func(fns []fn, calls [][]int) []byte {
+	build := func(fns []fn, calls [][]int, varGap uint32) []byte {
 		// Lay out: each function is its body, then its calls (4 bytes each).
 		starts := make([]int, len(fns))
 		pos := 0
 		for i, f := range fns {
 			starts[i] = pos
 			pos += len(f.body) + 4*len(calls[i])
+			if arch == RelocationMSP430X {
+				pos += 4
+			}
 		}
 		table := pos
 		img := make([]byte, 0, pos+4*len(fns))
@@ -63,6 +70,14 @@ func fakeFirmware(r *rand.Rand, arch Relocation, base uint32, functions int) (ol
 					binary.LittleEndian.PutUint16(ins[2:], uint16(addr))
 				}
 				img = append(img, ins[:]...)
+			}
+			if arch == RelocationMSP430X { // MOVA &var,R12; variables past the middle move by varGap
+				addr := uint32(ram + 4*f.v)
+				if f.v >= vars/2 {
+					addr += varGap
+				}
+				img = binary.LittleEndian.AppendUint16(img, uint16(0x002C|(addr>>16&0xF)<<8))
+				img = binary.LittleEndian.AppendUint16(img, uint16(addr))
 			}
 		}
 		_ = table
@@ -87,9 +102,9 @@ func fakeFirmware(r *rand.Rand, arch Relocation, base uint32, functions int) (ol
 		}
 		return img
 	}
-	old = build(fns, calls)
+	old = build(fns, calls, 0)
 	at := functions / 3
-	newFns := append(append(append([]fn{}, fns[:at]...), fn{filler(130)}), fns[at:]...)
+	newFns := append(append(append([]fn{}, fns[:at]...), fn{body: filler(130)}), fns[at:]...)
 	newCalls := append(append(append([][]int{}, calls[:at]...), []int{0}), calls[at:]...)
 	for i := range newCalls { // indices past the insertion move by one
 		cs := append([]int{}, newCalls[i]...)
@@ -105,7 +120,7 @@ func fakeFirmware(r *rand.Rand, arch Relocation, base uint32, functions int) (ol
 		f.body = append([]byte{}, f.body...)
 		copy(f.body[r.Intn(len(f.body)-8)&^1:], filler(6))
 	}
-	return old, build(newFns, newCalls)
+	return old, build(newFns, newCalls, 6) // and a variable of 6 bytes added
 }
 
 var relocCases = []struct {
@@ -174,6 +189,20 @@ func TestRelocationMapHeader(t *testing.T) {
 			t.Errorf("truncated map (%d of %d bytes) accepted", cut, len(b))
 		}
 	}
+	// MSP430X: data runs and addresses outside the image too.
+	mx := &relocMap{arch: RelocationMSP430X, base: 0xDF80, entries: []relocEntry{{16, 100, 8}}, data: []relocRun{{3, 2}}, outside: []relocEntry{{0x1C00, 0x40, 6}, {0x1C80, 0x10, -4}}}
+	bx := mx.appendHeader(nil)
+	if got, n, err := parseRelocMap(RelocationMSP430X, bx); err != nil || n != len(bx) || fmt.Sprint(got) != fmt.Sprint(mx) {
+		t.Fatalf("parse MSP430X: %+v %d %v", got, n, err)
+	}
+	for cut := 0; cut < len(bx); cut++ {
+		if _, _, err := parseRelocMap(RelocationMSP430X, bx[:cut]); err == nil {
+			t.Errorf("truncated MSP430X map (%d of %d bytes) accepted", cut, len(bx))
+		}
+	}
+	if mx.addressShift(0x1C3E, 1000) != 6 || mx.addressShift(0x1C84, 1000) != -4 || mx.addressShift(0x1C40, 1000) != 0 || mx.addressShift(0xDF80+20, 1000) != 8 {
+		t.Error("addressShift outside the image")
+	}
 	// An entry past 32 bits.
 	if _, _, err := parseRelocMap(RelocationThumb, appendVarint(appendVarint(appendVarint(appendVarint(appendVarint(nil, 0), 1), 0xFFFFFFF0), 0x20), 0)); err == nil {
 		t.Error("entry past 32 bits accepted")
@@ -209,9 +238,9 @@ func TestCRelocation(t *testing.T) {
 		}
 		var patches [][]byte
 		for _, layout := range []int{codedLayoutA, codedLayoutB, codedLayoutC} {
-			m := relocMapFrom(old, new, c.arch, c.base).withDataRuns(old, new)
-			if c.arch == RelocationMSP430X && len(m.data) == 0 {
-				t.Fatalf("%v: no data runs to test", c.arch)
+			m := relocMapFrom(old, new, c.arch, c.base).withDataRuns(old, new).withOutside(old, new)
+			if c.arch == RelocationMSP430X && (len(m.data) == 0 || len(m.outside) == 0) {
+				t.Fatalf("%v: no data runs or RAM entries to test", c.arch)
 			}
 			rd := m.relocate(old)
 			v1, _ := Encode(rd, new)

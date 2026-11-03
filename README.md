@@ -349,7 +349,7 @@ only the map and the few instruction forms that hold addresses.
 | | coded | coded, relocated |
 |---|---:|---:|
 | ARM Thumb: MicroPython for SAMD21, 44 updates, ~185 KB | 151,935 B | **25,992 B (−83%)** |
-| MSP430X, large code model: mbedtls built with `-mlarge`, 17 updates, ~176 KB | 21,773 B | **6,206 B (−71%)** |
+| MSP430X, large code model: mbedtls built with `-mlarge`, 17 updates, ~176 KB | 21,773 B | **6,193 B (−72%)** |
 
 Sums over consecutive builds, the map included; every patch decoded
 again and compared (`reloc_test.go` runs the same on synthetic images,
@@ -361,7 +361,7 @@ The rules, per instruction set (`Relocation` in Go,
 | rule | addresses it moves |
 |---|---|
 | `thumb` (ARM Cortex-M) | `BL` (its relative offset changes by the callee's move less the call site's) and 4-byte-aligned 32-bit pointers into the image (vector table, literal pools, function tables) |
-| `msp430x` (large code model) | the 20-bit address of `CALLA #imm`/`&abs`, `MOVA`/`ADDA`/`CMPA`/`SUBA #imm`, `MOVA &abs`, and the immediate, absolute or indexed operands of extension-word instructions (`MOVX.A #imm,x(Rn)`, `XORX.W addr(Rn),Rd`...); and in data blocks the encoder picks (constant tables, initial values), 4-byte pointers into the image |
+| `msp430x` (large code model) | the 20-bit address of `CALLA #imm`/`&abs`, `MOVA`/`ADDA`/`CMPA`/`SUBA #imm`, `MOVA &abs`, and the immediate, absolute or indexed operands of extension-word instructions (`MOVX.A #imm,x(Rn)`, `XORX.W addr(Rn),Rd`...); and in data blocks the encoder picks (constant tables, initial values), 4-byte pointers into the image. Addresses in those instructions that point outside the image (RAM: variables added or removed) move by a second list of address ranges |
 
 Which bytes form an address is decided from the raw old image only, a
 few bytes around each position, so the decoder relocates whatever part
@@ -376,15 +376,19 @@ tinydelta encode -coder-tables 1600 -reloc msp430x -base 0x10000 old.bin new.bin
 
 `-base` is the address the image starts at on the device (its link
 address); `-coder-tables` must leave room for the map after the coder's
-tables, 12 bytes per entry and, for MSP430X, 8 per data run. Updates
+tables, 12 bytes per entry (and per RAM range) and, for MSP430X, 8 per data run. Updates
 here needed 3–5 entries and up to about 10 data runs, so a few hundred
 spare bytes are plenty; the encoder keeps the largest entries
 that fit and falls back to an unrelocated patch when that is smaller.
+A wrong `-base` doesn't fail, it only makes relocation pay off little
+or not at all; `relocstats` (below) checks it.
 
 To see what relocation leaves to the patch for a pair of images,
 `tinydelta relocstats -reloc msp430x -base 0x10000 old.bin new.bin`
 prints the map, how many bytes it changed, the bytes still different
-and the most common instruction contexts around them. It prints
+and the most common instruction contexts around them; for MSP430X
+also why address fields were left wrong, and which image bases explain
+the calls that moved (the right base explains nearly all). It prints
 counts, offsets and instruction words only, so it can be shared where
 the images can't.
 
@@ -401,8 +405,8 @@ The cost, from [Code size and stack](#code-size-and-stack): on
 Cortex-M0, about 1 KB more than the coded decoders; on MSP430X
 `-mlarge`, about 3.5 KB more, as most of the relocation code is 32-bit
 address arithmetic, several instructions per operation on a 16-bit
-core. RAM: the map in the tables buffer (12 bytes per entry, 8 per data
-run), and in
+core. RAM: the map in the tables buffer (12 bytes per entry or RAM
+range, 8 per data run), and in
 the callback decoder a 16-byte cache of raw dictionary bytes.
 
 ## Why another delta format?
@@ -652,8 +656,8 @@ every 32-bit operation takes several 16-bit instructions.
 | callback decoder | 2,350 B | 2,298 B | 2,458 B | ~230 B\* |
 | memory decoder + coder | 2,608 B | 2,544 B | 2,808 B | ~290 B |
 | callback decoder + coder | 3,362 B | 3,268 B | 3,562 B | ~335 B\* |
-| memory decoder + coder + MSP430X relocation | 5,934 B | 5,740 B | 6,138 B | – |
-| callback decoder + coder + MSP430X relocation | 6,850 B | 6,620 B | 7,082 B | – |
+| memory decoder + coder + MSP430X relocation | 6,080 B | 5,870 B | 6,272 B | – |
+| callback decoder + coder + MSP430X relocation | 6,996 B | 6,750 B | 7,216 B | – |
 
 ### Results
 
@@ -1068,6 +1072,8 @@ map = base (varint: the old image's address on the device)
               + shift (varint, zigzag) )
     + MSP430X only: runs (varint)
     + runs × ( gap (varint) + length (varint) )     data runs, in 256-byte blocks
+    + MSP430X only: outside (varint)
+    + outside × ( gap + length + shift, as entries )  address ranges outside the image
 ```
 
 Entries are in order and don't overlap; an old-image offset `o` moves
@@ -1075,7 +1081,8 @@ by the `shift` of the entry with `start ≤ o < start + length`, by 0
 outside every entry. The instructions then apply to the relocated old
 image: the raw old image with every address the rule finds replaced.
 An address `a` points into the image if `base ≤ a < base + length of
-the old image`; it becomes `a + shift(a − base)`.
+the old image`; it becomes `a + shift(a − base)`. Other addresses
+(MSP430X) move by the outside range holding `a` itself, if any.
 
 **Thumb.** At each even address `h` where the halfword is
 `0xF000`–`0xF7FF` and the next `0xF800`–`0xFFFF` (a `BL`): its 22-bit

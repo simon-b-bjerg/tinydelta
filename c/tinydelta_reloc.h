@@ -31,6 +31,8 @@ typedef struct {
     uint32_t count;
     const uint8_t *p_runs; /* MSP430X: run_count data runs, 8 bytes each: start and length in 256-byte blocks */
     uint32_t run_count;
+    const uint8_t *p_outside; /* MSP430X: outside_count entries as p_entries, keyed by address: RAM that moved */
+    uint32_t outside_count;
     uint32_t base;         /* the old image's address on the device */
     uint32_t dict_len;     /* the old image's length */
     const uint8_t *p_dict; /* the old image, or NULL to read it through raw */
