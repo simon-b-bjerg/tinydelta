@@ -14,7 +14,8 @@ import (
 // cLargeDriver runs the callback decoder with its data in files, as a
 // device has it on external flash, so it handles more than the program's
 // own memory holds: on 16-bit MSP430, offsets and lengths past 64 KB.
-// Arguments: buffer:page:read:tables dictionary patch output capacity.
+// Arguments: buffer:page:read:tables dictionary patch output capacity
+// dictionary-size patch-size.
 // Exit 0: decoded. 1: rejected (code printed). 3: bad callback use.
 const cLargeDriver = `#include <stdio.h>
 #include <stdlib.h>
@@ -45,13 +46,6 @@ static int region_wr(void *c, uint32_t off, const uint8_t *b, uint32_t n) {
 	r->size += n;
 	return 0;
 }
-static uint32_t file_size(FILE *fp) {
-	long size;
-	fseek(fp, 0, SEEK_END);
-	size = ftell(fp);
-	fseek(fp, 0, SEEK_SET);
-	return (uint32_t)size;
-}
 
 int main(int argc, char **argv) {
 	unsigned long buffer_size, page_size, tables_size;
@@ -61,7 +55,7 @@ int main(int argc, char **argv) {
 	char *rest;
 	(void)slurp; /* the shared helpers' other half: not needed here */
 	args_from_file(&argc, &argv);
-	if (argc != 6) return 2;
+	if (argc != 8) return 2;
 	buffer_size = strtoul(argv[1], &rest, 10);
 	if (*rest++ != ':') return 2;
 	page_size = strtoul(rest, &rest, 10);
@@ -73,8 +67,8 @@ int main(int argc, char **argv) {
 	patch.fp = fopen(argv[3], "rb");
 	target.fp = fopen(argv[4], "w+b");
 	if (!dict.fp || !patch.fp || !target.fp) return 2;
-	dict.size = file_size(dict.fp);
-	patch.size = file_size(patch.fp);
+	dict.size = (uint32_t)strtoul(argv[6], NULL, 10); /* not asked of the files: a simulator's fseek may not reach their end */
+	patch.size = (uint32_t)strtoul(argv[7], NULL, 10);
 	tinydelta_io_t io = {
 		.patch_read = region_rd, .p_patch_ctx = &patch, .patch_len = patch.size,
 		.dict_read = region_rd, .p_dict_ctx = &dict, .dict_len = dict.size,
@@ -85,7 +79,7 @@ int main(int argc, char **argv) {
 	};
 	rc = tinydelta_decode_io(&io, &n);
 	if (rc != TINYDELTA_OK) {
-		printf("%d\n", rc);
+		printf("%d (dictionary %lu B, patch %lu B, %lu B written)\n", rc, (unsigned long)dict.size, (unsigned long)patch.size, (unsigned long)target.size);
 		return 1;
 	}
 	if (n != target.size) { printf("length disagrees with bytes written\n"); return 3; }
@@ -121,7 +115,7 @@ func TestCLargeTargets(t *testing.T) {
 		os.WriteFile(d, dict, 0o644)
 		os.WriteFile(p, patch, 0o644)
 		spec := fmt.Sprintf("%d:%d:%d:%d", cfg.buffer, cfg.page, read, cfg.tables)
-		if out, err := cCommand(bin, spec, d, p, o, fmt.Sprint(capacity)).CombinedOutput(); err != nil {
+		if out, err := cCommand(bin, spec, d, p, o, fmt.Sprint(capacity), fmt.Sprint(len(dict)), fmt.Sprint(len(patch))).CombinedOutput(); err != nil {
 			t.Fatalf("%v: %s", err, bytes.TrimSpace(out))
 		}
 		got, err := os.ReadFile(o)
