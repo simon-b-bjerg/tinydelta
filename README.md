@@ -409,6 +409,8 @@ the patch carries only what really changed. This is the idea behind
 Google's Courgette for Chrome updates, made small: no disassembler,
 only the map and the few instruction forms that hold addresses.
 
+![A new function moves foo: the map in the patch header updates the addresses in the old image while decoding, so the patch only carries the new function](docs/relocation.svg)
+
 | | coded | coded, relocated |
 |---|---:|---:|
 | ARM Thumb: MicroPython for SAMD21, 44 updates, ~185 KB | 151,935 B | **25,992 B (−83%)** |
