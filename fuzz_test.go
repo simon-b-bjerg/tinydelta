@@ -132,8 +132,8 @@ func FuzzEncodeRoundTrip(f *testing.F) {
 				t.Fatalf("greedy=%v: round trip produced %d B, want %d B", greedy, len(got), len(target))
 			}
 
-			// DecodeReaderLimit treats a limit <= 0 as "no limit", so the
-			// one-less check needs a target of at least 2 bytes.
+			// A limit must be at least 1, so the one-less check needs a
+			// target of at least 2 bytes.
 			if len(target) >= 2 {
 				if _, err := DecodeReaderLimit(dict, bytes.NewReader(patch), len(target)); err != nil {
 					t.Fatalf("greedy=%v: decode capped at the exact length: %v", greedy, err)
@@ -295,7 +295,7 @@ func FuzzDecode(f *testing.F) {
 			}
 			return
 		}
-		if capacity > 0 && len(out) > int(capacity) {
+		if capacity == 0 || len(out) > int(capacity) {
 			t.Fatalf("%d bytes out, capacity %d", len(out), capacity)
 		}
 	})

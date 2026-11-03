@@ -141,7 +141,7 @@ func decodeCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	if err := fs.Parse(args); err != nil {
 		return parseExit(err)
 	}
-	if fs.NArg() < 2 || fs.NArg() > 3 {
+	if fs.NArg() < 2 || fs.NArg() > 3 || *maxSize < 1 {
 		fs.Usage()
 		return exitUsage
 	}
@@ -160,7 +160,7 @@ func decodeCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		patch = f
 	}
 	if *twoPass { // first pass: the patch against an empty dictionary gives the patch for the second
-		inner, err := tinydelta.DecodeReader(nil, patch)
+		inner, err := tinydelta.DecodeReaderLimit(nil, patch, firstPassLimit(*maxSize))
 		if err != nil {
 			return fail(stderr, err)
 		}
@@ -178,6 +178,23 @@ func decodeCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	}
 	return exitOK
 }
+
+// firstPassLimit caps a two-pass patch's first pass, whose output is the
+// intermediate patch, for a target of at most maxSize bytes. That patch can
+// be larger than the target, but at most 8 bytes per target byte: a 6-byte
+// COPY to realign, then an ADD_DIFF of its one byte. So a valid patch always
+// fits, and a tiny patch can't expand to far more than -max-size allows.
+func firstPassLimit(maxSize int) int {
+	if maxSize >= (tinydelta.MaxSize-firstPassSlack)/firstPassFactor {
+		return tinydelta.MaxSize
+	}
+	return maxSize*firstPassFactor + firstPassSlack
+}
+
+const (
+	firstPassFactor = 8
+	firstPassSlack  = 4096
+)
 
 // outputName returns the optional output argument at index i, or "-".
 func outputName(fs *flag.FlagSet, i int) string {

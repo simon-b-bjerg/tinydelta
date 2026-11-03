@@ -14,7 +14,7 @@ permissions:
 jobs:
   go:
     name: Go tests (Go ${{ matrix.go }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         go: ['1.21', stable] # 1.21 is the oldest version go.mod allows
@@ -67,7 +67,7 @@ jobs:
 
   reuse:
     name: License headers (REUSE)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: fsfe/reuse-action@v5
@@ -185,6 +185,41 @@ jobs:
           "$RUNNER_TEMP/venv/bin/tinydelta" version
           cd "$RUNNER_TEMP" && "$RUNNER_TEMP/venv/bin/python" -m unittest discover \
             -s "$GITHUB_WORKSPACE/python/tests" -t "$GITHUB_WORKSPACE/python/tests" -v
+      - name: Keep the wheels for the other platforms
+        if: runner.os == 'Linux' && matrix.python == '3.x'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels
+          path: ${{ runner.temp }}/wheels/
+
+  wheels:
+    name: Wheel on ${{ matrix.os }}
+    needs: python
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04-arm, windows-latest, windows-11-arm]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.x
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels
+          path: ${{ runner.temp }}/wheels
+      - name: Install this platform's wheel and run the tests against it
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          bin="$RUNNER_TEMP/venv/bin"; [ -d "$bin" ] || bin="$RUNNER_TEMP/venv/Scripts"
+          "$bin/python" -m pip install -q --no-index --find-links "$RUNNER_TEMP/wheels" tinydelta
+          "$bin/tinydelta" version
+          cd "$RUNNER_TEMP" && "$bin/python" -m unittest discover \
+            -s "$GITHUB_WORKSPACE/python/tests" -t "$GITHUB_WORKSPACE/python/tests" -v
 
   windows:
     name: Go tests on Windows
@@ -200,7 +235,7 @@ jobs:
 
   c-arm:
     name: C library on 32-bit ARM
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -227,7 +262,7 @@ jobs:
 
   c-msp430:
     name: C library on MSP430 (GNU simulator)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -239,7 +274,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/.cache/msp430
-          key: msp430-${{ runner.os }}-${{ hashFiles('scripts/msp430-toolchain.sh') }}
+          key: msp430-ubuntu-24.04-${{ hashFiles('scripts/msp430-toolchain.sh') }}
       - name: Build MSP430-GCC and the GNU MSP430 simulator (when not cached)
         if: steps.toolchain.outputs.cache-hit != 'true'
         run: |
@@ -282,7 +317,7 @@ jobs:
 
   coverage:
     name: Go coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       coverage: ${{ steps.go.outputs.statements }}
       vectors: ${{ steps.go.outputs.vectors }}
@@ -308,7 +343,7 @@ jobs:
     name: Update coverage badges
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [c-fuzz, coverage]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write # pushes the badges branch, which holds only badge data
     steps:

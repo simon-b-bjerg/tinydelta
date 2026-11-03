@@ -15,6 +15,10 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Largest dictionary or target the format supports: 2^30 - 1 bytes.
  * This bound keeps every value in a patch within 32 bits. */
 #define TINYDELTA_MAX_SIZE 0x3FFFFFFFu
@@ -45,7 +49,8 @@ typedef enum {
  * p_target, which holds target_cap bytes (values above TINYDELTA_MAX_SIZE
  * are treated as TINYDELTA_MAX_SIZE). On success, sets *p_target_len to
  * the target's length. Uses 32-bit arithmetic only, no allocation, and
- * reads the patch once, front to back. */
+ * reads the patch once, front to back. p_dict and p_target must be valid
+ * pointers even when their size is 0, as they go to memcpy. */
 tinydelta_result_t tinydelta_decode(
     const uint8_t *p_dict, uint32_t dict_len, const uint8_t *p_patch, uint32_t patch_len, uint8_t *p_target, uint32_t target_cap, uint32_t *p_target_len);
 
@@ -79,6 +84,10 @@ tinydelta_result_t tinydelta_decode_coded(const uint8_t *p_dict,
                                           uint8_t *p_tables,
                                           uint32_t tables_size,
                                           uint32_t *p_target_len);
+#endif
+
+#ifdef __cplusplus
+}
 #endif
 
 #endif

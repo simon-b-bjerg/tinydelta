@@ -27,12 +27,10 @@ func Decode(dict, patch []byte) ([]byte, error) {
 	return DecodeReaderLimit(dict, bytes.NewReader(patch), MaxSize)
 }
 
-// DecodeReader is Decode for a patch available only as a stream: it reads
-// exactly as many bytes as the patch needs and no more, so it composes
-// directly with another stream decoder instead of requiring the whole
-// patch to be buffered first (e.g. decoding straight off a network or
-// flash read, a chunk at a time). Malformed input returns an error
-// rather than panicking.
+// DecodeReader is Decode for a patch available only as a stream, so it
+// needn't be buffered first. A patch has no end marker, so it reads r to
+// EOF: r must hold the patch and nothing after it (see io.LimitReader).
+// Malformed input returns an error rather than panicking.
 func DecodeReader(dict []byte, r io.Reader) ([]byte, error) {
 	return DecodeReaderLimit(dict, r, MaxSize)
 }
@@ -43,15 +41,18 @@ func DecodeReader(dict []byte, r io.Reader) ([]byte, error) {
 // output. A short, valid patch can legitimately describe a huge target
 // (a long COPY_TARGET run costs a few bytes), so a decoder that knows how
 // big the result should be — say, the config buffer it's writing into —
-// should say so rather than trust the patch. maxOutput <= 0 or above
-// MaxSize means MaxSize.
+// should say so rather than trust the patch. maxOutput must be at least
+// 1, so that a size that was never set fails instead of lifting the cap;
+// for no cap beyond the format's own, pass MaxSize. Above MaxSize means
+// MaxSize.
 func DecodeReaderLimit(dict []byte, r io.Reader, maxOutput int) (target []byte, err error) {
 	if len(dict) > MaxSize {
 		return nil, fmt.Errorf("%w: dictionary is %d bytes, MaxSize is %d", ErrTooLarge, len(dict), MaxSize)
 	}
-	if maxOutput <= 0 || maxOutput > MaxSize {
-		maxOutput = MaxSize
+	if maxOutput < 1 {
+		return nil, fmt.Errorf("tinydelta: output limit %d is below 1", maxOutput)
 	}
+	maxOutput = min(maxOutput, MaxSize)
 	defer func() {
 		if rec := recover(); rec != nil {
 			target, err = nil, fmt.Errorf("tinydelta: malformed patch: %v", rec)

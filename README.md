@@ -335,6 +335,8 @@ if (result == TINYDELTA_OK) {
 The final hash of the new firmware covers both passes. Encode with
 `-window 256` (`EncodeOptions.Window`) and neither pass reads its own
 output further back than the buffer holds: `target_read` can be `NULL`.
+With `-two-pass -coder-tables`, the outer patch can be coded too, so give
+pass 1 the tables as well (`p_tables`, `tables_size`).
 
 </details>
 
@@ -505,7 +507,8 @@ encoder returns the smallest patch it can decode:
 | `-two-pass` | can decode twice ([Two-pass patches](#two-pass-patches)); prints `passes 1` or `passes 2` | one pass |
 
 `decode -max-size` rejects patches whose output would exceed
-the given size. The exit status is 0 on success, 1 on failure and 2 on
+the given size, which must be at least 1; with `-two-pass` it also caps the first pass, at 8 times
+that size plus 4 KB, enough for any valid intermediate patch. The exit status is 0 on success, 1 on failure and 2 on
 a usage error.
 
 ## Go library
@@ -535,7 +538,7 @@ newFile, err := tinydelta.DecodeReaderLimit(oldFile, r, maxSize) // from an io.R
 | `EncodeGreedy` | One pass with one byte of lookahead; well under a millisecond for a few KB, patches typically a few percent larger. |
 | `EncodeWith` | The smallest patch the decoder described by `EncodeOptions` can decode (`CoderTables`, `Window`, `TwoPass`, `MaxInstructionLen`, `Greedy`), as a `Patch`: the bytes and the number of passes. |
 | `Decode`, `DecodeReader` | Apply a patch from a byte slice or an `io.Reader`. |
-| `DecodeReaderLimit` | As `DecodeReader`, but fails with `ErrTooLarge` before the target would exceed a size you choose. |
+| `DecodeReaderLimit` | As `DecodeReader`, but fails with `ErrTooLarge` before the target would exceed a size you choose, of at least 1. |
 
 The limit is fixed. Lifted in a test, on a 230 KB MicroPython image, the
 optimal encoder took about 30 s on one core and gave a patch about 2%
@@ -626,6 +629,9 @@ tinydelta_result_t tinydelta_decode(const uint8_t *p_dict, uint32_t dict_len,
 
 Writes the target into `p_target` and sets `*p_target_len`. It fails
 with `TINYDELTA_ERR_TOO_LARGE` rather than write past `target_cap`.
+`p_dict` and `p_target` must be valid pointers even when their size is 0,
+as they go to `memcpy`: for an empty dictionary, pass any buffer with
+`dict_len` 0.
 With `TINYDELTA_CODER`, `tinydelta_decode_coded` takes two more
 arguments, a buffer for a coded patch's tables and its size, and reads
 plain and coded patches.
@@ -1089,13 +1095,16 @@ What is tested, and how:
 | `TestCDecoderMatchesGo`, `TestCIODecoderMatchesGo` | the C decoders against the Go decoder on valid, truncated and corrupted patches and too-small output buffers, at several buffer and flash-page sizes; the test driver polices the callback contract (sequential whole-page programming, no reads of unwritten data) |
 | `TestCIODecoderCallbackFailures` | a failing read or write callback stops decoding with `TINYDELTA_ERR_IO` |
 | `TestCIODecoderWithoutTargetRead`, `TestCIODecoderBufferChecks` | the callback decoder decodes patches limited to its buffer without `target_read`, and rejects one that reaches further back, and a bad buffer or page size |
+| `TestCLargeTargets` | the callback decoder with its data in files, as on external flash: dictionary, patch and target past 64 KB, plain, limited to the buffer, coded, and two passes with a coded outer patch; on MSP430 too, where those offsets need 32-bit arithmetic on 16-bit registers |
+| `TestEncodeLongRuns` | long runs, such as padding, don't make the optimal encoder quadratic |
+| `TestCHeadersFromCPlusPlus` | C++ code can include the headers and link against the decoders |
 | `TestTwoPass`, `TestCTwoPass` | [two-pass patches](#two-pass-patches) end to end: the outer patch decoded, then the inner one, with the Go decoder and both C decoders |
 | `TestVectors`, `TestCVectors` | the Go decoder, the C memory decoder and the C callback decoder (several buffer and page sizes) against every [conformance vector](#conformance-vectors) |
 | C fuzzing ([`c/fuzz/fuzz_decode.c`](c/fuzz/fuzz_decode.c)) | libFuzzer with AddressSanitizer and UndefinedBehaviorSanitizer: every input through an independent reference decoder and all C decoder configurations, which must agree exactly; any memory error, undefined behaviour or breach of the callback contract fails; injected callback failures must give `TINYDELTA_ERR_IO` |
 | `scripts/c-check.sh` | the C library builds with strict warnings as errors |
 | `scripts/c-format.sh` | the C sources match [`c/.clang-format`](c/.clang-format) |
 | `scripts/c-analyze.sh` | static analysis of the C library with GCC's analyzer, the Clang Static Analyzer, clang-tidy (bug-finding checks, see [`c/.clang-tidy`](c/.clang-tidy)) and cppcheck's MISRA C:2012 addon (see [C coding rules](#c-coding-rules)); any finding fails |
-| `scripts/c-cbmc.sh` ([`c/cbmc/`](c/cbmc/)) | bounded model checking with [CBMC](https://www.cprover.org/cbmc/): not a sample but every input up to small bounds (memory decoder: dictionary 4, patch 8, output 8 bytes; callback decoder: 2, 4 and 4 bytes, at several buffer and page sizes, with and without `target_read`). Proves, within those bounds, no out-of-bounds access and no undefined behaviour, the callback contract, the same result and bytes as the memory decoder, `TINYDELTA_ERR_IO` for any one failing callback, and rejection of bad buffer setups |
+| `scripts/c-cbmc.sh` ([`c/cbmc/`](c/cbmc/)) | bounded model checking with [CBMC](https://www.cprover.org/cbmc/): not a sample but every input up to small bounds (memory decoder: dictionary 4, patch 8, output 8 bytes; callback decoder: 2, 4 and 4 bytes, at several buffer and page sizes, with and without `target_read`). Proves, within those bounds, no out-of-bounds access and no undefined behaviour, the callback contract, the same result and bytes as the memory decoder, `TINYDELTA_ERR_IO` for any one failing callback, and rejection of bad buffer setups. The coder is checked one byte at a time, from any state a corrupt patch can reach: it stays within its tables and keeps its range normalized, which carries over to a whole patch. A decoder running the coder end to end is too much arithmetic for CBMC, so that path is covered by fuzzing |
 | CodeQL | GitHub's code scanning, security and quality queries, over the Go code and the C library; results in the repository's Security tab |
 
 <details>
@@ -1146,6 +1155,7 @@ There are two, one for each side of the format:
 | Update coverage badges | on pushes to `main` only: writes the Go and C coverage figures and the number of conformance vectors for the badges above to the `badges` branch |
 | Go tests on Windows | `go test ./...` for the library and the CLI |
 | Python package | on Linux and Windows, with Python 3.9 and current: the Python tests, including every conformance vector, against a fresh build of the tool; on Linux also builds the wheels, checks them with `twine` and tests the installed wheel |
+| Wheels on other platforms | installs the wheel built above on Linux ARM64, Windows x64 and Windows ARM64, and runs the Python tests against it |
 | C static analysis | `scripts/c-format.sh` and `scripts/c-analyze.sh` |
 | C decoders model-checked | `scripts/c-cbmc.sh` (CBMC from Ubuntu's packages), a few minutes |
 | License headers (REUSE) | `reuse lint`: every file carries an SPDX license header, or is covered by [`REUSE.toml`](REUSE.toml) |
