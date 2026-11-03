@@ -86,11 +86,14 @@ type relocEntry struct {
 }
 
 type relocMap struct {
-	rules   *Rules // which bytes are addresses
-	ship    bool   // the patch carries the rule table (else names it by CRC)
-	base    uint32
-	entries []relocEntry
-	data    []relocRun // in rule tables with data rules
+	rules *Rules // which bytes are addresses
+	ship  bool   // the patch carries the rule table (else names it by CRC)
+	// shippedLen is a shipped table's length, read from the header before
+	// the table itself is decoded from the coded stream.
+	shippedLen int
+	base       uint32
+	entries    []relocEntry
+	data       []relocRun // in rule tables with data rules
 	// Addresses outside the old image that moved (RAM: variables), start
 	// and length as addresses.
 	outside []relocEntry
@@ -103,10 +106,16 @@ const relocationRules Relocation = 3
 // codedShippedRules is the features bit for a rule table in the patch.
 const codedShippedRules = 0x10
 
+// relocMaxTable is the longest rule table a patch may ship.
+const relocMaxTable = 4096
+
 // arch is the features value the patch carries: the built-in Thumb and
 // MSP430X tables keep their numbers (1, 2), which the C decoders know.
 func (m *relocMap) arch() Relocation {
-	if m.rules.builtin != RelocationNone && !m.ship {
+	if m.ship || m.rules == nil {
+		return relocationRules
+	}
+	if m.rules.builtin != RelocationNone {
 		return m.rules.builtin
 	}
 	return relocationRules
@@ -158,9 +167,8 @@ func (m *relocMap) ramSize() int {
 // them after the features byte.
 func (m *relocMap) appendHeader(b []byte) []byte {
 	if m.arch() == relocationRules {
-		if m.ship {
+		if m.ship { // the table itself starts the coded stream
 			b = appendVarint(b, uint64(len(m.rules.table)))
-			b = append(b, m.rules.table...)
 		} else {
 			b = append(b, byte(m.rules.crc), byte(m.rules.crc>>8))
 		}
@@ -213,14 +221,10 @@ func parseRelocMap(arch Relocation, shipped bool, b []byte, extra *Rules) (*relo
 	if arch == relocationRules {
 		if shipped {
 			n, err := next()
-			if err != nil || n > uint64(len(b)-pos) {
+			if err != nil || n == 0 || n > relocMaxTable {
 				return nil, 0, errRelocMap
 			}
-			r, err := ParseRulesTable(b[pos : pos+int(n)])
-			if err != nil {
-				return nil, 0, err
-			}
-			m.rules, pos = r, pos+int(n)
+			m.shippedLen = int(n) // the table follows in the coded stream
 		} else {
 			if len(b) < 2 {
 				return nil, 0, errRelocMap

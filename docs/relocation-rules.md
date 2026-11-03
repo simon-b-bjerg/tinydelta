@@ -210,56 +210,75 @@ was changed to match. The decoder writes only the bytes inside the span.
 ## Binary table
 
 The compiler (`tinydelta rules compile`) turns the YAML into a table the
-C engine reads in place: little-endian, byte-aligned, no pointers.
+C engine reads in place: byte-aligned, no pointers, values and masks
+little-endian. Fields a rule doesn't need take no bytes.
 
 ```text
-table   = version (1) + unit (1) + word bytes (1) + flags (1: bit 0 big-endian) + sync (1)
-        + prefixes (1) + lengths (1) + code (1) + data (1)        counts
+table   = version (1)
+        + mode (1: bits 0-1 log2 unit, 2-3 word bytes − 1, 4 big-endian)
+        + sync (1)
+        + prefixes (1) + lengths (1) + code (1) + data (1)        rule counts
         + rules, in that order
 
-rule    = kind/flags (1: has address, has address2, relative, require in-image, space ×2 bits)
-        + align (1) + size (1)
-        + conditions (1) + conditions × condition
+rule    = first (1: bits 0-1 addresses 0-2, 2-4 conditions 0-4, 5 relative, 6 "more" follows)
+        + [more (1: bit 0 require, 1-2 space, 3 align follows, 4 size follows, 5 unless follows)]
+        + [align (1)] + [size (1)]                     only if not the defaults
         + prefixes: skip (1); lengths: length (1)
-        + per address: slices (1) + slices × slice
-        + relative: base (1, signed) + sign_extend (1)
-        + unless (1) + unless × ( rule index (1) + offsets (1) + offsets × offset (1, signed) )
+        + conditions × ( word (1: bits 0-6 index, bit 7 negate) + value (word bytes) + mask (word bytes) )
+        + addresses × ( slices (1) + slices × slice )
+        + [relative: base (1, signed) + sign_extend (1)]
+        + [unless: entries (1) + entries × ( rule index (1) + offsets (1) + offsets × offset (1, signed) )]
 
-condition = word (1: bits 0-6 index, bit 7 negate) + value (word bytes) + mask (word bytes)
-slice     = word (1: 0xFF for fixed bits) + hi (1) + lo (1)        fixed bits: count in hi, value in lo
+slice   = (1: bits 0-4 lowest bit, 5-7 word) + (1: bits 0-4 width − 1)
+          or fixed bits: (1: their value) + (1: 0x80 | count − 1)
 ```
 
-Every rule has the same layout: flags, align, size, `n` (a prefix's skip
-or a length rule's length, else 0), the condition count and conditions,
-the addresses, the relative fields, the unless count and entries. The
-CRC is CRC-16/CCITT-FALSE (polynomial 0x1021, initial 0xFFFF) over the
+Defaults: `align` is the unit; `size` is the bytes the rule's conditions
+and slices read (at least one word). A table that gives a default
+explicitly is rejected, so every rule set has exactly one table and one
+CRC: CRC-16/CCITT-FALSE (polynomial 0x1021, initial 0xFFFF) over the
 whole table.
 
-Size: `rules/msp430x.yaml` compiles to 717 B: header 9, prefix 11,
-lengths 264 (24 rules), code 407 (20), data 26. `rules/thumb.yaml`: 55 B.
+Size: `rules/msp430x.yaml` compiles to 482 B (717 B with a fixed layout
+per rule), `rules/thumb.yaml` to 41 B.
 
 ## In the patch
 
-The coded header's features byte changes meaning for relocation:
+The coded header's features byte:
 
 | bits | meaning |
 |---|---|
-| 0-1 | layout, as before |
+| 0-1 | the coder's table layout (1 C, 2 B, 3 A) |
 | 2-3 | 0 no relocation; 1 the built-in Thumb table; 2 the built-in MSP430X table; **3 another rule table** (named by CRC, or shipped) |
 | 4 | with 3: the rule table is in the patch |
 | 5-7 | reserved, 0 |
 
-Values 1 and 2 keep the patches the current C decoders read. After the
-features byte, with value 3: if bit 4 is set, the table
-(varint length, then the bytes); else a 2-byte CRC-16 (CCITT, little-endian)
-of the table the encoder used, which must equal the decoder's built-in
-table's, else `TINYDELTA_ERR_VERSION`. Then the map as now (base,
-entries, data runs, RAM ranges); data runs and RAM ranges are present
-for values 2 and 3, empty where unused.
+Values 1 and 2 keep the patches the current C decoders read. The whole
+coded patch, with relocation:
 
-A shipped table goes into the tables buffer before the map: about 600 B for
-MSP430X, on top of the coder's tables and the map. It is only for
-experiments: a table worth keeping becomes the built-in one.
+```text
+byte 0     0x81 or 0x82: coded, instruction set of version 1 or 2
+byte 1     features (above)
+[table]    value 3 only: if bit 4, the shipped table's length (varint);
+           else the CRC-16 of the table the encoder used (2 bytes, little-endian)
+map        base (varint), entries, [data runs, RAM ranges: values 2 and 3]
+n          the uncoded instruction stream's length (varint)
+stream     range-coded: [the shipped table's bytes], then the instructions
+```
+
+A CRC must equal the decoder's built-in table's, else
+`TINYDELTA_ERR_VERSION`. A shipped table is coded at the start of the
+stream, each byte by a bit tree of 255 states that start at even odds
+(the decoder borrows the coder's tables for them and clears them before
+the instructions): the 482-byte MSP430X table costs about 300 B in the
+patch. The map stays uncoded: per patch it is too small for an adaptive
+model to learn (coding the maps of 17 MSP430X updates gave 575 B for
+605 B raw, and 624 B with a model per field).
+
+In the decoder's tables buffer: the coder's tables (522, 777 or 1287 B),
+then a shipped table (its length), then the map (12 B per entry and per
+RAM range, 8 B per data run). A shipped table is only for experiments: a
+table worth keeping becomes the built-in one.
 
 ## Limits and validation
 
