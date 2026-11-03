@@ -599,25 +599,23 @@ func (r *Rules) slicesFromYAML(items []*yamlNode, what string) ([]ruleSlice, int
 // ---- binary table --------------------------------------------------------
 
 // The binary table (docs/relocation-rules.md, "Binary table"). Header:
-// version, unit and word (bits 0-1 log2 unit, 2-3 word bytes - 1, 4 big
-// endian), sync, then the four lists' rule counts. A rule's first byte:
-// bits 0-1 its addresses (0-2), 2-4 its conditions (0-4), 5 relative, 6 a
-// second byte follows (bit 0 require, 1-2 space, 3 align given, 4 size
-// given, 5 unless entries follow); prefixes and lengths then have their
-// skip or length byte.
+// version, mode (bits 0-1 log2 unit, 2-3 word bytes - 1, 4 big endian),
+// sync, then the four lists' rule counts. Each rule starts with four
+// bytes: its length in bytes; flags (bits 0-1 addresses 0-2, 2-4
+// conditions 0-4, 5 relative, 6 require, 7 unless entries follow); attr
+// (bits 0-1 space, 2-3 log2 align); and a prefix's skip, a length rule's
+// length, or a code or data rule's size. So a decoder skips a rule that
+// doesn't match without reading the rest of it.
 const (
-	ruleRelative = 1 << 5
-	ruleMore     = 1 << 6
-	moreRequire  = 1 << 0
-	moreSpace    = 1 // shift of the 2-bit space
-	moreAlign    = 1 << 3
-	moreSize     = 1 << 4
-	moreUnless   = 1 << 5
-	sliceFixed   = 0x80 // in a slice's second byte
+	ruleRelative  = 1 << 5
+	ruleRequire   = 1 << 6
+	ruleHasUnless = 1 << 7
+	sliceFixed    = 0x80 // in a slice's second byte
+	ruleHeadSize  = 4
 )
 
 // defaultSize is the bytes a rule's conditions and addresses read, at
-// least one word: its size when the table doesn't give one.
+// least one word.
 func (r *Rules) defaultSize(ru *rule) int {
 	words := 1
 	for _, c := range ru.conds {
@@ -633,10 +631,17 @@ func (r *Rules) defaultSize(ru *rule) int {
 	return words * r.wordBytes
 }
 
-func log2unit(u int) int { return map[int]int{1: 0, 2: 1, 4: 2}[u] }
+func log2(v int) int {
+	n := 0
+	for v > 1 {
+		v >>= 1
+		n++
+	}
+	return n
+}
 
 func (r *Rules) compile() []byte {
-	mode := byte(log2unit(r.unit) | (r.wordBytes-1)<<2)
+	mode := byte(log2(r.unit) | (r.wordBytes-1)<<2)
 	if r.big {
 		mode |= 1 << 4
 	}
@@ -647,39 +652,22 @@ func (r *Rules) compile() []byte {
 	for l := range r.lists {
 		for i := range r.lists[l] {
 			ru := &r.lists[l][i]
-			first := byte(len(ru.addrs) | len(ru.conds)<<2)
+			start := len(b)
+			flags := byte(len(ru.addrs) | len(ru.conds)<<2)
 			if ru.relative {
-				first |= ruleRelative
+				flags |= ruleRelative
 			}
-			more := byte(ru.space) << moreSpace
 			if ru.require {
-				more |= moreRequire
-			}
-			if ru.align != r.unit {
-				more |= moreAlign
-			}
-			if ru.size != r.defaultSize(ru) {
-				more |= moreSize
+				flags |= ruleRequire
 			}
 			if len(ru.unless) > 0 {
-				more |= moreUnless
+				flags |= ruleHasUnless
 			}
-			if more != 0 {
-				first |= ruleMore
-			}
-			b = append(b, first)
-			if more != 0 {
-				b = append(b, more)
-				if more&moreAlign != 0 {
-					b = append(b, byte(ru.align))
-				}
-				if more&moreSize != 0 {
-					b = append(b, byte(ru.size))
-				}
-			}
+			n := ru.size
 			if l < ruleCode {
-				b = append(b, byte(ru.n))
+				n = ru.n
 			}
+			b = append(b, 0, flags, byte(ru.space|log2(ru.align)<<2), byte(n))
 			for _, c := range ru.conds {
 				w := byte(c.word)
 				if c.neg {
@@ -711,6 +699,7 @@ func (r *Rules) compile() []byte {
 					}
 				}
 			}
+			b[start] = byte(len(b) - start)
 		}
 	}
 	return b
@@ -728,207 +717,37 @@ var errRulesTable = errors.New("tinydelta: bad relocation rule table")
 // ParseRulesTable reads and validates a binary table (Table), as the
 // decoder does with a table shipped in a patch.
 func ParseRulesTable(b []byte) (*Rules, error) {
-	pos := 0
-	get := func() (int, error) {
-		if pos >= len(b) {
-			return 0, errRulesTable
-		}
-		pos++
-		return int(b[pos-1]), nil
-	}
 	bad := func(what string) error { return fmt.Errorf("%w: %s", errRulesTable, what) }
-	var hdr [7]int
-	for i := range hdr {
-		v, err := get()
-		if err != nil {
-			return nil, err
-		}
-		hdr[i] = v
+	if len(b) < 7 {
+		return nil, bad("short header")
 	}
-	mode := hdr[1]
-	r := &Rules{unit: 1 << (mode & 3), wordBytes: mode>>2&3 + 1, big: mode&0x10 != 0, sync: hdr[2], table: append([]byte{}, b...)}
+	mode := int(b[1])
+	r := &Rules{unit: 1 << (mode & 3), wordBytes: mode>>2&3 + 1, big: mode&0x10 != 0, sync: int(b[2]), table: append([]byte{}, b...)}
 	switch {
-	case hdr[0] != rulesVersion:
+	case b[0] != rulesVersion:
 		return nil, bad("version")
 	case mode&^0x1F != 0 || mode&3 == 3:
 		return nil, bad("unit or word")
 	case r.sync > rulesMaxSync:
 		return nil, bad("sync")
 	}
+	pos := 7
 	for l := range r.lists {
-		if hdr[3+l] > rulesMaxRules {
+		count := int(b[3+l])
+		if count > rulesMaxRules {
 			return nil, bad("rule count")
 		}
-	}
-	for l := range r.lists {
-		for i := 0; i < hdr[3+l]; i++ {
-			var ru rule
-			first, err := get()
+		for i := 0; i < count; i++ {
+			if len(b)-pos < ruleHeadSize || int(b[pos]) < ruleHeadSize || int(b[pos]) > len(b)-pos {
+				return nil, bad("rule length")
+			}
+			ru, err := r.parseRule(b[pos:pos+int(b[pos])], l, count)
 			if err != nil {
 				return nil, err
 			}
-			addrs, conds := first&3, first>>2&7
-			ru.relative = first&ruleRelative != 0
-			ru.align = r.unit
-			more := 0
-			if first&ruleMore != 0 {
-				if more, err = get(); err != nil {
-					return nil, err
-				}
-				if more == 0 || more&^0x3F != 0 {
-					return nil, bad("rule flags")
-				}
-			}
-			ru.require, ru.space = more&moreRequire != 0, more>>moreSpace&3
-			explicitSize := 0
-			if more&moreAlign != 0 {
-				if ru.align, err = get(); err != nil {
-					return nil, err
-				}
-			}
-			if more&moreSize != 0 {
-				if explicitSize, err = get(); err != nil {
-					return nil, err
-				}
-			}
-			switch {
-			case first&0x80 != 0 || addrs > 2 || conds > rulesMaxConds || ru.space > spaceData:
-				return nil, bad("rule flags")
-			case ru.align < r.unit || ru.align > 8 || ru.align&(ru.align-1) != 0:
-				return nil, bad("align")
-			case l < ruleCode && (addrs > 0 || ru.relative || more&^(moreAlign|moreSize) != 0):
-				return nil, bad("prefix or length rule with addresses")
-			}
-			if l < ruleCode {
-				if ru.n, err = get(); err != nil {
-					return nil, err
-				}
-				if (l == rulePrefixes && (ru.n < 1 || ru.n > rulesMaxSkip || ru.n%r.unit != 0)) || (l == ruleLengths && (ru.n < 1 || ru.n > rulesMaxLength)) {
-					return nil, bad("prefix skip or length")
-				}
-			}
-			for k := 0; k < conds; k++ {
-				w, err := get()
-				if err != nil {
-					return nil, err
-				}
-				c := ruleCond{word: w & 0x7F, neg: w&0x80 != 0}
-				if c.value, err = r.getWord(b, &pos); err != nil {
-					return nil, err
-				}
-				if c.mask, err = r.getWord(b, &pos); err != nil {
-					return nil, err
-				}
-				if c.word >= rulesMaxWords || c.value&^c.mask != 0 {
-					return nil, bad("condition")
-				}
-				ru.condSize = max(ru.condSize, (c.word+1)*r.wordBytes)
-				ru.conds = append(ru.conds, c)
-			}
-			for a := 0; a < addrs; a++ {
-				n, err := get()
-				if err != nil {
-					return nil, err
-				}
-				if n < 1 || n > rulesMaxSlices {
-					return nil, bad("slice count")
-				}
-				var sl []ruleSlice
-				for k := 0; k < n; k++ {
-					x, err := get()
-					if err != nil {
-						return nil, err
-					}
-					y, err := get()
-					if err != nil {
-						return nil, err
-					}
-					var s ruleSlice
-					if y&sliceFixed != 0 {
-						s = ruleSlice{word: 0xFF, hi: y&0x7F + 1, lo: x, fixed: true}
-						if s.hi > 8 || s.lo>>s.hi != 0 {
-							return nil, bad("fixed bits")
-						}
-					} else {
-						s = ruleSlice{word: x >> 5, lo: x & 0x1F, hi: x&0x1F + y}
-						if y > 31 || s.hi >= 8*r.wordBytes {
-							return nil, bad("slice")
-						}
-					}
-					sl = append(sl, s)
-				}
-				if totalBits(sl) > 32 {
-					return nil, bad("address wider than 32 bits")
-				}
-				ru.addrs = append(ru.addrs, sl)
-			}
-			if ru.relative {
-				bv, err := get()
-				if err != nil {
-					return nil, err
-				}
-				se, err := get()
-				if err != nil {
-					return nil, err
-				}
-				ru.relBase, ru.signExt = int(int8(bv)), se
-				if addrs != 1 || se < 1 || se > 31 || se > totalBits(ru.addrs[0]) {
-					return nil, bad("relative")
-				}
-			}
-			if ru.require && (addrs == 0 || ru.relative) {
-				return nil, bad("require")
-			}
-			if more&moreUnless != 0 {
-				nu, err := get()
-				if err != nil {
-					return nil, err
-				}
-				if nu < 1 || nu > rulesMaxUnless {
-					return nil, bad("unless count")
-				}
-				for k := 0; k < nu; k++ {
-					ri, err := get()
-					if err != nil {
-						return nil, err
-					}
-					na, err := get()
-					if err != nil {
-						return nil, err
-					}
-					if ri >= hdr[3+l] || na < 1 || na > rulesMaxUnlessAt {
-						return nil, bad("unless")
-					}
-					u := ruleUnless{rule: ri}
-					for j := 0; j < na; j++ {
-						o, err := get()
-						if err != nil {
-							return nil, err
-						}
-						off := int(int8(o))
-						if off < -rulesMaxUnlessOff || off > rulesMaxUnlessOff || off%r.unit != 0 {
-							return nil, bad("unless offset")
-						}
-						u.at = append(u.at, off)
-					}
-					ru.unless = append(ru.unless, u)
-				}
-			}
-			ru.size = r.defaultSize(&ru)
-			if more&moreSize != 0 {
-				if explicitSize < ru.size || explicitSize == ru.size {
-					return nil, bad("size") // below what the rule reads, or the default given explicitly
-				}
-				ru.size = explicitSize
-			}
-			if ru.size > rulesMaxSize {
-				return nil, bad("size")
-			}
-			if more&moreAlign != 0 && ru.align == r.unit {
-				return nil, bad("align given as the default")
-			}
 			r.reach = max(r.reach, ru.size-1)
 			r.lists[l] = append(r.lists[l], ru)
+			pos += int(b[pos])
 		}
 	}
 	if pos != len(b) {
@@ -938,16 +757,117 @@ func ParseRulesTable(b []byte) (*Rules, error) {
 	return r, nil
 }
 
-func (r *Rules) getWord(b []byte, pos *int) (uint32, error) {
-	if *pos+r.wordBytes > len(b) {
-		return 0, errRulesTable
+// parseRule reads and checks one rule, b exactly its bytes.
+func (r *Rules) parseRule(b []byte, l, count int) (rule, error) {
+	bad := func(what string) error { return fmt.Errorf("%w: %s", errRulesTable, what) }
+	pos := ruleHeadSize
+	get := func() int {
+		if pos >= len(b) {
+			pos++
+			return 0
+		}
+		pos++
+		return int(b[pos-1])
 	}
-	var v uint32
-	for i := 0; i < r.wordBytes; i++ {
-		v |= uint32(b[*pos+i]) << (8 * i)
+	flags, attr, n := int(b[1]), int(b[2]), int(b[3])
+	ru := rule{relative: flags&ruleRelative != 0, require: flags&ruleRequire != 0, space: attr & 3, align: 1 << (attr >> 2 & 3)}
+	addrs, conds := flags&3, flags>>2&7
+	switch {
+	case addrs > 2 || conds > rulesMaxConds || ru.space > spaceData || attr&^0x0F != 0:
+		return rule{}, bad("rule flags")
+	case ru.align < r.unit:
+		return rule{}, bad("align")
+	case l < ruleCode && (addrs > 0 || flags&(ruleRelative|ruleRequire|ruleHasUnless) != 0 || ru.space != 0):
+		return rule{}, bad("prefix or length rule with addresses")
+	case l == rulePrefixes && (n < 1 || n > rulesMaxSkip || n%r.unit != 0):
+		return rule{}, bad("prefix skip")
+	case l == ruleLengths && (n < 1 || n > rulesMaxLength):
+		return rule{}, bad("length")
 	}
-	*pos += r.wordBytes
-	return v, nil
+	for k := 0; k < conds; k++ {
+		w := get()
+		c := ruleCond{word: w & 0x7F, neg: w&0x80 != 0}
+		for i := 0; i < r.wordBytes; i++ {
+			c.value |= uint32(get()) << (8 * i)
+		}
+		for i := 0; i < r.wordBytes; i++ {
+			c.mask |= uint32(get()) << (8 * i)
+		}
+		if c.word >= rulesMaxWords || c.value&^c.mask != 0 {
+			return rule{}, bad("condition")
+		}
+		ru.condSize = max(ru.condSize, (c.word+1)*r.wordBytes)
+		ru.conds = append(ru.conds, c)
+	}
+	for a := 0; a < addrs; a++ {
+		count := get()
+		if count < 1 || count > rulesMaxSlices {
+			return rule{}, bad("slice count")
+		}
+		var sl []ruleSlice
+		for k := 0; k < count; k++ {
+			x, y := get(), get()
+			s := ruleSlice{word: x >> 5, lo: x & 0x1F, hi: x&0x1F + y}
+			if y&sliceFixed != 0 {
+				s = ruleSlice{word: 0xFF, hi: y&0x7F + 1, lo: x, fixed: true}
+				if s.hi > 8 || s.lo>>s.hi != 0 {
+					return rule{}, bad("fixed bits")
+				}
+			} else if y > 31 || s.hi >= 8*r.wordBytes {
+				return rule{}, bad("slice")
+			}
+			sl = append(sl, s)
+		}
+		if totalBits(sl) > 32 {
+			return rule{}, bad("address wider than 32 bits")
+		}
+		ru.addrs = append(ru.addrs, sl)
+	}
+	if ru.relative {
+		ru.relBase, ru.signExt = int(int8(get())), get()
+		if addrs != 1 || ru.signExt < 1 || ru.signExt > 31 || ru.signExt > totalBits(ru.addrs[0]) {
+			return rule{}, bad("relative")
+		}
+	}
+	if ru.require && (addrs == 0 || ru.relative) {
+		return rule{}, bad("require")
+	}
+	if flags&ruleHasUnless != 0 {
+		nu := get()
+		if nu < 1 || nu > rulesMaxUnless {
+			return rule{}, bad("unless count")
+		}
+		for k := 0; k < nu; k++ {
+			ri, na := get(), get()
+			if ri >= count || na < 1 || na > rulesMaxUnlessAt {
+				return rule{}, bad("unless")
+			}
+			u := ruleUnless{rule: ri}
+			for j := 0; j < na; j++ {
+				off := int(int8(get()))
+				if off < -rulesMaxUnlessOff || off > rulesMaxUnlessOff || off%r.unit != 0 {
+					return rule{}, bad("unless offset")
+				}
+				u.at = append(u.at, off)
+			}
+			ru.unless = append(ru.unless, u)
+		}
+	}
+	if pos != len(b) {
+		return rule{}, bad("rule length")
+	}
+	if l < ruleCode {
+		ru.n, ru.size = n, r.defaultSize(&ru)
+		if ru.size > rulesMaxSize {
+			return rule{}, bad("size")
+		}
+	} else {
+		ru.size = n
+		if ru.size < r.defaultSize(&ru) || ru.size > rulesMaxSize {
+			return rule{}, bad("size")
+		}
+	}
+	return ru, nil
 }
 
 // crc16CCITT is CRC-16/CCITT-FALSE: polynomial 0x1021, initial 0xFFFF.
