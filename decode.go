@@ -43,15 +43,18 @@ func DecodeReader(dict []byte, r io.Reader) ([]byte, error) {
 // output. A short, valid patch can legitimately describe a huge target
 // (a long COPY_TARGET run costs a few bytes), so a decoder that knows how
 // big the result should be — say, the config buffer it's writing into —
-// should say so rather than trust the patch. maxOutput <= 0 or above
-// MaxSize means MaxSize.
+// should say so rather than trust the patch. maxOutput must be at least
+// 1, so that a size that was never set fails instead of lifting the cap;
+// for no cap beyond the format's own, pass MaxSize. Above MaxSize means
+// MaxSize.
 func DecodeReaderLimit(dict []byte, r io.Reader, maxOutput int) (target []byte, err error) {
 	if len(dict) > MaxSize {
 		return nil, fmt.Errorf("%w: dictionary is %d bytes, MaxSize is %d", ErrTooLarge, len(dict), MaxSize)
 	}
-	if maxOutput <= 0 || maxOutput > MaxSize {
-		maxOutput = MaxSize
+	if maxOutput < 1 {
+		return nil, fmt.Errorf("tinydelta: output limit %d is below 1", maxOutput)
 	}
+	maxOutput = min(maxOutput, MaxSize)
 	defer func() {
 		if rec := recover(); rec != nil {
 			target, err = nil, fmt.Errorf("tinydelta: malformed patch: %v", rec)

@@ -36,7 +36,8 @@ assert tinydelta.decode(old, patch, max_size=len(new)) == new
   target, decoding a `Patch` in its number of passes (`passes` for plain
   `bytes`).
   Set `max_size` when the expected size is known: a short patch can
-  describe a huge target.
+  describe a huge target. It must be at least 1, so leave it out for an
+  empty target.
 - Errors raise `tinydelta.Error`; a target over `max_size` raises its
   subclass `tinydelta.TooLargeError`.
 

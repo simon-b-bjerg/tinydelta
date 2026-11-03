@@ -131,6 +131,17 @@ func TestDecodeMaxSize(t *testing.T) {
 	}
 }
 
+// TestDecodeMaxSizeBelowOne checks that a limit that can't be meant
+// is a usage error, not no limit at all.
+func TestDecodeMaxSizeBelowOne(t *testing.T) {
+	_, dict, _ := writeFiles(t)
+	for _, size := range []string{"0", "-1"} {
+		if r := runCLI([]byte{0x01}, "decode", "-max-size", size, dict, "-"); r.code != exitUsage {
+			t.Errorf("decode -max-size %s: %+v", size, r)
+		}
+	}
+}
+
 // TestDecodeTwoPassMaxSize checks that -max-size also bounds the first
 // pass: these 9 bytes expand to almost 1 GiB if nothing stops them.
 func TestDecodeTwoPassMaxSize(t *testing.T) {
@@ -151,7 +162,6 @@ func TestFirstPassLimit(t *testing.T) {
 	for _, c := range []struct{ maxSize, want int }{
 		{1, 4104},
 		{100, 4896},
-		{0, tinydelta.MaxSize},
 		{tinydelta.MaxSize, tinydelta.MaxSize},
 		{tinydelta.MaxSize / 8, tinydelta.MaxSize},
 	} {

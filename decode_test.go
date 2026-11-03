@@ -268,6 +268,14 @@ func TestDecodeHugeAddLengthFailsCleanly(t *testing.T) {
 // limit decodes, one byte over fails with ErrTooLarge, and an 8-byte patch
 // describing a 512 MiB COPY_TARGET run fails up front instead of trying
 // to produce it.
+func TestDecodeReaderLimitBelowOne(t *testing.T) {
+	for _, limit := range []int{0, -1} {
+		if _, err := DecodeReaderLimit(nil, bytes.NewReader([]byte{FormatVersion}), limit); err == nil {
+			t.Errorf("limit %d: no error", limit)
+		}
+	}
+}
+
 func TestDecodeReaderLimit(t *testing.T) {
 	dict := []byte("0123456789")
 	patch := inst(opSkip, 10)

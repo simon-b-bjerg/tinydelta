@@ -505,7 +505,7 @@ encoder returns the smallest patch it can decode:
 | `-two-pass` | can decode twice ([Two-pass patches](#two-pass-patches)); prints `passes 1` or `passes 2` | one pass |
 
 `decode -max-size` rejects patches whose output would exceed
-the given size; with `-two-pass` it also caps the first pass, at 8 times
+the given size, which must be at least 1; with `-two-pass` it also caps the first pass, at 8 times
 that size plus 4 KB, enough for any valid intermediate patch. The exit status is 0 on success, 1 on failure and 2 on
 a usage error.
 
@@ -536,7 +536,7 @@ newFile, err := tinydelta.DecodeReaderLimit(oldFile, r, maxSize) // from an io.R
 | `EncodeGreedy` | One pass with one byte of lookahead; well under a millisecond for a few KB, patches typically a few percent larger. |
 | `EncodeWith` | The smallest patch the decoder described by `EncodeOptions` can decode (`CoderTables`, `Window`, `TwoPass`, `MaxInstructionLen`, `Greedy`), as a `Patch`: the bytes and the number of passes. |
 | `Decode`, `DecodeReader` | Apply a patch from a byte slice or an `io.Reader`. |
-| `DecodeReaderLimit` | As `DecodeReader`, but fails with `ErrTooLarge` before the target would exceed a size you choose. |
+| `DecodeReaderLimit` | As `DecodeReader`, but fails with `ErrTooLarge` before the target would exceed a size you choose, of at least 1. |
 
 The limit is fixed. Lifted in a test, on a 230 KB MicroPython image, the
 optimal encoder took about 30 s on one core and gave a patch about 2%
