@@ -413,8 +413,8 @@ only the map and the few instruction forms that hold addresses.
 
 | | coded | coded, relocated |
 |---|---:|---:|
-| ARM Thumb: MicroPython for SAMD21, 44 updates, ~185 KB | 151,935 B | **25,992 B (−83%)** |
-| MSP430X, large code model: mbedtls built with `-mlarge`, 17 updates, ~176 KB | 21,773 B | **6,193 B (−72%)** |
+| ARM Thumb: MicroPython for SAMD21, 44 updates, ~185 KB | 151,935 B | **26,138 B (−83%)** |
+| MSP430X, large code model: mbedtls built with `-mlarge`, 17 updates, ~176 KB | 21,773 B | **6,230 B (−71%)** |
 
 Sums over consecutive builds, the map included; every patch decoded
 again and compared (`reloc_test.go` runs the same on synthetic images,
@@ -457,6 +457,17 @@ the calls that moved (the right base explains nearly all). It prints
 counts, offsets and instruction words only, so it can be shared where
 the images can't.
 
+Which instruction forms hold addresses is data, not code: the two rules
+are the rule files [`rules/thumb.yaml`](rules/thumb.yaml) and
+[`rules/msp430x.yaml`](rules/msp430x.yaml) (format and engine:
+[docs/relocation-rules.md](docs/relocation-rules.md), a draft). To try
+another rule, copy one, edit it, and pass it with `-rules` instead of
+`-reloc` to `encode` and `relocstats`; `tinydelta rules check` validates
+a file. Patches made with a file of your own name its table by CRC, so a
+decoder needs that table built in (`TINYDELTA_RELOC_RULES`, from `tinydelta
+rules compile -c`), or carry the table with `-ship-rules` for a decoder
+built with `TINYDELTA_RELOC_SHIPPED` (experimental).
+
 On the device, build with `TINYDELTA_CODER = 1` and
 `TINYDELTA_RELOC = TINYDELTA_RELOC_MSP430X` (or `_THUMB`), and add
 `tinydelta_reloc.c`. Nothing else changes: the tables buffer you
@@ -467,10 +478,11 @@ instruction set, or one whose map doesn't fit the tables buffer, is
 rejected with `TINYDELTA_ERR_VERSION`.
 
 The cost, from [Code size and stack](#code-size-and-stack): on
-Cortex-M0, about 1 KB more than the coded decoders; on MSP430X
-`-mlarge`, about 3.5 KB more, as most of the relocation code is 32-bit
-address arithmetic, several instructions per operation on a 16-bit
-core. RAM: the map in the tables buffer (12 bytes per entry or RAM
+Cortex-M0, about 2 KB more than the coded decoders; on MSP430X
+`-mlarge`, about 4 KB more, as addresses need 32-bit arithmetic, several
+instructions per operation on a 16-bit core (the engine keeps everything
+else in 16 bits). Both include the rule table (45 B for Thumb, 536 B for
+MSP430X) and the engine that reads it. RAM: the map in the tables buffer (12 bytes per entry or RAM
 range, 8 per data run), and in
 the callback decoder a 16-byte cache of raw dictionary bytes.
 
@@ -664,8 +676,8 @@ even on Cortex-M0). Reproduce with [`scripts/c-size.sh`](scripts/c-size.sh).
 | callback decoder | 876 B | 836 B | 836 B | ~185 B\* |
 | memory decoder + coder | 1,416 B | 1,340 B | 1,340 B | ~290 B |
 | callback decoder + coder | 1,716 B | 1,700 B | 1,700 B | ~305 B\* |
-| memory decoder + coder + Thumb relocation | 2,324 B | 2,220 B | 2,216 B | – |
-| callback decoder + coder + Thumb relocation | 2,716 B | 2,620 B | 2,616 B | – |
+| memory decoder + coder + Thumb relocation | 3,409 B | 3,273 B | 3,289 B | – |
+| callback decoder + coder + Thumb relocation | 3,801 B | 3,685 B | 3,701 B | – |
 
 \* Deepest path, excluding your buffer and your callbacks' own stack
 use. With the coder (`TINYDELTA_CODER = 1`), each decoder grows by
@@ -684,8 +696,8 @@ every 32-bit operation takes several 16-bit instructions.
 | callback decoder | 2,350 B | 2,298 B | 2,458 B | ~230 B\* |
 | memory decoder + coder | 2,608 B | 2,544 B | 2,808 B | ~290 B |
 | callback decoder + coder | 3,362 B | 3,268 B | 3,562 B | ~335 B\* |
-| memory decoder + coder + MSP430X relocation | 6,080 B | 5,870 B | 6,272 B | – |
-| callback decoder + coder + MSP430X relocation | 6,996 B | 6,750 B | 7,216 B | – |
+| memory decoder + coder + MSP430X relocation | 6,842 B | 6,522 B | 6,918 B | – |
+| callback decoder + coder + MSP430X relocation | 7,756 B | 7,400 B | 7,858 B | – |
 
 ### Results
 
@@ -926,7 +938,8 @@ deviations, listed with their reasons in
 | 10.8 composite expression cast | required | the masked two-bit opcode is cast to `tinydelta_opcode`, so `-Wswitch-enum` proves every opcode has a case |
 | 11.8 const cast away | required | cppcheck false positive: a callback's `void *p_ctx` is copied out of the `const tinydelta_io_t`; no qualifier is removed |
 | 11.5 `void *` to object pointer | advisory | the coder's byte source gets its decoder through `void *`, like the callbacks' contexts |
-| 2.5 unused macro | advisory | in builds without `TINYDELTA_CODER` only: the coder's macros go unused |
+| 2.5 unused macro | advisory | in builds without `TINYDELTA_CODER` only: the coder's macros go unused; `TINYDELTA_RELOC_RULES`, an option for the library's users; and a generated rule header's parameters in builds that read them from shipped tables |
+| 8.9 object at block scope | advisory | a relocation rule table made by `tinydelta rules compile -c` is a file-scope array in its header |
 
 ## Wire format
 

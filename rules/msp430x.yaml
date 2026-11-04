@@ -1,0 +1,128 @@
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+#
+# Relocation rules for MSP430X with the large code model (20-bit addresses).
+# Format: docs/relocation-rules.md. These rules reproduce the hand-written
+# rule of tinydelta 1.1 (reloc.go) exactly.
+#
+# Words are 16 bits, as the CPU reads them: the bytes b3 13 are w0 = 13B3.
+# A condition is value/mask: (word AND mask) == value; "!" negates it, "&"
+# joins two on one word, "-" is any word.
+
+version: 1
+name: msp430x
+unit: 2           # instructions start at even addresses
+word: 16
+endian: little
+sync: 8           # code rules apply only where decoding lengths from 8 words back lands
+
+# Instruction lengths, used only to find where instructions start (sync).
+prefixes:
+  - name: "extension word (MOVX, ADDX ...); the instruction follows it"
+    match: ["1800/F800"]
+    skip: 2
+
+lengths:          # w0 is the word after a prefix, if any; first match wins; none matching: 2
+  # 0x0000-0x0FFF, MSP430X address instructions: bits 7-4 of 2, 3, 6, 7, 8-B take a second word
+  - { match: ["0020/F0E0"], length: 4 }     # MOVA &abs20,Rd / x(Rs),Rd
+  - { match: ["0060/F0E0"], length: 4 }     # MOVA Rs,&abs20 / Rs,x(Rd)
+  - { match: ["0080/F0C0"], length: 4 }     # MOVA, CMPA, ADDA, SUBA #imm20,Rd
+  # 0x1300-0x13FF, RETI and CALLA: x(Rd), &abs20, x(PC), #imm20 take a second word
+  - { match: ["1350/FFF0"], length: 4 }
+  - { match: ["1380/FFE0"], length: 4 }
+  - { match: ["13B0/FFF0"], length: 4 }
+  - { match: ["1300/FF00"], length: 2 }
+  # 0x1000-0x12FF, one operand (RRC, SWPB, RRA, SXT, PUSH, CALL): a source word for x(Rn)/&abs (As 1, not R3) or #imm (As 3, R0)
+  - { match: ["1013/FC3F"], length: 2 }     # As 1 on R3: the constant 1
+  - { match: ["1010/FC30"], length: 4 }
+  - { match: ["1030/FC3F"], length: 4 }
+  # the rest below 0x4000 (PUSHM, POPM, jumps, and the address instructions above without a second word)
+  - { match: ["0000/C000"], length: 2 }
+  # 0x4000-0xFFFF, two operands: a source word as above (As bits 5-4, register bits 11-8), a destination word for Ad 1 (bit 7)
+  - { match: ["0390/0FB0"], length: 4 }     # As 1 on R3, Ad 1
+  - { match: ["0310/0F30"], length: 2 }     # As 1 on R3
+  - { match: ["0090/00B0"], length: 6 }     # As 1, Ad 1
+  - { match: ["0010/0030"], length: 4 }     # As 1
+  - { match: ["00B0/0FB0"], length: 6 }     # #imm, Ad 1
+  - { match: ["0030/0F30"], length: 4 }     # #imm
+  - { match: ["0080/0080"], length: 4 }     # Ad 1
+
+# Where addresses are. First match wins; a rule without address is an
+# exclusion: it matches and moves nothing.
+code:             # outside data runs, at instruction starts only
+  - name: "CALLA #imm20"
+    match: ["13B0/FFF0"]
+    address: ["w0[3:0]", "w1[15:0]"]
+  - name: "CALLA &abs20"
+    match: ["1380/FFF0"]
+    address: ["w0[3:0]", "w1[15:0]"]
+  - name: "MOVA, CMPA, ADDA, SUBA #imm20,Rd"
+    match: ["0080/F0C0"]
+    address: ["w0[11:8]", "w1[15:0]"]
+  - name: "MOVA &abs20,Rd"
+    match: ["0020/F0F0"]
+    address: ["w0[11:8]", "w1[15:0]"]
+  - name: "MOVA Rs,&abs20"
+    match: ["0060/F0F0"]
+    address: ["w0[3:0]", "w1[15:0]"]
+
+  # Extension word, then a two-operand instruction: the source word's high
+  # bits are w0[10:7], the destination word's w0[3:0]; the source word
+  # comes first. PC-relative operands (R0) take a word but aren't moved.
+  - name: "extension word before a non-two-operand instruction"
+    match: ["1800/F800", "0000/C000"]
+  - name: "source the constant 1 (As 1 on R3), destination PC-relative"
+    match: ["1800/F800", "0390/0FBF"]
+  - name: "source the constant 1, destination x(Rd) or &abs"
+    match: ["1800/F800", "0390/0FB0"]
+    address: ["w0[3:0]", "w2[15:0]"]
+    size: 6
+  - name: "source the constant 1"
+    match: ["1800/F800", "0310/0F30"]
+  - name: "source PC-relative, destination PC-relative"
+    match: ["1800/F800", "0090/0FBF"]
+  - name: "source PC-relative, destination x(Rd) or &abs"
+    match: ["1800/F800", "0090/0FB0"]
+    address: ["w0[3:0]", "w3[15:0]"]
+    size: 8
+  - name: "source PC-relative"
+    match: ["1800/F800", "0010/0F30"]
+  - name: "source x(Rs) or &abs, destination PC-relative"
+    match: ["1800/F800", "0090/00BF"]
+    address: ["w0[10:7]", "w2[15:0]"]
+    size: 8
+  - name: "source x(Rs) or &abs, destination x(Rd) or &abs"
+    match: ["1800/F800", "0090/00B0"]
+    address: ["w0[10:7]", "w2[15:0]"]
+    address2: ["w0[3:0]", "w3[15:0]"]
+    size: 8
+  - name: "source x(Rs) or &abs"
+    match: ["1800/F800", "0010/0030"]
+    address: ["w0[10:7]", "w2[15:0]"]
+    size: 6
+  - name: "source #imm, destination PC-relative"
+    match: ["1800/F800", "00B0/0FBF"]
+    address: ["w0[10:7]", "w2[15:0]"]
+    size: 8
+  - name: "source #imm, destination x(Rd) or &abs"
+    match: ["1800/F800", "00B0/0FB0"]
+    address: ["w0[10:7]", "w2[15:0]"]
+    address2: ["w0[3:0]", "w3[15:0]"]
+    size: 8
+  - name: "source #imm"
+    match: ["1800/F800", "0030/0F30"]
+    address: ["w0[10:7]", "w2[15:0]"]
+    size: 6
+  - name: "no source word, destination PC-relative"
+    match: ["1800/F800", "0080/008F"]
+  - name: "no source word, destination x(Rd) or &abs"
+    match: ["1800/F800", "0080/0080"]
+    address: ["w0[3:0]", "w2[15:0]"]
+    size: 6
+
+data:             # inside data runs (constant tables, initial values)
+  - name: "20-bit pointer into the image, 32 bits little-endian"
+    match: ["-", "0000/FFF0 & !0000/000F"]   # high half 1-15
+    address: ["w1[3:0]", "w0[15:0]"]
+    require: in-image
+    unless: [{ rule: self, at: [-2] }]       # a pointer 2 bytes before overlaps it

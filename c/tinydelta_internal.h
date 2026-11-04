@@ -25,10 +25,14 @@
  * instruction stream; then the coded stream. */
 #define TINYDELTA_CODED_FLAG        0x80u
 #define TINYDELTA_CODED_LAYOUT_MASK 0x03u
-/* Features bits 2-3: the relocation rule, 0 for none (TINYDELTA_RELOC). With
- * one, the relocation map follows the features byte. Bits 4-7: 0. */
-#define TINYDELTA_CODED_RELOC_SHIFT 2u
-#define TINYDELTA_CODED_RELOC_MASK  0x0Cu
+/* Features bits 2-3: relocation, 0 for none, 1 with the decoder's built-in
+ * rule table (named by its CRC), 2 with a rule table the patch ships at the
+ * start of the coded stream; 3 is reserved. With relocation, the relocation
+ * header follows the features byte. Bits 4-7: 0. */
+#define TINYDELTA_CODED_RELOC_SHIFT   2u
+#define TINYDELTA_CODED_RELOC_MASK    0x0Cu
+#define TINYDELTA_CODED_RELOC_BUILTIN 1u
+#define TINYDELTA_CODED_RELOC_SHIPPED 2u
 
 /* ---- Instructions -------------------------------------------------------
  * Every instruction starts with one varint: the opcode in its low bits, the

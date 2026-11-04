@@ -287,6 +287,13 @@ func FuzzDecode(f *testing.F) {
 	for _, patch := range [][]byte{plain, v2, encodeCoded(plain, codedLayoutA), encodeCoded(v2, codedLayoutB), encodeCoded(plain, codedLayoutC), {0x81, 1, 0, 0, 0, 0, 0}, {}} {
 		f.Add(dict, patch, uint16(len(target)))
 	}
+	// Relocated: the built-in tables named by CRC, and shipped.
+	for i, rules := range []*Rules{builtinThumb, builtinMSP430X, builtinThumb, builtinMSP430X} {
+		old, new := relocSeedImages(r, rules, 0x10000, 300)
+		m := relocMapFrom(old, new, rules, 0x10000).withDataRuns(old, new).withOutside(old, new)
+		m.ship = i >= 2
+		f.Add(old, encodeCodedReloc(withHeader(encode(m.relocate(old), new, MaxSize)), codedLayoutB, m), uint16(len(new)))
+	}
 	f.Fuzz(func(t *testing.T, dict, patch []byte, capacity uint16) {
 		out, err := DecodeReaderLimit(dict, bytes.NewReader(patch), int(capacity))
 		if err != nil {

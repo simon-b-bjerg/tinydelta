@@ -16,11 +16,14 @@ out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 
 # Without and with coded patches (TINYDELTA_CODER), and with each
-# relocation rule (TINYDELTA_RELOC).
-for config in 0:0 1:0 1:1 1:2; do
+# relocation rule table (TINYDELTA_RELOC), the last one of one's own
+# (TINYDELTA_RELOC_RULES) accepting shipped tables too.
+for config in 0:0 1:0 1:1 1:2 1:3; do
   coder="${config%%:*}" reloc="${config##*:}"
+  extra=()
+  [ "$reloc" = 3 ] && extra=(-DTINYDELTA_RELOC_RULES_HEADER='"tinydelta_rules_msp430x.h"' -DTINYDELTA_RELOC_SHIPPED=1)
   for f in tinydelta_decode tinydelta_io tinydelta_coder tinydelta_reloc; do
-    "$CC" "${FLAGS[@]}" -DTINYDELTA_CODER="$coder" -DTINYDELTA_RELOC="$reloc" -c $f.c -o "$out/$f-$coder-$reloc.o"
+    "$CC" "${FLAGS[@]}" -DTINYDELTA_CODER="$coder" -DTINYDELTA_RELOC="$reloc" "${extra[@]}" -c $f.c -o "$out/$f-$coder-$reloc.o"
   done
 done
-echo "C library builds cleanly with $CC $*, with and without TINYDELTA_CODER and TINYDELTA_RELOC"
+echo "C library builds cleanly with $CC $*, with and without TINYDELTA_CODER, TINYDELTA_RELOC and TINYDELTA_RELOC_SHIPPED"

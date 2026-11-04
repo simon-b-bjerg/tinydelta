@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 Simon Bjerg
+# SPDX-License-Identifier: MIT
+#
+# Relocation rules for ARM Thumb (Cortex-M0/M0+, ARMv6-M). Format:
+# docs/relocation-rules.md. These rules reproduce the hand-written rule of
+# tinydelta 1.1 (reloc.go) exactly.
+
+version: 1
+name: thumb
+unit: 2           # instructions start at even addresses
+word: 16
+endian: little
+sync: 0           # no instruction-start check: BL's two halfwords can't be mistaken for each other
+
+code:
+  - name: "BL"
+    match: ["F000/F800", "F800/F800"]
+    address: ["w0[10:0]", "w1[10:0]", "0"]   # a 23-bit signed offset, always even
+    relative: { base: 4, sign_extend: 23 }   # target = BL's address + 4 + offset
+
+  - name: "32-bit pointer (vector table, literal pools, function tables)"
+    align: 4
+    match: ["-", "-"]
+    address: ["w1[15:0]", "w0[15:0]"]
+    unless: [{ rule: BL, at: [-2, 0, 2] }]   # not overlapping a BL

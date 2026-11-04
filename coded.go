@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // Coded patches: the instruction stream of a version-1 or version-2 patch,
@@ -15,9 +16,11 @@ import (
 //
 //	byte 0     0x80 | instruction set (0x81: version 1's, 0x82: version 2's)
 //	byte 1     features: bits 0-1 the table layout (codedLayoutC/B/A), bits
-//	           2-3 the relocation rule (Relocation; 0 none), bits 4-7
-//	           reserved, 0
-//	map        with a relocation rule only: the relocation map (reloc.go)
+//	           2-3 relocation (0 none, 1 with the decoder's built-in rule
+//	           table, 2 with a rule table at the start of the stream; 3
+//	           reserved), bits 4-7 reserved, 0
+//	map        with relocation only: the built-in table's CRC-16 (1) or the
+//	           shipped table's length (2), then the relocation map (reloc.go)
 //	varint     n, the length of the uncoded instruction stream in bytes
 //	rest       the range-coded instruction stream
 //
@@ -395,12 +398,21 @@ func encodeCoded(plain []byte, layout int) []byte { return encodeCodedReloc(plai
 func encodeCodedReloc(plain []byte, layout int, reloc *relocMap) []byte {
 	version, stream := plain[0], plain[headerLen:]
 	m, w, e := newCodedModel(layout), newCodedWalker(version), newRangeEncoder()
+	if reloc != nil && reloc.ship {
+		// A shipped rule table starts the coded stream, each byte by a bit
+		// tree of its own states (the decoder borrows the coder's tables
+		// for them and clears them before the instructions).
+		t := &codedModel{states: make([]byte, codedTreeSize)}
+		for _, b := range reloc.rules.table {
+			codeTreeByte(t, b, func(i int, bit uint32) (uint32, error) { e.bit(t, i, bit); return bit, nil })
+		}
+	}
 	for _, b := range stream {
 		codeByte(m, w, b, func(i int, bit uint32) (uint32, error) { e.bit(m, i, bit); return bit, nil })
 	}
 	out := []byte{codedFlag | version, byte(layout)}
 	if reloc != nil {
-		out[1] |= byte(reloc.arch) << 2
+		out[1] |= byte(reloc.features()) << 2
 		out = reloc.appendHeader(out)
 	}
 	out = appendVarint(out, uint64(len(stream)))
@@ -421,20 +433,21 @@ type codedReader struct {
 	err     error  // the error to return once the bytes before it are read
 }
 
-// newCodedReader reads a coded patch's header.
-func newCodedReader(patch []byte) (*codedReader, error) {
+// newCodedReader reads a coded patch's header; rules is a rule table the
+// patch may name by CRC besides the built-in ones (nil for none).
+func newCodedReader(patch []byte, rules *Rules) (*codedReader, error) {
 	if len(patch) < 2 {
 		return nil, errors.New("tinydelta: coded patch has no features byte")
 	}
 	version, features := patch[0]&^codedFlag, int(patch[1])
-	layout, arch := features&3, Relocation(features>>2&3)
-	if features&^0xF != 0 || layout == 0 || arch > RelocationMSP430X {
+	layout, value := features&3, features>>2&3
+	if features&^0xF != 0 || layout == 0 || value > featuresShippedRules {
 		return nil, fmt.Errorf("%w: coded patch features 0x%02x", ErrUnsupportedVersion, features)
 	}
 	pos := 2
 	var reloc *relocMap
-	if arch != RelocationNone {
-		m, used, err := parseRelocMap(arch, patch[pos:])
+	if value != 0 {
+		m, used, err := parseRelocMap(value, patch[pos:], rules)
 		if err != nil {
 			return nil, err
 		}
@@ -447,6 +460,18 @@ func newCodedReader(patch []byte) (*codedReader, error) {
 	d, err := newRangeDecoder(patch[pos+used:])
 	if err != nil {
 		return nil, fmt.Errorf("tinydelta: coded patch: %w", err)
+	}
+	if reloc != nil && reloc.shippedLen > 0 {
+		t := &codedModel{states: make([]byte, codedTreeSize)}
+		table := make([]byte, reloc.shippedLen)
+		for i := range table {
+			if table[i], err = codeTreeByte(t, 0, func(i int, _ uint32) (uint32, error) { return d.bit(t, i) }); err != nil {
+				return nil, fmt.Errorf("tinydelta: coded patch: %w", err)
+			}
+		}
+		if reloc.rules, err = ParseRulesTable(table); err != nil {
+			return nil, err
+		}
 	}
 	return &codedReader{reloc: reloc, version: version, m: newCodedModel(layout), w: newCodedWalker(version), d: d, left: n}, nil
 }
@@ -478,7 +503,7 @@ func (r *codedReader) Read(p []byte) (int, error) {
 // decodeCoded turns a coded patch back into the plain patch it codes.
 // maxStream caps the uncoded instruction stream's length.
 func decodeCoded(patch []byte, maxStream int) ([]byte, error) {
-	r, err := newCodedReader(patch)
+	r, err := newCodedReader(patch, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -498,4 +523,57 @@ func codedLayoutsWithin(ram int) []int {
 		}
 	}
 	return layouts
+}
+
+// DescribePatch summarises a patch's parts in bytes, for tinydelta encode
+// -v: for a coded patch the coder's layout, a relocation rule table or its
+// CRC, the relocation map (entries, data runs, RAM ranges) and the RAM
+// the decoder keeps it in, and the coded instruction stream. rules is the
+// table a patch may name by CRC (as for DecodeRules), or nil.
+func DescribePatch(patch []byte, rules *Rules) string {
+	if len(patch) < 2 || (patch[0] != codedFlag|FormatVersion && patch[0] != codedFlag|FormatVersion2) {
+		return fmt.Sprintf("plain patch: %d B", len(patch))
+	}
+	r, err := newCodedReader(patch, rules)
+	var b strings.Builder
+	fmt.Fprintf(&b, "coded patch, tables %d B: header 2 B", CodedTablesSize(int(patch[1]&3)))
+	used := 2
+	if err == nil && r.reloc != nil {
+		m := r.reloc
+		table := 2
+		if m.ship {
+			table = len(appendVarint(nil, uint64(len(m.rules.table))))
+			fmt.Fprintf(&b, ", rule table length %d B (the %d-byte table is coded at the start of the stream)", table, len(m.rules.table))
+		} else {
+			fmt.Fprintf(&b, ", built-in rule table's CRC 2 B")
+		}
+		base := len(appendVarint(nil, uint64(m.base)))
+		entries := len(appendEntries(nil, m.entries))
+		runs := len(appendVarint(nil, uint64(len(m.data))))
+		end := uint32(0)
+		for _, d := range m.data {
+			runs += len(appendVarint(nil, uint64(d.start-end))) + len(appendVarint(nil, uint64(d.length)))
+			end = d.start + d.length
+		}
+		outside := len(appendEntries(nil, m.outside))
+		fmt.Fprintf(&b, "; relocation map %d B: base %d B, %d entries %d B, %d data runs %d B, %d RAM ranges %d B (decoder RAM %d B after the tables)",
+			base+entries+runs+outside, base, len(m.entries), entries, len(m.data), runs, len(m.outside), outside, m.ramSize())
+		used += table + base + entries + runs + outside
+	}
+	fmt.Fprintf(&b, "; instruction stream %d B", len(patch)-used)
+	return b.String()
+}
+
+// codeTreeByte codes byte b (or, decoding, returns it) with a bit tree:
+// each bit's state is chosen by the bits before it, highest bit first.
+func codeTreeByte(m *codedModel, b byte, bitFn func(i int, bit uint32) (uint32, error)) (byte, error) {
+	node := 1
+	for i := 7; i >= 0; i-- {
+		bit, err := bitFn(node-1, uint32(b>>i)&1)
+		if err != nil {
+			return 0, err
+		}
+		node = node<<1 | int(bit)
+	}
+	return byte(node), nil
 }

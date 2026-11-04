@@ -76,6 +76,17 @@ type EncodeOptions struct {
 	// ImageBase is the address the old image's first byte is at on the
 	// device, for Relocation: 0x10000 or wherever the firmware is linked.
 	ImageBase uint32
+
+	// Rules, instead of Relocation: a relocation rule table
+	// (docs/relocation-rules.md; ParseRules, BuiltinRules). The patch
+	// names it by CRC, so the decoder must have the same table built in
+	// (decode such patches in Go with DecodeRules), unless ShipRules.
+	Rules *Rules
+
+	// ShipRules puts the rule table in the patch (experimental): any
+	// decoder that accepts shipped tables can then use it. It costs the
+	// table's size in the patch and in the decoder's tables buffer.
+	ShipRules bool
 }
 
 // Patch is EncodeWith's result.
@@ -108,6 +119,14 @@ func EncodeWith(dict, target []byte, opts EncodeOptions) (Patch, error) {
 		return Patch{}, fmt.Errorf("tinydelta: negative CoderTables %d", opts.CoderTables)
 	case opts.Relocation < RelocationNone || opts.Relocation > RelocationMSP430X:
 		return Patch{}, fmt.Errorf("tinydelta: unknown Relocation %d", int(opts.Relocation))
+	case opts.Rules != nil && opts.Relocation != RelocationNone:
+		return Patch{}, fmt.Errorf("tinydelta: Rules and Relocation both set")
+	case opts.ShipRules && opts.Rules == nil && opts.Relocation == RelocationNone:
+		return Patch{}, fmt.Errorf("tinydelta: ShipRules without Rules or Relocation")
+	}
+	rules := opts.Rules
+	if rules == nil {
+		rules = rulesFor(opts.Relocation)
 	}
 	window := MaxSize
 	if opts.Window > 0 && opts.Window < MaxSize {
@@ -138,21 +157,28 @@ func EncodeWith(dict, target []byte, opts EncodeOptions) (Patch, error) {
 			}
 		}
 	}
-	if opts.Relocation != RelocationNone && len(layouts) > 0 {
-		full := relocMapFrom(dict, target, opts.Relocation, opts.ImageBase)
+	if rules != nil && len(layouts) > 0 {
+		full := relocMapFrom(dict, target, rules, opts.ImageBase)
+		full.ship = opts.ShipRules
 		withOutside := full.withOutside(dict, target)
 		for _, layout := range layouts {
+			// The map gets the tables buffer after the coder's tables (and a
+			// shipped rule table).
+			ram := opts.CoderTables - CodedTablesSize(layout)
+			if opts.ShipRules {
+				ram -= len(rules.table)
+			}
 			// With the addresses outside the image that moved if they fit.
-			m := withOutside.limitTo(opts.CoderTables - CodedTablesSize(layout))
+			m := withOutside.limitTo(ram)
 			if m == nil || len(m.entries) == 0 {
-				m = full.limitTo(opts.CoderTables - CodedTablesSize(layout))
+				m = full.limitTo(ram)
 			}
 			if m == nil || len(m.entries) == 0 {
 				continue
 			}
-			// With and without data runs (MSP430X), as either may be smaller.
+			// With and without data runs, as either may be smaller.
 			maps := []*relocMap{m}
-			if md := m.withDataRuns(dict, target).limitTo(opts.CoderTables - CodedTablesSize(layout)); md != nil && len(md.data) > 0 {
+			if md := m.withDataRuns(dict, target).limitTo(ram); md != nil && len(md.data) > 0 {
 				maps = append(maps, md)
 			}
 			for _, m := range maps {
