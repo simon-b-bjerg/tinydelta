@@ -21,27 +21,32 @@ import (
 // patch is then made against the relocated old image and carries only
 // what the map doesn't explain.
 //
-// Which bytes are addresses is decided by a rule per architecture
-// (Relocation), by looking at the raw old image only and only a few bytes
-// around each position, so the decoder can relocate any part of the old
-// image it reads, in any order, and get the same bytes as the encoder.
-// The rule doesn't have to be right about instructions: a wrong guess is
-// corrected by the patch like any other difference, so it only costs
-// size.
+// Which bytes are addresses is decided by a rule table (rules.go,
+// docs/relocation-rules.md), by looking at the raw old image only and only
+// a few bytes around each position, so the decoder can relocate any part
+// of the old image it reads, in any order, and get the same bytes as the
+// encoder. The rules don't have to be right about instructions: a wrong
+// guess is corrected by the patch like any other difference, so it only
+// costs size.
 //
-// In a coded patch's features byte, bits 2-3 name the rule; with a rule,
-// the header goes on (before the stream length):
+// In a coded patch's features byte, bits 2-3 say whether the patch is
+// relocated: 1 with the decoder's built-in table, 2 with a table shipped
+// at the start of the coded stream. The header then goes on (before the
+// stream length) with the table's CRC-16 (1) or length (2), and the map:
 //
 //	varint  base, the address of the old image's first byte
-//	varint  N, the number of map entries
-//	N times varint  start - the previous entry's end (0 for the first)
-//	        varint  length
-//	        varint  zigzag shift
+//	        entries:    varint N, then N times: varint start - the previous
+//	                    entry's end (0 for the first), varint length,
+//	                    varint zigzag shift
+//	        data runs:  varint N, then N times: varint gap, varint length,
+//	                    in relocDataBlock-byte blocks
+//	        RAM ranges: as entries, by address, for addresses outside the
+//	                    old image
 //
 // Entries are in order and don't overlap. A position in the old image
 // moves by the shift of the entry containing it, 0 outside every entry.
-// The decoder keeps the entries in RAM after the coder's tables,
-// relocEntrySize bytes each.
+// The decoder keeps the map in RAM after the coder's tables,
+// relocEntrySize bytes per entry and RAM range, relocRunSize per run.
 
 // Relocation is an address-relocation rule: which bytes of a firmware
 // image are addresses (EncodeOptions.Relocation).
@@ -99,31 +104,24 @@ type relocMap struct {
 	outside []relocEntry
 }
 
-// relocationRules is the features value of a patch relocated by a rule
-// table (named by CRC, or shipped with feature bit 4).
-const relocationRules Relocation = 3
-
-// codedShippedRules is the features bit for a rule table in the patch.
-const codedShippedRules = 0x10
+// Features bits 2-3 of a relocated patch: the decoder's built-in rule
+// table (named by its CRC), or a table the patch ships at the start of the
+// coded stream. 3 is reserved.
+const (
+	featuresBuiltinRules = 1
+	featuresShippedRules = 2
+)
 
 // relocMaxTable is the longest rule table a patch may ship.
 const relocMaxTable = 4096
 
-// arch is the features value the patch carries: the built-in Thumb and
-// MSP430X tables keep their numbers (1, 2), which the C decoders know.
-func (m *relocMap) arch() Relocation {
-	if m.ship || m.rules == nil {
-		return relocationRules
+// features is the relocation value of features bits 2-3 the patch carries.
+func (m *relocMap) features() int {
+	if m.ship {
+		return featuresShippedRules
 	}
-	if m.rules.builtin != RelocationNone {
-		return m.rules.builtin
-	}
-	return relocationRules
+	return featuresBuiltinRules
 }
-
-// carriesLists reports whether the header has data runs and RAM ranges
-// (not with the built-in Thumb table's number).
-func (m *relocMap) carriesLists() bool { return m.arch() != RelocationThumb }
 
 // with returns a copy of m with other entries, data runs and RAM ranges.
 func (m *relocMap) with(entries []relocEntry, data []relocRun, outside []relocEntry) *relocMap {
@@ -162,30 +160,25 @@ func (m *relocMap) ramSize() int {
 	return relocEntrySize*(len(m.entries)+len(m.outside)) + relocRunSize*len(m.data)
 }
 
-// appendHeader appends the rule table or its CRC (for a rule table that
-// isn't a built-in one's number) and the map, as the coded header carries
-// them after the features byte.
+// appendHeader appends the rule table's CRC (built in) or length (shipped:
+// the table itself starts the coded stream) and the map, as the coded
+// header carries them after the features byte.
 func (m *relocMap) appendHeader(b []byte) []byte {
-	if m.arch() == relocationRules {
-		if m.ship { // the table itself starts the coded stream
-			b = appendVarint(b, uint64(len(m.rules.table)))
-		} else {
-			b = append(b, byte(m.rules.crc), byte(m.rules.crc>>8))
-		}
+	if m.ship {
+		b = appendVarint(b, uint64(len(m.rules.table)))
+	} else {
+		b = append(b, byte(m.rules.crc), byte(m.rules.crc>>8))
 	}
 	b = appendVarint(b, uint64(m.base))
 	b = appendEntries(b, m.entries)
-	if m.carriesLists() { // data runs, in blocks; addresses outside the image
-		b = appendVarint(b, uint64(len(m.data)))
-		end := uint32(0)
-		for _, r := range m.data {
-			b = appendVarint(b, uint64(r.start-end))
-			b = appendVarint(b, uint64(r.length))
-			end = r.start + r.length
-		}
-		b = appendEntries(b, m.outside)
+	b = appendVarint(b, uint64(len(m.data))) // data runs, in blocks
+	end := uint32(0)
+	for _, r := range m.data {
+		b = appendVarint(b, uint64(r.start-end))
+		b = appendVarint(b, uint64(r.length))
+		end = r.start + r.length
 	}
-	return b
+	return appendEntries(b, m.outside) // addresses outside the image
 }
 
 // appendEntries writes a count, then per entry the gap since the previous
@@ -204,10 +197,11 @@ func appendEntries(b []byte, es []relocEntry) []byte {
 
 var errRelocMap = errors.New("tinydelta: coded patch: bad relocation map")
 
-// parseRelocMap reads the rule table or its CRC and the map from the
-// header bytes b, returning how many bytes they took. A CRC names a
+// parseRelocMap reads the rule table's CRC or length and the map from the
+// header bytes b of a patch with features value (featuresBuiltinRules or
+// featuresShippedRules), returning how many bytes they took. A CRC names a
 // built-in table or extra.
-func parseRelocMap(arch Relocation, shipped bool, b []byte, extra *Rules) (*relocMap, int, error) {
+func parseRelocMap(value int, b []byte, extra *Rules) (*relocMap, int, error) {
 	pos := 0
 	next := func() (uint64, error) {
 		v, n := readVarint(b[pos:])
@@ -217,29 +211,28 @@ func parseRelocMap(arch Relocation, shipped bool, b []byte, extra *Rules) (*relo
 		pos += n
 		return v, nil
 	}
-	m := &relocMap{rules: rulesFor(arch), ship: shipped}
-	if arch == relocationRules {
-		if shipped {
-			n, err := next()
-			if err != nil || n == 0 || n > relocMaxTable {
-				return nil, 0, errRelocMap
+	shipped := value == featuresShippedRules
+	m := &relocMap{ship: shipped}
+	if shipped {
+		n, err := next()
+		if err != nil || n == 0 || n > relocMaxTable {
+			return nil, 0, errRelocMap
+		}
+		m.shippedLen = int(n) // the table follows in the coded stream
+	} else {
+		if len(b) < 2 {
+			return nil, 0, errRelocMap
+		}
+		crc := uint16(b[0]) | uint16(b[1])<<8
+		pos = 2
+		for _, r := range []*Rules{extra, builtinThumb, builtinMSP430X} {
+			if r != nil && r.crc == crc {
+				m.rules = r
+				break
 			}
-			m.shippedLen = int(n) // the table follows in the coded stream
-		} else {
-			if len(b) < 2 {
-				return nil, 0, errRelocMap
-			}
-			crc := uint16(b[0]) | uint16(b[1])<<8
-			pos = 2
-			for _, r := range []*Rules{extra, builtinThumb, builtinMSP430X} {
-				if r != nil && r.crc == crc {
-					m.rules = r
-					break
-				}
-			}
-			if m.rules == nil {
-				return nil, 0, fmt.Errorf("%w: patch needs the relocation rules with CRC %04x", ErrUnsupportedVersion, crc)
-			}
+		}
+		if m.rules == nil {
+			return nil, 0, fmt.Errorf("%w: patch needs the relocation rules with CRC %04x", ErrUnsupportedVersion, crc)
 		}
 	}
 	base, err := next()
@@ -273,28 +266,26 @@ func parseRelocMap(arch Relocation, shipped bool, b []byte, extra *Rules) (*relo
 	if m.entries, err = entries(); err != nil {
 		return nil, 0, err
 	}
-	if m.carriesLists() {
-		runs, err := next()
-		if err != nil || runs > uint64(len(b)) {
+	runs, err := next()
+	if err != nil || runs > uint64(len(b)) {
+		return nil, 0, errRelocMap
+	}
+	end := uint64(0)
+	for i := uint64(0); i < runs; i++ {
+		gap, err1 := next()
+		length, err2 := next()
+		if err1 != nil || err2 != nil {
 			return nil, 0, errRelocMap
 		}
-		end := uint64(0)
-		for i := uint64(0); i < runs; i++ {
-			gap, err1 := next()
-			length, err2 := next()
-			if err1 != nil || err2 != nil {
-				return nil, 0, errRelocMap
-			}
-			start := end + gap
-			if start+length > 0xFFFFFFFF {
-				return nil, 0, errRelocMap
-			}
-			m.data = append(m.data, relocRun{uint32(start), uint32(length)})
-			end = start + length
+		start := end + gap
+		if start+length > 0xFFFFFFFF {
+			return nil, 0, errRelocMap
 		}
-		if m.outside, err = entries(); err != nil {
-			return nil, 0, err
-		}
+		m.data = append(m.data, relocRun{uint32(start), uint32(length)})
+		end = start + length
+	}
+	if m.outside, err = entries(); err != nil {
+		return nil, 0, err
 	}
 	return m, pos, nil
 }
@@ -419,7 +410,7 @@ func (m *relocMap) limitTo(ram int) *relocMap {
 // the covered bytes match the target than the code rules do. Returns m
 // with them (m itself if none).
 func (m *relocMap) withDataRuns(dict, target []byte) *relocMap {
-	if !m.carriesLists() || len(m.rules.lists[ruleData]) == 0 || len(dict) == 0 {
+	if len(m.rules.lists[ruleData]) == 0 || len(dict) == 0 {
 		return m
 	}
 	code := m.relocate(dict)
@@ -464,7 +455,7 @@ func (m *relocMap) withDataRuns(dict, target []byte) *relocMap {
 // ranges of neighbouring addresses with the same shift, each reaching to
 // the next range. Returns m itself if none moved.
 func (m *relocMap) withOutside(dict, target []byte) *relocMap {
-	if !m.carriesLists() || len(dict) == 0 {
+	if len(dict) == 0 {
 		return m
 	}
 	r := m.rules
@@ -560,8 +551,6 @@ func (r Relocation) String() string {
 		return "thumb"
 	case RelocationMSP430X:
 		return "msp430x"
-	case relocationRules:
-		return "rules"
 	}
 	return fmt.Sprintf("Relocation(%d)", int(r))
 }

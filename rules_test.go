@@ -196,7 +196,7 @@ func TestRulesShippedAndNamed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if named.Bytes[1]>>2&3 != byte(relocationRules) || named.Bytes[1]&codedShippedRules != 0 {
+	if named.Bytes[1]>>2 != featuresBuiltinRules {
 		t.Fatalf("named: features 0x%02x", named.Bytes[1])
 	}
 	if _, err := Decode(old, named.Bytes); !errors.Is(err, ErrUnsupportedVersion) {
@@ -209,7 +209,7 @@ func TestRulesShippedAndNamed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if shipped.Bytes[1]&codedShippedRules == 0 {
+	if shipped.Bytes[1]>>2 != featuresShippedRules {
 		t.Fatalf("shipped: features 0x%02x", shipped.Bytes[1])
 	}
 	if got, err := Decode(old, shipped.Bytes); err != nil || !bytes.Equal(got, new) {
@@ -221,9 +221,9 @@ func TestRulesShippedAndNamed(t *testing.T) {
 			t.Errorf("DescribePatch: %s", d)
 		}
 	}
-	// The built-in tables keep their numbers, which the C decoders know.
+	// A built-in table is named by its CRC like any other.
 	builtin, _ := EncodeWith(old, new, EncodeOptions{CoderTables: tables, Relocation: RelocationMSP430X, ImageBase: 0x10000})
-	if builtin.Bytes[1]>>2&3 != byte(RelocationMSP430X) {
+	if builtin.Bytes[1]>>2 != featuresBuiltinRules {
 		t.Fatalf("built-in: features 0x%02x", builtin.Bytes[1])
 	}
 	if _, err := EncodeWith(old, new, EncodeOptions{Rules: custom, Relocation: RelocationThumb}); err == nil {
@@ -306,25 +306,17 @@ func TestRulesYAMLErrors(t *testing.T) {
 	}
 }
 
-// TestRulesCHeaders keeps the C library's built-in tables and the CRCs it
-// maps features values 1 and 2 to in step with rules/*.yaml.
+// TestRulesCHeaders keeps the C library's built-in tables in step with
+// rules/*.yaml.
 func TestRulesCHeaders(t *testing.T) {
-	src, err := os.ReadFile("c/tinydelta_reloc.c")
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, c := range []struct {
 		rules *Rules
 		file  string
-		crc   string
-	}{{builtinThumb, "thumb", "RULES_THUMB_CRC"}, {builtinMSP430X, "msp430x", "RULES_MSP430X_CRC"}} {
+	}{{builtinThumb, "thumb"}, {builtinMSP430X, "msp430x"}} {
 		got, err := os.ReadFile("c/tinydelta_rules_" + c.file + ".h")
 		// Windows checkouts may turn the line ends into CRLF.
 		if want := c.rules.CHeader("rules/" + c.file + ".yaml"); err != nil || strings.ReplaceAll(string(got), "\r\n", "\n") != want {
 			t.Errorf("c/tinydelta_rules_%s.h is out of date: tinydelta rules compile -c c/tinydelta_rules_%s.h rules/%s.yaml", c.file, c.file, c.file)
-		}
-		if def := fmt.Sprintf("#define %-17s 0x%04Xu", c.crc, c.rules.CRC()); !strings.Contains(string(src), def) {
-			t.Errorf("c/tinydelta_reloc.c lacks %q", def)
 		}
 	}
 }

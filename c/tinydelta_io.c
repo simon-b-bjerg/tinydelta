@@ -331,11 +331,11 @@ static tinydelta_result_t io_start_coded(io_decoder_t *p_decoder, uint8_t *p_ver
     }
     layout = features & TINYDELTA_CODED_LAYOUT_MASK;
     needed = tinydelta_coder_tables_size(layout);
-    if (((features & ~(TINYDELTA_CODED_LAYOUT_MASK | TINYDELTA_CODED_RELOC_MASK | TINYDELTA_CODED_SHIPPED_MASK)) != 0u) || (needed == 0u) ||
-        (p_io->p_tables == NULL) || (p_io->tables_size < needed)) {
+    if (((features & ~(TINYDELTA_CODED_LAYOUT_MASK | TINYDELTA_CODED_RELOC_MASK)) != 0u) || (needed == 0u) || (p_io->p_tables == NULL) ||
+        (p_io->tables_size < needed)) {
         return TINYDELTA_ERR_VERSION; /* a feature this build or its tables lack */
     }
-    if ((features & (TINYDELTA_CODED_RELOC_MASK | TINYDELTA_CODED_SHIPPED_MASK)) != 0u) {
+    if ((features & TINYDELTA_CODED_RELOC_MASK) != 0u) {
 #if TINYDELTA_RELOC != 0
         p_decoder->reloc.p_dict    = NULL;
         p_decoder->reloc.raw       = io_raw_dict;

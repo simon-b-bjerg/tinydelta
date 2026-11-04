@@ -250,25 +250,28 @@ The coded header's features byte:
 | bits | meaning |
 |---|---|
 | 0-1 | the coder's table layout (1 C, 2 B, 3 A) |
-| 2-3 | 0 no relocation; 1 the built-in Thumb table; 2 the built-in MSP430X table; **3 another rule table** (named by CRC, or shipped) |
-| 4 | with 3: the rule table is in the patch |
-| 5-7 | reserved, 0 |
+| 2-3 | relocation: 0 none; 1 with the decoder's built-in rule table; 2 with a rule table in the stream; 3 reserved |
+| 4-7 | reserved, 0 |
 
-Values 1 and 2 keep the patches the current C decoders read. The whole
-coded patch, with relocation:
+The whole coded patch, with relocation:
 
 ```text
 byte 0     0x81 or 0x82: coded, instruction set of version 1 or 2
 byte 1     features (above)
-[table]    value 3 only: if bit 4, the shipped table's length (varint);
-           else the CRC-16 of the table the encoder used (2 bytes, little-endian)
-map        base (varint), entries, [data runs, RAM ranges: values 2 and 3]
+table      1: the CRC-16 of the table the encoder used (2 bytes, little-endian)
+           2: the shipped table's length (varint)
+map        base (varint), then three lists, each a count (varint) and its records:
+             entries      gap, length, shift (zigzag)      old-image offsets that moved
+             data runs    gap, length                      in 256-byte blocks
+             RAM ranges   gap, length, shift (zigzag)      addresses outside the image that moved
+           (gap: from the previous record's end, or from 0 for the first)
 n          the uncoded instruction stream's length (varint)
-stream     range-coded: [the shipped table's bytes], then the instructions
+stream     range-coded: [2: the shipped table's bytes], then the instructions
 ```
 
-A CRC must equal the decoder's built-in table's, else
-`TINYDELTA_ERR_VERSION`. A shipped table is coded at the start of the
+With 1, the CRC must equal the decoder's built-in table's, else
+`TINYDELTA_ERR_VERSION`: a patch made for other rules is refused, never
+applied with the wrong ones. Empty lists cost one byte each. A shipped table is coded at the start of the
 stream, each byte by a bit tree of 255 states that start at even odds
 (the decoder borrows the coder's tables for them and clears them before
 the instructions): the 590-byte MSP430X table costs about 375 B in the

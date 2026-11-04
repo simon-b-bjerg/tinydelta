@@ -145,7 +145,7 @@ func TestRelocationRoundTrip(t *testing.T) {
 		if err != nil || !bytes.Equal(got, new) {
 			t.Fatalf("%v: round trip: %v", c.arch, err)
 		}
-		if reloc.Bytes[1]>>2 != byte(c.arch) {
+		if reloc.Bytes[1]>>2 != featuresBuiltinRules {
 			t.Fatalf("%v: relocation not chosen (features 0x%02x)", c.arch, reloc.Bytes[1])
 		}
 		if r, _ := newCodedReader(reloc.Bytes, nil); c.arch == RelocationMSP430X && len(r.reloc.data) == 0 {
@@ -180,23 +180,23 @@ func TestRelocationOptions(t *testing.T) {
 func TestRelocationMapHeader(t *testing.T) {
 	m := &relocMap{rules: builtinThumb, base: 0x08000000, entries: []relocEntry{{16, 100, -8}, {116, 4, 32}, {1000, 1 << 20, 1 << 30}}}
 	b := m.appendHeader(nil)
-	got, n, err := parseRelocMap(RelocationThumb, false, b, nil)
+	got, n, err := parseRelocMap(featuresBuiltinRules, b, nil)
 	if err != nil || n != len(b) || fmt.Sprint(got) != fmt.Sprint(m) {
 		t.Fatalf("parse: %+v %d %v", got, n, err)
 	}
 	for cut := 0; cut < len(b); cut++ {
-		if _, _, err := parseRelocMap(RelocationThumb, false, b[:cut], nil); err == nil {
+		if _, _, err := parseRelocMap(featuresBuiltinRules, b[:cut], nil); err == nil {
 			t.Errorf("truncated map (%d of %d bytes) accepted", cut, len(b))
 		}
 	}
 	// MSP430X: data runs and addresses outside the image too.
 	mx := &relocMap{rules: builtinMSP430X, base: 0xDF80, entries: []relocEntry{{16, 100, 8}}, data: []relocRun{{3, 2}}, outside: []relocEntry{{0x1C00, 0x40, 6}, {0x1C80, 0x10, -4}}}
 	bx := mx.appendHeader(nil)
-	if got, n, err := parseRelocMap(RelocationMSP430X, false, bx, nil); err != nil || n != len(bx) || fmt.Sprint(got) != fmt.Sprint(mx) {
+	if got, n, err := parseRelocMap(featuresBuiltinRules, bx, nil); err != nil || n != len(bx) || fmt.Sprint(got) != fmt.Sprint(mx) {
 		t.Fatalf("parse MSP430X: %+v %d %v", got, n, err)
 	}
 	for cut := 0; cut < len(bx); cut++ {
-		if _, _, err := parseRelocMap(RelocationMSP430X, false, bx[:cut], nil); err == nil {
+		if _, _, err := parseRelocMap(featuresBuiltinRules, bx[:cut], nil); err == nil {
 			t.Errorf("truncated MSP430X map (%d of %d bytes) accepted", cut, len(bx))
 		}
 	}
@@ -204,7 +204,7 @@ func TestRelocationMapHeader(t *testing.T) {
 		t.Error("addressShift outside the image")
 	}
 	// An entry past 32 bits.
-	if _, _, err := parseRelocMap(RelocationThumb, false, appendVarint(appendVarint(appendVarint(appendVarint(appendVarint(nil, 0), 1), 0xFFFFFFF0), 0x20), 0), nil); err == nil {
+	if _, _, err := parseRelocMap(featuresBuiltinRules, appendVarint(appendVarint(appendVarint(appendVarint(appendVarint(nil, 0), 1), 0xFFFFFFF0), 0x20), 0), nil); err == nil {
 		t.Error("entry past 32 bits accepted")
 	}
 }

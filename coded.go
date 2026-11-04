@@ -16,11 +16,11 @@ import (
 //
 //	byte 0     0x80 | instruction set (0x81: version 1's, 0x82: version 2's)
 //	byte 1     features: bits 0-1 the table layout (codedLayoutC/B/A), bits
-//	           2-3 the relocation rule (Relocation; 0 none, 3 a rule
-//	           table, rules.go), bit 4 with 3: the table is in the patch,
-//	           bits 5-7 reserved, 0
-//	map        with a relocation rule only: the rule table or its CRC (3
-//	           only), then the relocation map (reloc.go)
+//	           2-3 relocation (0 none, 1 with the decoder's built-in rule
+//	           table, 2 with a rule table at the start of the stream; 3
+//	           reserved), bits 4-7 reserved, 0
+//	map        with relocation only: the built-in table's CRC-16 (1) or the
+//	           shipped table's length (2), then the relocation map (reloc.go)
 //	varint     n, the length of the uncoded instruction stream in bytes
 //	rest       the range-coded instruction stream
 //
@@ -412,10 +412,7 @@ func encodeCodedReloc(plain []byte, layout int, reloc *relocMap) []byte {
 	}
 	out := []byte{codedFlag | version, byte(layout)}
 	if reloc != nil {
-		out[1] |= byte(reloc.arch()) << 2
-		if reloc.arch() == relocationRules && reloc.ship {
-			out[1] |= codedShippedRules
-		}
+		out[1] |= byte(reloc.features()) << 2
 		out = reloc.appendHeader(out)
 	}
 	out = appendVarint(out, uint64(len(stream)))
@@ -443,14 +440,14 @@ func newCodedReader(patch []byte, rules *Rules) (*codedReader, error) {
 		return nil, errors.New("tinydelta: coded patch has no features byte")
 	}
 	version, features := patch[0]&^codedFlag, int(patch[1])
-	layout, arch, shipped := features&3, Relocation(features>>2&3), features&codedShippedRules != 0
-	if features&^0x1F != 0 || layout == 0 || (shipped && arch != relocationRules) {
+	layout, value := features&3, features>>2&3
+	if features&^0xF != 0 || layout == 0 || value > featuresShippedRules {
 		return nil, fmt.Errorf("%w: coded patch features 0x%02x", ErrUnsupportedVersion, features)
 	}
 	pos := 2
 	var reloc *relocMap
-	if arch != RelocationNone {
-		m, used, err := parseRelocMap(arch, shipped, patch[pos:], rules)
+	if value != 0 {
+		m, used, err := parseRelocMap(value, patch[pos:], rules)
 		if err != nil {
 			return nil, err
 		}
@@ -543,28 +540,22 @@ func DescribePatch(patch []byte, rules *Rules) string {
 	used := 2
 	if err == nil && r.reloc != nil {
 		m := r.reloc
-		table := 0
-		if m.arch() == relocationRules {
-			table = 2
-			if m.ship {
-				table = len(appendVarint(nil, uint64(len(m.rules.table))))
-				fmt.Fprintf(&b, ", rule table length %d B (the %d-byte table is coded at the start of the stream)", table, len(m.rules.table))
-			} else {
-				fmt.Fprintf(&b, ", rule table CRC 2 B")
-			}
+		table := 2
+		if m.ship {
+			table = len(appendVarint(nil, uint64(len(m.rules.table))))
+			fmt.Fprintf(&b, ", rule table length %d B (the %d-byte table is coded at the start of the stream)", table, len(m.rules.table))
+		} else {
+			fmt.Fprintf(&b, ", built-in rule table's CRC 2 B")
 		}
 		base := len(appendVarint(nil, uint64(m.base)))
 		entries := len(appendEntries(nil, m.entries))
-		runs, outside := 0, 0
-		if m.carriesLists() {
-			runs = len(appendVarint(nil, uint64(len(m.data))))
-			end := uint32(0)
-			for _, d := range m.data {
-				runs += len(appendVarint(nil, uint64(d.start-end))) + len(appendVarint(nil, uint64(d.length)))
-				end = d.start + d.length
-			}
-			outside = len(appendEntries(nil, m.outside))
+		runs := len(appendVarint(nil, uint64(len(m.data))))
+		end := uint32(0)
+		for _, d := range m.data {
+			runs += len(appendVarint(nil, uint64(d.start-end))) + len(appendVarint(nil, uint64(d.length)))
+			end = d.start + d.length
 		}
+		outside := len(appendEntries(nil, m.outside))
 		fmt.Fprintf(&b, "; relocation map %d B: base %d B, %d entries %d B, %d data runs %d B, %d RAM ranges %d B (decoder RAM %d B after the tables)",
 			base+entries+runs+outside, base, len(m.entries), entries, len(m.data), runs, len(m.outside), outside, m.ramSize())
 		used += table + base + entries + runs + outside

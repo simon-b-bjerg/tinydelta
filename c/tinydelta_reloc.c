@@ -28,15 +28,6 @@
 #error "TINYDELTA_RELOC: TINYDELTA_RELOC_THUMB, TINYDELTA_RELOC_MSP430X or TINYDELTA_RELOC_RULES"
 #endif
 
-/* The CRCs of rules/thumb.yaml and rules/msp430x.yaml, which features
- * values 1 and 2 name (checked against the generated headers by the Go
- * tests). */
-#define RULES_THUMB_CRC   0x39A2u
-#define RULES_MSP430X_CRC 0xF992u
-
-/* Features: a table named by CRC or shipped, and the shipped bit. */
-#define FEATURES_RULE_TABLE 3u
-#define FEATURES_SHIPPED    0x10u
 #if TINYDELTA_RELOC_SHIPPED
 #define MAX_SHIPPED_TABLE 4096u /* the longest table a patch may ship */
 #endif
@@ -133,14 +124,26 @@ tinydelta_result_t tinydelta_reloc_read_header(tinydelta_reloc_t *p_reloc,
     uint32_t rule             = ((uint32_t)features & TINYDELTA_CODED_RELOC_MASK) >> TINYDELTA_CODED_RELOC_SHIFT; /* Cast: widens. */
     tinydelta_result_t result = TINYDELTA_OK;
 
-    p_reloc->b_shipped     = (features & FEATURES_SHIPPED) != 0u;
+    p_reloc->b_shipped     = rule == TINYDELTA_CODED_RELOC_SHIPPED;
     p_reloc->run_count     = 0u;
     p_reloc->outside_count = 0u;
-    if (p_reloc->b_shipped) {
-#if TINYDELTA_RELOC_SHIPPED
-        if (rule != FEATURES_RULE_TABLE) {
-            return TINYDELTA_ERR_VERSION;
+    if (rule == TINYDELTA_CODED_RELOC_BUILTIN) {
+        /* The built-in table, named by its CRC: a patch made with another is refused. */
+        uint8_t low  = 0u;
+        uint8_t high = 0u;
+
+        result = fetch(p_ctx, &low);
+        if (result == TINYDELTA_OK) {
+            result = fetch(p_ctx, &high);
         }
+        if ((result == TINYDELTA_OK) && (((uint32_t)low | ((uint32_t)high << 8)) != TINYDELTA_RELOC_RULES_CRC)) { /* Cast: widens. */
+            result = TINYDELTA_ERR_VERSION;                                                                       /* rules this decoder doesn't have */
+        }
+        p_reloc->p_rules   = tinydelta_reloc_rules;
+        p_reloc->rules_len = TINYDELTA_RELOC_RULES_SIZE;
+    }
+#if TINYDELTA_RELOC_SHIPPED
+    else if (rule == TINYDELTA_CODED_RELOC_SHIPPED) {
         result = varint(p_ctx, &p_reloc->rules_len);
         if ((result == TINYDELTA_OK) && ((p_reloc->rules_len == 0u) || (p_reloc->rules_len > MAX_SHIPPED_TABLE))) {
             result = TINYDELTA_ERR_MALFORMED;
@@ -154,31 +157,10 @@ tinydelta_result_t tinydelta_reloc_read_header(tinydelta_reloc_t *p_reloc,
         p_reloc->p_rules = p_storage; /* filled from the coded stream by tinydelta_reloc_start */
         p_storage += p_reloc->rules_len;
         storage_size -= p_reloc->rules_len;
-#else
-        return TINYDELTA_ERR_VERSION; /* built without shipped tables */
+    }
 #endif
-    } else {
-        uint32_t crc = RULES_THUMB_CRC;
-
-        if (rule == 2u) {
-            crc = RULES_MSP430X_CRC;
-        } else if (rule == FEATURES_RULE_TABLE) {
-            uint8_t low  = 0u;
-            uint8_t high = 0u;
-
-            result = fetch(p_ctx, &low);
-            if (result == TINYDELTA_OK) {
-                result = fetch(p_ctx, &high);
-            }
-            crc = (uint32_t)low | ((uint32_t)high << 8); /* Cast: widens. */
-        } else {
-            /* 1: the Thumb table's */
-        }
-        if ((result == TINYDELTA_OK) && (crc != TINYDELTA_RELOC_RULES_CRC)) {
-            result = TINYDELTA_ERR_VERSION; /* rules this decoder doesn't have */
-        }
-        p_reloc->p_rules   = tinydelta_reloc_rules;
-        p_reloc->rules_len = TINYDELTA_RELOC_RULES_SIZE;
+    else {
+        return TINYDELTA_ERR_VERSION; /* reserved, or a shipped table this build doesn't accept */
     }
     if (result == TINYDELTA_OK) {
         result = varint(p_ctx, &p_reloc->base);
@@ -187,15 +169,13 @@ tinydelta_result_t tinydelta_reloc_read_header(tinydelta_reloc_t *p_reloc,
     if (result == TINYDELTA_OK) {
         result = read_list(varint, p_ctx, &p_storage, &storage_size, 3u, &p_reloc->count);
     }
-    if (rule != 1u) { /* data runs, in 256-byte blocks; RAM ranges */
-        p_reloc->p_runs = p_storage;
-        if (result == TINYDELTA_OK) {
-            result = read_list(varint, p_ctx, &p_storage, &storage_size, 2u, &p_reloc->run_count);
-        }
-        p_reloc->p_outside = p_storage;
-        if (result == TINYDELTA_OK) {
-            result = read_list(varint, p_ctx, &p_storage, &storage_size, 3u, &p_reloc->outside_count);
-        }
+    p_reloc->p_runs = p_storage; /* data runs, in 256-byte blocks */
+    if (result == TINYDELTA_OK) {
+        result = read_list(varint, p_ctx, &p_storage, &storage_size, 2u, &p_reloc->run_count);
+    }
+    p_reloc->p_outside = p_storage; /* RAM ranges */
+    if (result == TINYDELTA_OK) {
+        result = read_list(varint, p_ctx, &p_storage, &storage_size, 3u, &p_reloc->outside_count);
     }
     return result;
 }

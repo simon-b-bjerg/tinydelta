@@ -222,11 +222,10 @@ static tinydelta_result_t memory_start_coded(memory_decoder_t *p_decoder, uint8_
     }
     layout = features & TINYDELTA_CODED_LAYOUT_MASK;
     needed = tinydelta_coder_tables_size(layout);
-    if (((features & ~(TINYDELTA_CODED_LAYOUT_MASK | TINYDELTA_CODED_RELOC_MASK | TINYDELTA_CODED_SHIPPED_MASK)) != 0u) || (needed == 0u) ||
-        (p_tables == NULL) || (tables_size < needed)) {
+    if (((features & ~(TINYDELTA_CODED_LAYOUT_MASK | TINYDELTA_CODED_RELOC_MASK)) != 0u) || (needed == 0u) || (p_tables == NULL) || (tables_size < needed)) {
         return TINYDELTA_ERR_VERSION; /* a feature this build or buffer lacks */
     }
-    if ((features & (TINYDELTA_CODED_RELOC_MASK | TINYDELTA_CODED_SHIPPED_MASK)) != 0u) {
+    if ((features & TINYDELTA_CODED_RELOC_MASK) != 0u) {
 #if TINYDELTA_RELOC != 0
         p_decoder->reloc.p_dict   = p_decoder->p_dict;
         p_decoder->reloc.dict_len = p_decoder->dict_len;
