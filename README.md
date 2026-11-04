@@ -411,8 +411,8 @@ only the map and the few instruction forms that hold addresses.
 
 | | coded | coded, relocated |
 |---|---:|---:|
-| ARM Thumb: MicroPython for SAMD21, 44 updates, ~185 KB | 151,935 B | **25,992 B (−83%)** |
-| MSP430X, large code model: mbedtls built with `-mlarge`, 17 updates, ~176 KB | 21,773 B | **6,221 B (−71%)** |
+| ARM Thumb: MicroPython for SAMD21, 44 updates, ~185 KB | 151,935 B | **26,138 B (−83%)** |
+| MSP430X, large code model: mbedtls built with `-mlarge`, 17 updates, ~176 KB | 21,773 B | **6,230 B (−71%)** |
 
 Sums over consecutive builds, the map included; every patch decoded
 again and compared (`reloc_test.go` runs the same on synthetic images,

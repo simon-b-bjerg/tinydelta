@@ -355,35 +355,12 @@ func relocMapFromCovers(covers []cover, n int, rules *Rules, base uint32) *reloc
 		}
 		out = append(out, e)
 	}
-	return (&relocMap{rules: rules, base: base, entries: out}).filled(n)
-}
-
-// filled makes the entries contiguous: each reaches to the next one's
-// start, the last to the end of the image (n bytes), as code between two
-// regions that moved has moved too. Neighbours with the same shift merge.
-func (m *relocMap) filled(n int) *relocMap {
-	var es []relocEntry
-	for i, e := range m.entries {
-		end := uint32(n)
-		if i+1 < len(m.entries) {
-			end = m.entries[i+1].start
-		}
-		if end > e.start {
-			e.length = end - e.start
-		}
-		if len(es) > 0 && es[len(es)-1].shift == e.shift && es[len(es)-1].start+es[len(es)-1].length == e.start {
-			es[len(es)-1].length += e.length
-			continue
-		}
-		es = append(es, e)
-	}
-	return m.with(es, m.data, m.outside)
+	return &relocMap{rules: rules, base: base, entries: out}
 }
 
 // limitTo keeps the longest entries that fit ram bytes of decoder RAM,
 // after the data runs and the entries outside the image (all kept; nil if
-// they don't fit), and stretches
-// them over the ones dropped.
+// they don't fit).
 func (m *relocMap) limitTo(ram int) *relocMap {
 	ram -= relocRunSize*len(m.data) + relocEntrySize*len(m.outside)
 	if ram < 0 {
@@ -397,12 +374,7 @@ func (m *relocMap) limitTo(ram int) *relocMap {
 	sort.SliceStable(es, func(i, j int) bool { return es[i].length > es[j].length })
 	es = es[:max(n, 0)]
 	sort.Slice(es, func(i, j int) bool { return es[i].start < es[j].start })
-	end := uint32(0)
-	if len(m.entries) > 0 {
-		last := m.entries[len(m.entries)-1]
-		end = last.start + last.length
-	}
-	return m.with(es, m.data, m.outside).filled(int(end))
+	return m.with(es, m.data, m.outside)
 }
 
 // withDataRuns picks the data runs for an update, for rules with data
