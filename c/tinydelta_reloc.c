@@ -56,7 +56,11 @@
 
 /* Table fields, bit counts and bit positions (below 256): 16 bits on MSP430,
  * a register on 32-bit cores, so they never take 32-bit arithmetic. */
+#if UINT_FAST16_MAX > UINT32_MAX
+typedef uint32_t small_t; /* 64-bit hosts: no wider than the rest */
+#else
 typedef uint_fast16_t small_t;
+#endif
 
 /* The span being relocated. */
 typedef struct {
@@ -269,7 +273,7 @@ static small_t tb(const tinydelta_reloc_t *p_reloc, small_t at) {
 static uint32_t table_word(const tinydelta_reloc_t *p_reloc, small_t at) {
     uint32_t value = 0u;
 
-    for (small_t index = p_reloc->word_bytes; index > 0u; index--) {
+    for (small_t index = (small_t)p_reloc->word_bytes; index > 0u; index--) {
         value = (value << 8) | tb(p_reloc, at + index - 1u);
     }
     return value;
@@ -301,9 +305,9 @@ static bool check_rule(const tinydelta_reloc_t *p_reloc, small_t pos, small_t en
         small_t word = tb(p_reloc, at) & 0x7Fu;
 
         b_ok = ((at + (1u + (2u * p_reloc->word_bytes))) <= end) && (word < MAX_WORDS) &&
-               ((table_word(p_reloc, at + 1u) & ~table_word(p_reloc, at + 1u + p_reloc->word_bytes)) == 0u);
+               ((table_word(p_reloc, at + 1u) & ~table_word(p_reloc, at + 1u + (small_t)p_reloc->word_bytes)) == 0u);
         words = ((word + 1u) > words) ? (word + 1u) : words;
-        at += (1u + (2u * p_reloc->word_bytes));
+        at += (1u + (2u * (small_t)p_reloc->word_bytes));
     }
     for (small_t index = 0u; b_ok && (index < addrs); index++) {
         small_t slices = (at < end) ? tb(p_reloc, at) : 0u;
@@ -354,7 +358,7 @@ static bool check_rule(const tinydelta_reloc_t *p_reloc, small_t pos, small_t en
             }
         }
     }
-    *p_size = (list < LIST_CODE) ? (words * p_reloc->word_bytes) : n;
+    *p_size = (list < LIST_CODE) ? (words * (small_t)p_reloc->word_bytes) : n;
     return b_ok && (at == end) && (*p_size >= (words * p_reloc->word_bytes)) && (*p_size <= MAX_SIZE);
 }
 
@@ -382,7 +386,8 @@ static bool check_table(tinydelta_reloc_t *p_reloc) {
             small_t size = 0u;
             small_t len  = (pos < p_reloc->rules_len) ? p_reloc->p_rules[pos] : 0u;
 
-            b_ok = (len >= HEAD_SIZE) && (len <= (p_reloc->rules_len - pos)) && check_rule(p_reloc, pos, pos + len, list, p_reloc->list_count[list], &size);
+            b_ok = (len >= HEAD_SIZE) && (len <= (p_reloc->rules_len - pos)) &&
+                   check_rule(p_reloc, pos, pos + len, list, (small_t)p_reloc->list_count[list], &size);
             if (b_ok && ((size - 1u) > p_reloc->reach)) {
                 p_reloc->reach = size - 1u;
             }
@@ -418,25 +423,25 @@ tinydelta_result_t tinydelta_reloc_start(tinydelta_reloc_t *p_reloc, tinydelta_c
 
 #if TINYDELTA_RELOC_SHIPPED
 static small_t unit_of(const tinydelta_reloc_t *p_reloc) {
-    return p_reloc->unit;
+    return (small_t)p_reloc->unit;
 }
 static small_t word_bytes_of(const tinydelta_reloc_t *p_reloc) {
-    return p_reloc->word_bytes;
+    return (small_t)p_reloc->word_bytes;
 }
 static bool big_of(const tinydelta_reloc_t *p_reloc) {
     return p_reloc->b_big;
 }
 static small_t sync_of(const tinydelta_reloc_t *p_reloc) {
-    return p_reloc->sync;
+    return (small_t)p_reloc->sync;
 }
 static small_t reach_of(const tinydelta_reloc_t *p_reloc) {
-    return p_reloc->reach;
+    return (small_t)p_reloc->reach;
 }
 static small_t list_start_of(const tinydelta_reloc_t *p_reloc, small_t list) {
-    return p_reloc->list_start[list];
+    return (small_t)p_reloc->list_start[list];
 }
 static small_t list_count_of(const tinydelta_reloc_t *p_reloc, small_t list) {
-    return p_reloc->list_count[list];
+    return (small_t)p_reloc->list_count[list];
 }
 static bool uses(small_t feature) {
     (void)feature;
@@ -531,7 +536,7 @@ static const uint8_t *rule_addr(const tinydelta_reloc_t *p_reloc, const uint8_t 
         p_at += cond_bytes(p_reloc); /* past the conditions */
     }
     for (small_t index = 0u; index < k; index++) {
-        p_at = &p_at[1u + (2u * (small_t)*p_at)]; /* Cast: widens. Past its slice count and slices. */
+        p_at = &p_at[1u + (small_t)*p_at + (small_t)*p_at]; /* Cast: widens. Past its slice count and two bytes per slice. */
     }
     return p_at;
 }
@@ -601,7 +606,7 @@ static void split(const tinydelta_reloc_t *p_reloc, const span_t *p_span, const 
 
     for (small_t pass = uses(FEATURE_FIXED) ? 0u : 1u; b_fits && (pass < 2u); pass++) {
         uint32_t rest          = value;
-        const uint8_t *p_slice = p_addr + 1u + (2u * (small_t)*p_addr); /* Cast: widens. Just past the last slice. */
+        const uint8_t *p_slice = &p_addr[1u + (small_t)*p_addr + (small_t)*p_addr]; /* Cast: widens. Just past the last slice. */
 
         for (small_t index = *p_addr; b_fits && (index > 0u); index--) {
             small_t x;
@@ -773,7 +778,7 @@ static void move_at(const tinydelta_reloc_t *p_reloc, const uint8_t *p_rule, uin
             if ((shift != 0u) && no_wrap(address, shift) && ((bits >= 32u) || (((address + shift) >> bits) == 0u))) {
                 split(p_reloc, p_span, p_addr, p, address + shift);
             }
-            p_addr = &p_addr[1u + (2u * (small_t)*p_addr)]; /* Cast: widens. The next address. */
+            p_addr = &p_addr[1u + (small_t)*p_addr + (small_t)*p_addr]; /* Cast: widens. The next address. */
         }
     }
 }
