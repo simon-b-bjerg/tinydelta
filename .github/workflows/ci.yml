@@ -51,6 +51,7 @@ jobs:
           go test -run '^$' -fuzz '^FuzzEncodeRoundTrip$' -fuzztime 60s .
           go test -run '^$' -fuzz '^FuzzDecode$' -fuzztime 30s .
           go test -run '^$' -fuzz '^FuzzRelocRoundTrip$' -fuzztime 30s -fuzzminimizetime 2s .
+          go test -run '^$' -fuzz '^FuzzRelocGoVsC$' -fuzztime 30s -fuzzminimizetime 2s .
           go test -run '^$' -fuzz '^FuzzRulesTable$' -fuzztime 15s .
           go test -run '^$' -fuzz '^FuzzParseRules$' -fuzztime 15s .
       - name: Hex dump failing fuzz inputs
@@ -102,13 +103,17 @@ jobs:
         with:
           path: |
             fuzz-corpus
+            fuzz-corpus-device
+            fuzz-corpus-thumb
             fuzz-corpus-reloc
+            fuzz-corpus-reloc-device
+            fuzz-corpus-reloc-thumb
           key: c-fuzz-corpus-none
           restore-keys: c-fuzz-corpus-
-      - name: Fuzz the decoders and the relocation engine, 60 s each
+      - name: Fuzz the decoders and the relocation engine, 3 builds each, 40 s each
         env:
           CLANG: clang-18
-        run: scripts/c-fuzz.sh 60 fuzz-corpus
+        run: scripts/c-fuzz.sh 40 fuzz-corpus
       - name: Coverage of the C library by the fuzzer
         id: coverage
         env:

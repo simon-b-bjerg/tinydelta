@@ -35,6 +35,13 @@
 #include <string.h>
 
 #include "tinydelta_reloc.h"
+#if !TINYDELTA_RELOC_SHIPPED
+#if TINYDELTA_RELOC == TINYDELTA_RELOC_THUMB
+#include "tinydelta_rules_thumb.h"
+#else
+#include "tinydelta_rules_msp430x.h"
+#endif
+#endif
 
 #define FUZZ_HEADER_SIZE 9u
 
@@ -98,8 +105,13 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
     tinydelta_reloc_t reloc;
     memset(&reloc, 0, sizeof reloc);
-    reloc.p_rules       = table;
-    reloc.rules_len     = (uint32_t)table_len;
+#if TINYDELTA_RELOC_SHIPPED
+    reloc.p_rules   = table;
+    reloc.rules_len = (uint32_t)table_len;
+#else
+    reloc.p_rules   = tinydelta_reloc_rules; /* the device build: the table built in */
+    reloc.rules_len = TINYDELTA_RELOC_RULES_SIZE;
+#endif
     reloc.b_shipped     = false; /* the table is here already, not in a coded stream */
     reloc.base          = base;
     reloc.p_entries     = p_entries;

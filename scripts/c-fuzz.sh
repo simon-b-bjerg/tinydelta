@@ -4,18 +4,21 @@
 
 # Fuzzes the C library with libFuzzer, AddressSanitizer and
 # UndefinedBehaviorSanitizer, starting from inputs made by the Go encoders:
-# the decoders (c/fuzz/fuzz_decode.c), then the relocation engine on its own
-# (c/fuzz/fuzz_reloc.c), each for the given time.
+# the decoders (c/fuzz/fuzz_decode.c) and the relocation engine on its own
+# (c/fuzz/fuzz_reloc.c), each in three builds (scripts/c-fuzz-build.sh):
+# shipped tables accepted, MSP430X built in only (a device's build), Thumb
+# built in only. Each of the six runs for the given time.
 #
 # Usage: scripts/c-fuzz.sh [seconds [corpus dir]]   (default 60 s each)
 # Needs clang with libFuzzer (on Debian/Ubuntu: clang and libclang-rt-<N>-dev)
 # and Go. Set CLANG to pick a compiler, e.g. CLANG=clang-18.
 #
 # The corpora (inputs that reached new code) are kept in the corpus dir and
-# in <corpus dir>-reloc if one is given, e.g. for scripts/c-coverage.sh.
-# Inputs that crash are written to fuzz-artifacts/ (the relocation
-# engine's as reloc-...), hex dumped, and the script fails; replay one with:
-# <build dir>/fuzz_decode fuzz-artifacts/crash-... (or fuzz_reloc).
+# next to it, in <corpus dir>-device, -thumb, -reloc, -reloc-device and
+# -reloc-thumb, if one is given, e.g. for scripts/c-coverage.sh. Inputs that
+# crash are written to fuzz-artifacts/ (prefixed with the build: device-,
+# reloc-thumb- ...), hex dumped, and the script fails; replay one with:
+# <build dir>/<build> fuzz-artifacts/<file>.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 seconds="${1:-60}"
@@ -23,24 +26,31 @@ seconds="${1:-60}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 corpus="${2:-$work/corpus}"
-for harness in fuzz_decode fuzz_reloc; do
-  scripts/c-fuzz-build.sh "$harness" "$work/$harness" -O1 -fsanitize=address,undefined -fno-sanitize-recover=all
+builds=(fuzz_decode fuzz_decode_device fuzz_decode_thumb fuzz_reloc fuzz_reloc_device fuzz_reloc_thumb)
+for build in "${builds[@]}"; do
+  scripts/c-fuzz-build.sh "$build" "$work/$build" -O1 -fsanitize=address,undefined -fno-sanitize-recover=all
 done
 
 TINYDELTA_C_FUZZ_SEEDS="$work/seeds" TINYDELTA_C_FUZZ_RELOC_SEEDS="$work/reloc-seeds" \
   go test -count=1 -run '^TestWriteCFuzz' . >/dev/null
 
-mkdir -p "$corpus" "$corpus-reloc" fuzz-artifacts
+mkdir -p fuzz-artifacts
 status=0
-# harness, corpus, seeds, longest input, artifact prefix
-for run in "fuzz_decode $corpus $work/seeds 1200 fuzz-artifacts/" "fuzz_reloc $corpus-reloc $work/reloc-seeds 2048 fuzz-artifacts/reloc-"; do
-  read -r harness dir seeds max_len prefix <<<"$run"
-  echo "Fuzzing $harness for ${seconds}s"
+for build in "${builds[@]}"; do
+  # Corpus dir, seeds, longest input and artifact prefix of each build:
+  # fuzz_reloc_device keeps its corpus in <corpus>-reloc-device.
+  suffix="${build#fuzz_decode}" suffix="${suffix#fuzz_reloc}" suffix="${suffix/_/-}"
+  case "$build" in
+    fuzz_decode*) dir="$corpus$suffix" seeds="$work/seeds" max_len=1200 prefix="fuzz-artifacts/${suffix#-}${suffix:+-}" ;;
+    *) dir="$corpus-reloc$suffix" seeds="$work/reloc-seeds" max_len=2048 prefix="fuzz-artifacts/reloc$suffix-" ;;
+  esac
+  mkdir -p "$dir"
+  echo "Fuzzing $build for ${seconds}s"
   # Progress lines (NEW/REDUCE/pulse) are dropped to keep the log short; the
   # fuzzer's own exit status decides the result.
   {
     s=0
-    "$work/$harness" "$dir" "$seeds" \
+    "$work/$build" "$dir" "$seeds" \
       -max_total_time="$seconds" -max_len="$max_len" -print_final_stats=1 \
       -artifact_prefix="$prefix" 2>&1 || s=$?
     echo "$s" >"$work/status"
@@ -61,7 +71,7 @@ for f in fuzz-artifacts/*; do
   size=$(( ${#hex} / 2 ))
   echo
   echo "Failing input $f ($size bytes):"
-  if [ "$size" -ge 5 ] && [[ "$(basename "$f")" != reloc-* ]]; then
+  if [ "$size" -ge 5 ] && [[ "$(basename "$f")" =~ ^(device-|thumb-)?(crash|leak|timeout|oom|slow-unit)- ]]; then
     cap=$(( 16#${hex:2:2} << 8 | 16#${hex:0:2} ))
     dict=$(( 16#${hex:4:2} ))
     [ "$dict" -gt $(( size - 5 )) ] && dict=$(( size - 5 ))
