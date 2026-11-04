@@ -1,10 +1,11 @@
 # Relocation rules
 
-Status: **draft**. The Go side is implemented (rules.go, yamlsubset.go,
-`tinydelta rules`, `-rules`): the rule files relocate byte for byte as the
-hand-written rules on 66 real firmware updates and 40,000 random images.
-The C decoders still run the hand-written rules (TINYDELTA_RELOC 1 and 2),
-which the built-in tables reproduce; the C table engine comes next.
+Status: **draft**. Implemented in Go (rules.go, yamlsubset.go,
+`tinydelta rules`, `-rules`, `-ship-rules`) and C (tinydelta_reloc.c, one
+table engine for every rule set, with TINYDELTA_RELOC_SHIPPED for shipped
+tables). The rule files relocate byte for byte as the hand-written rules
+they replace on 66 real firmware updates and 40,000 random images; the C
+engine matches Go in the same tests and under CBMC.
 
 Relocation (README, "Relocation") rewrites the addresses in the old image
 before the patch applies, through a map of how code and data moved. Which
@@ -211,7 +212,8 @@ was changed to match. The decoder writes only the bytes inside the span.
 
 The compiler (`tinydelta rules compile`) turns the YAML into a table the
 C engine reads in place: byte-aligned, no pointers, values and masks
-little-endian. Fields a rule doesn't need take no bytes.
+little-endian. Each rule starts with its own length, so the engine steps
+from rule to rule without decoding the ones it skips.
 
 ```text
 table   = version (1)
@@ -220,10 +222,10 @@ table   = version (1)
         + prefixes (1) + lengths (1) + code (1) + data (1)        rule counts
         + rules, in that order
 
-rule    = first (1: bits 0-1 addresses 0-2, 2-4 conditions 0-4, 5 relative, 6 "more" follows)
-        + [more (1: bit 0 require, 1-2 space, 3 align follows, 4 size follows, 5 unless follows)]
-        + [align (1)] + [size (1)]                     only if not the defaults
-        + prefixes: skip (1); lengths: length (1)
+rule    = length (1: the rule's bytes, this one included)
+        + flags (1: bits 0-1 addresses 0-2, 2-4 conditions 0-4, 5 relative, 6 require, 7 unless follows)
+        + attr (1: bits 0-1 space, 2-3 log2 align)
+        + n (1: prefixes skip, lengths length, code and data size)
         + conditions × ( word (1: bits 0-6 index, bit 7 negate) + value (word bytes) + mask (word bytes) )
         + addresses × ( slices (1) + slices × slice )
         + [relative: base (1, signed) + sign_extend (1)]
@@ -233,14 +235,13 @@ slice   = (1: bits 0-4 lowest bit, 5-7 word) + (1: bits 0-4 width − 1)
           or fixed bits: (1: their value) + (1: 0x80 | count − 1)
 ```
 
-Defaults: `align` is the unit; `size` is the bytes the rule's conditions
-and slices read (at least one word). A table that gives a default
-explicitly is rejected, so every rule set has exactly one table and one
-CRC: CRC-16/CCITT-FALSE (polynomial 0x1021, initial 0xFFFF) over the
-whole table.
+The CRC is CRC-16/CCITT-FALSE (polynomial 0x1021, initial 0xFFFF) over
+the whole table.
 
-Size: `rules/msp430x.yaml` compiles to 482 B (717 B with a fixed layout
-per rule), `rules/thumb.yaml` to 41 B.
+Size: `rules/msp430x.yaml` compiles to 590 B, `rules/thumb.yaml` to 45 B.
+(A layout without the per-rule length, attr and size bytes took 482 B,
+but the C engine then had to decode every rule it skipped; 717 B with
+every field in every rule.)
 
 ## In the patch
 
@@ -270,7 +271,7 @@ A CRC must equal the decoder's built-in table's, else
 `TINYDELTA_ERR_VERSION`. A shipped table is coded at the start of the
 stream, each byte by a bit tree of 255 states that start at even odds
 (the decoder borrows the coder's tables for them and clears them before
-the instructions): the 482-byte MSP430X table costs about 300 B in the
+the instructions): the 590-byte MSP430X table costs about 375 B in the
 patch. The map stays uncoded: per patch it is too small for an adaptive
 model to learn (coding the maps of 17 MSP430X updates gave 575 B for
 605 B raw, and 624 B with a model per field).
@@ -323,9 +324,13 @@ names a table by CRC. Go: `ParseRules`, `BuiltinRules`,
 `EncodeOptions.Rules` and `ShipRules`, `DecodeRules`; Python: `rules=`
 (a path) and `ship_rules=` in `encode`, `rules=` in `decode`.
 
-The C decoder is built with `TINYDELTA_RELOC = 1` and a built-in table
-(`TINYDELTA_RELOC_RULES`, the generated header); `TINYDELTA_RELOC_SHIPPED
-= 1` adds accepting tables from patches (the validator).
+The C decoder is built with `TINYDELTA_RELOC` = `TINYDELTA_RELOC_THUMB`
+or `TINYDELTA_RELOC_MSP430X` (the built-in tables,
+`c/tinydelta_rules_*.h`), or `TINYDELTA_RELOC_RULES` with
+`TINYDELTA_RELOC_RULES_HEADER` naming a header from `tinydelta rules
+compile -c` for a table of your own. `TINYDELTA_RELOC_SHIPPED = 1` adds
+accepting tables shipped in patches, and the checker they need; without
+it the table is trusted (it is part of the firmware) and not checked.
 
 ## Covering other MCUs
 
