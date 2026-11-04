@@ -326,10 +326,14 @@ def annotate(level, title, text):
 
 
 def tail(path, lines=40):
+    """The end of a build log, after its first error lines (a parallel build
+    interleaves them with commands, so the end alone may not show them)."""
     if not os.path.exists(path):
         return "(no log)"
     with open(path, errors="replace") as f:
-        return "".join(f.readlines()[-lines:])
+        log = f.readlines()
+    errors = [line for line in log if " error" in line.lower() or "undefined reference" in line or "Error " in line][:15]
+    return ("First errors:\n" + "".join(errors) + "\nEnd of the log:\n" if errors else "") + "".join(log[-lines:])
 
 
 def main():
