@@ -61,7 +61,7 @@ static uint8_t raw_read(void *ctx, uint32_t index) {
 /* A copy of n bytes from *p (fewer if the input runs out: zeros), in a
  * buffer of exactly n bytes (at least 1, so malloc doesn't return NULL). */
 static uint8_t *take(const uint8_t **p, size_t *left, size_t n) {
-    uint8_t *b = calloc(n > 0 ? n : 1, 1);
+    uint8_t *b  = calloc(n > 0 ? n : 1, 1);
     size_t have = n < *left ? n : *left;
     if (b == NULL) {
         abort();
