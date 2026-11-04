@@ -89,8 +89,9 @@ A patch carries no checksum, so before shipping, read
 ## Contents
 
 - [Benchmark](#benchmark)
-- [Two-pass patches](#two-pass-patches)
 - [Coded patches](#coded-patches)
+- [Relocation](#relocation)
+- [Two-pass patches](#two-pass-patches)
 - [Why another delta format?](#why-another-delta-format)
 - [Installation](#installation)
   - [Command-line tool](#command-line-tool)
@@ -114,6 +115,7 @@ A patch carries no checksum, so before shipping, read
   - [Rules](#rules)
   - [Example](#example)
   - [Coded form](#coded-form)
+  - [Relocation map](#relocation-map)
   - [Stability](#stability)
   - [Conformance vectors](#conformance-vectors)
 - [How the encoder works](#how-the-encoder-works)
@@ -268,78 +270,6 @@ holds the old and new file in memory. Every figure and its source is in
 
 </details>
 
-## Two-pass patches
-
-For updates that change a lot, `encode -two-pass` (`EncodeOptions.TwoPass`)
-may return a patch the device decodes twice. Its first pass, made for
-compression, stores where the new file still lines up with the old one
-but a few bytes changed (moved addresses, branch offsets) as the
-*difference* from the old bytes (format version 2), so the same shift
-gives the same byte everywhere. tinydelta then compresses that patch: the
-second pass encodes it against an empty dictionary, and its repeats
-become short copies.
-
-```text
-update server:  old + new ──v2──▶ inner ──v1──▶ outer     (sent)
-device:         outer ──v1──▶ inner ──v2──▶ new
-```
-
-The encoder returns whichever is smaller, plain or two-pass, and says
-which: the CLI prints `passes 1` or `passes 2`, Go's `Patch.Passes` and
-Python's `Patch.passes` carry it. Send it with the patch; it is not part
-of it. In the benchmark, two passes win on 96% of firmware updates and
-about halve them (2.2× smaller on patches of 1 KB and up); on small
-configuration updates the plain patch is the smaller in 84% of them,
-typically by a few bytes. The [benchmark](#benchmark)'s trade-off graph
-shows the smaller of the two, for a decoder without the coder.
-
-Two passes cost no decoder code, only time and room for the inner patch
-between the passes. Where the decoder can afford the coder,
-[coded patches](#coded-patches) are smaller still, in one pass.
-
-```sh
-tinydelta encode -two-pass old.bin new.bin update.td    # prints "passes 1" or "passes 2"
-tinydelta decode -two-pass old.bin update.td new.bin    # for "passes 2"
-```
-
-<details>
-<summary>Decoding twice on the device</summary>
-
-Two calls of the same decoder, sharing one buffer; pass 1's result
-length is pass 2's patch length:
-
-```c
-uint8_t buffer[256];  /* one flash page; on the stack is fine */
-uint32_t inner_len;
-uint32_t new_len;
-tinydelta_io_t pass1 = {  /* outer patch, empty dictionary -> inner area */
-    .patch_read = flash_read, .p_patch_ctx = &patch_area, .patch_len = patch_len,
-    .dict_len = 0u,
-    .target_write = flash_write, .target_read = flash_read,
-    .p_target_ctx = &inner_area, .target_cap = INNER_AREA_SIZE,
-    .p_buffer = buffer, .buffer_size = sizeof buffer, .page_size = sizeof buffer,
-};
-tinydelta_result_t result = tinydelta_decode_io(&pass1, &inner_len);
-if (result == TINYDELTA_OK) {
-    tinydelta_io_t pass2 = {  /* inner patch, old firmware -> new firmware */
-        .patch_read = flash_read, .p_patch_ctx = &inner_area, .patch_len = inner_len,
-        .dict_read = flash_read, .p_dict_ctx = &old_slot, .dict_len = old_len,
-        .target_write = flash_write, .target_read = flash_read,
-        .p_target_ctx = &new_slot, .target_cap = new_len_expected,
-        .p_buffer = buffer, .buffer_size = sizeof buffer, .page_size = sizeof buffer,
-    };
-    result = tinydelta_decode_io(&pass2, &new_len);
-}
-```
-
-The final hash of the new firmware covers both passes. Encode with
-`-window 256` (`EncodeOptions.Window`) and neither pass reads its own
-output further back than the buffer holds: `target_read` can be `NULL`.
-With `-two-pass -coder-tables`, the outer patch can be coded too, so give
-pass 1 the tables as well (`p_tables`, `tables_size`).
-
-</details>
-
 ## Coded patches
 
 A coded patch is a plain patch whose instruction stream is range-coded:
@@ -351,6 +281,8 @@ values recur, so they cost a fraction of a bit each. The device decodes
 it in **one pass**, with no intermediate patch to store, and the
 instructions and their meaning are exactly those of a plain patch.
 
+![The layers of a coded patch: the range coder turns the coded bytes into the plain instruction stream, whose SKIP and ADD instructions build the new file from the old one](docs/patch-layers.svg)
+
 The price is on the device, so it is optional twice over: the C
 decoders only read coded patches when built with `TINYDELTA_CODER = 1`,
 and the encoder only makes one when told the size of the decoder's
@@ -359,7 +291,7 @@ decodes (a local array is fine):
 
 | table layout | RAM | firmware, 176 updates | configuration, 316 updates |
 |---|---:|---:|---:|
-| plain, best of one and two passes | 0 | 1,765,799 B | 51,109 B |
+| plain, best of one and [two passes](#two-pass-patches) | 0 | 1,765,799 B | 51,109 B |
 | C: one shared byte table | 522 B | 1,207,085 B (−32%) | 46,416 B (−9%) |
 | B: `ADD_DIFF` bytes, and one for the rest | 777 B | 1,149,923 B (−35%) | 45,900 B (−10%) |
 | A: one table per kind of byte | 1,287 B | 1,145,110 B (−35%) | 44,582 B (−13%) |
@@ -486,6 +418,85 @@ MSP430X) and the engine that reads it. RAM: the map in the tables buffer (12 byt
 range, 8 per data run), and in
 the callback decoder a 16-byte cache of raw dictionary bytes.
 
+## Two-pass patches
+
+For updates that change a lot, `encode -two-pass` (`EncodeOptions.TwoPass`)
+may return a patch the device decodes twice. Its first pass, made for
+compression, stores where the new file still lines up with the old one
+but a few bytes changed (moved addresses, branch offsets) as the
+*difference* from the old bytes (format version 2), so the same shift
+gives the same byte everywhere. tinydelta then compresses that patch: the
+second pass encodes it against an empty dictionary, and its repeats
+become short copies.
+
+![A two-pass patch: an outer instruction stream expands to the inner one, which builds the new file from the old one](docs/two-pass-layers.svg)
+
+The figure shows the mechanism on the small example from the
+[wire format](#example), which is too small to gain from it: there, one
+pass wins. The saving comes on firmware, where the same differences
+recur across thousands of addresses.
+
+```text
+update server:  old + new ──v2──▶ inner ──v1──▶ outer     (sent)
+device:         outer ──v1──▶ inner ──v2──▶ new
+```
+
+The encoder returns whichever is smaller, plain or two-pass, and says
+which: the CLI prints `passes 1` or `passes 2`, Go's `Patch.Passes` and
+Python's `Patch.passes` carry it. Send it with the patch; it is not part
+of it. In the benchmark, two passes win on 96% of firmware updates and
+about halve them (2.2× smaller on patches of 1 KB and up); on small
+configuration updates the plain patch is the smaller in 84% of them,
+typically by a few bytes. The [benchmark](#benchmark)'s trade-off graph
+shows the smaller of the two, for a decoder without the coder.
+
+Two passes cost no decoder code, only time and room for the inner patch
+between the passes. Where the decoder can afford the coder,
+[coded patches](#coded-patches) are smaller still, in one pass.
+
+```sh
+tinydelta encode -two-pass old.bin new.bin update.td    # prints "passes 1" or "passes 2"
+tinydelta decode -two-pass old.bin update.td new.bin    # for "passes 2"
+```
+
+<details>
+<summary>Decoding twice on the device</summary>
+
+Two calls of the same decoder, sharing one buffer; pass 1's result
+length is pass 2's patch length:
+
+```c
+uint8_t buffer[256];  /* one flash page; on the stack is fine */
+uint32_t inner_len;
+uint32_t new_len;
+tinydelta_io_t pass1 = {  /* outer patch, empty dictionary -> inner area */
+    .patch_read = flash_read, .p_patch_ctx = &patch_area, .patch_len = patch_len,
+    .dict_len = 0u,
+    .target_write = flash_write, .target_read = flash_read,
+    .p_target_ctx = &inner_area, .target_cap = INNER_AREA_SIZE,
+    .p_buffer = buffer, .buffer_size = sizeof buffer, .page_size = sizeof buffer,
+};
+tinydelta_result_t result = tinydelta_decode_io(&pass1, &inner_len);
+if (result == TINYDELTA_OK) {
+    tinydelta_io_t pass2 = {  /* inner patch, old firmware -> new firmware */
+        .patch_read = flash_read, .p_patch_ctx = &inner_area, .patch_len = inner_len,
+        .dict_read = flash_read, .p_dict_ctx = &old_slot, .dict_len = old_len,
+        .target_write = flash_write, .target_read = flash_read,
+        .p_target_ctx = &new_slot, .target_cap = new_len_expected,
+        .p_buffer = buffer, .buffer_size = sizeof buffer, .page_size = sizeof buffer,
+    };
+    result = tinydelta_decode_io(&pass2, &new_len);
+}
+```
+
+The final hash of the new firmware covers both passes. Encode with
+`-window 256` (`EncodeOptions.Window`) and neither pass reads its own
+output further back than the buffer holds: `target_read` can be `NULL`.
+With `-two-pass -coder-tables`, the outer patch can be coded too, so give
+pass 1 the tables as well (`p_tables`, `tables_size`).
+
+</details>
+
 ## Why another delta format?
 
 Established formats were not designed for a decoder that has to fit in a
@@ -518,7 +529,7 @@ Download a prebuilt static binary for Linux or Windows (amd64 or arm64)
 from the [releases page](https://github.com/simon-b-bjerg/tinydelta/releases):
 
 ```sh
-VERSION=v1.1.0   # pick the latest release
+VERSION=v1.1.1   # pick the latest release
 curl -fsSLO "https://github.com/simon-b-bjerg/tinydelta/releases/download/${VERSION}/tinydelta_${VERSION}_linux_amd64.tar.gz"
 tar -xzf "tinydelta_${VERSION}_linux_amd64.tar.gz"
 sudo install "tinydelta_${VERSION}_linux_amd64/tinydelta" /usr/local/bin/
