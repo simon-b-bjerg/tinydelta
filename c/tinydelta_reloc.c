@@ -10,8 +10,10 @@
  * built in or shipped, is checked against the limits before use, and every
  * rule is read with bounds checks, so a table can't make the engine read
  * or write outside its buffers. */
-#include "tinydelta_reloc.h"
+#include <limits.h>
+
 #include "tinydelta_internal.h"
+#include "tinydelta_reloc.h"
 
 #if TINYDELTA_CODER && (TINYDELTA_RELOC != 0)
 
@@ -56,8 +58,8 @@
 
 /* Table fields, bit counts and bit positions (below 256): 16 bits on MSP430,
  * a register on 32-bit cores, so they never take 32-bit arithmetic. */
-#if UINT_FAST16_MAX > UINT32_MAX
-typedef uint32_t small_t; /* 64-bit hosts: no wider than the rest */
+#if (UINT_FAST16_MAX > UINT32_MAX) || (UINT_FAST16_MAX < UINT_MAX)
+typedef uint32_t small_t; /* not wider than 32 bits (64-bit hosts), nor narrower than int (MinGW), so never promoted to int */
 #else
 typedef uint_fast16_t small_t;
 #endif
