@@ -15,13 +15,16 @@ output differs from the previous one, up to max_versions per item:
     <cache>/builds/<corpus>/<item>/versions.json   (commit, file, size, sha256)
 
 Commits that fail to build are logged and skipped. Needs git; for
-MicroPython arm-none-eabi-gcc and make; for device trees cpp and dtc.
+MicroPython arm-none-eabi-gcc and make; for device trees cpp and dtc; for
+mbedtls the compiler, ar and objcopy its items name (MSP430 GCC:
+scripts/msp430-toolchain.sh).
 
-A corpus's "collector" says how its items are built (micropython, dtb or
-file; default: the corpus's name). Corpora from the same repository share
+A corpus's "collector" says how its items are built (micropython, dtb,
+file or mbedtls; default: the corpus's name). Corpora from the same repository share
 one clone.
 """
 
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -191,6 +194,67 @@ def collect_micropython(cache, name, spec):
     return [item for item, _ in items]
 
 
+# The mbedtls sources a build compiles (all of library/, each file built
+# with bench/mbedtls/bench_config.h, so files it doesn't enable are empty)
+# and the paths whose changes can change the image.
+MBEDTLS_PATHS = ["library", "include"]
+MBEDTLS_BENCH = os.path.join(HERE, "mbedtls")
+
+
+def build_mbedtls(src, it, out, log):
+    """Builds bench/mbedtls/main.c against the mbedtls checkout in src with
+    the item's compiler: every library/*.c, an archive, a link into one
+    flash image (bench/mbedtls/flash.ld) with unused code dropped, then the
+    image's code, constants and initial values as one binary. Returns the
+    binary, or None if the commit doesn't build."""
+    cc, ar, objcopy = it["cc"], it.get("ar", it["cc"].replace("gcc", "ar")), it.get("objcopy", it["cc"].replace("gcc", "objcopy"))
+    flags = it.get("cflags", []) + ["-Os", "-ffunction-sections", "-fdata-sections", "-I" + MBEDTLS_BENCH,
+                                    "-I" + os.path.join(src, "include"), "-I" + os.path.join(src, "library"),
+                                    "-DMBEDTLS_CONFIG_FILE=\"bench_config.h\""]
+    shutil.rmtree(out, ignore_errors=True)
+    os.makedirs(out)
+    sources = sorted(f for f in os.listdir(os.path.join(src, "library")) if f.endswith(".c"))
+
+    def compile_one(f):
+        return run([cc] + flags + ["-c", os.path.join(src, "library", f), "-o", os.path.join(out, f[:-2] + ".o")], src, log)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=int(JOBS)) as pool:
+        if not all(pool.map(compile_one, sources)):
+            return None
+    library, elf, image = os.path.join(out, "libbench.a"), os.path.join(out, "firmware.elf"), os.path.join(out, "firmware.bin")
+    objects = [os.path.join(out, f[:-2] + ".o") for f in sources]
+    ok = (run([ar, "rcs", library] + objects, src, log) and
+          run([cc] + flags + ["-nostartfiles", "-T", os.path.join(MBEDTLS_BENCH, "flash.ld"), "-Wl,--gc-sections",
+                              os.path.join(MBEDTLS_BENCH, "main.c"), library, "-lc", "-lgcc", "-o", elf], src, log) and
+          run([objcopy, "-O", "binary", "-j", ".text", "-j", ".rodata", "-j", ".data", elf, image], src, log))
+    return open(image, "rb").read() if ok else None
+
+
+def collect_mbedtls(cache, name, spec):
+    src = source_dir(cache, spec)
+    clone(spec, src)
+    items = [(Item(cache, name, it["name"], spec["max_versions"]), it) for it in spec["items"]]
+    log = os.path.join(cache, "build-%s.log" % name)
+    commits = commits_touching(src, spec["from"], spec["to"], MBEDTLS_PATHS)
+    for item, _ in items:
+        item.keep_only(commits)
+    for index, commit in enumerate(commits):
+        todo = [(item, it) for item, it in items if item.pending(index, commit)]
+        if not todo:
+            if all(item.full() for item, _ in items):
+                break
+            continue
+        git(src, "checkout", "-q", "-f", commit)
+        for item, it in todo:
+            data = build_mbedtls(src, it, os.path.join(cache, "work-" + name, it["name"]), log)
+            if data is None:
+                item.skipped.append(commit)
+                continue
+            item.add(commit, data)
+        print("%s %s: %s" % (name, commit[:12], ", ".join("%s %d" % (i.name, len(i.versions)) for i, _ in items)), flush=True)
+    return [item for item, _ in items]
+
+
 def collect_dtb(cache, name, spec):
     src = source_dir(cache, spec)
     clone(spec, src)
@@ -271,7 +335,7 @@ def tail(path, lines=40):
 def main():
     cache = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, ".cache"))
     corpus = json.load(open(os.environ.get("BENCH_CORPUS", os.path.join(HERE, "corpus.json"))))
-    collectors = {"micropython": collect_micropython, "dtb": collect_dtb, "file": collect_file}
+    collectors = {"micropython": collect_micropython, "dtb": collect_dtb, "file": collect_file, "mbedtls": collect_mbedtls}
     names = [n for n in corpus if isinstance(corpus[n], dict)]
     report, failed = [], []
     for name in names:

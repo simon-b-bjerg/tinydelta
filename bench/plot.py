@@ -95,6 +95,8 @@ TINY_VARIANTS = [
     ("tinydelta_cz_twice_1k", "tinydelta, two-pass, 1 KB window", "#8a8983"),
     ("tinydelta_coded_c", "tinydelta, coded, 522 B tables", "#8a8983"),
     ("tinydelta_coded_a", "tinydelta, coded, 1287 B tables", "#8a8983"),
+    ("tinydelta_reloc", "tinydelta, coded and relocated (firmware), 1545 B tables", "#8a8983"),
+    ("tinydelta_reloc_shipped", "tinydelta, coded and relocated, rule table in the patch", "#8a8983"),
     ("tinydelta_window_256", "tinydelta, plain, copies at most 256 B back", "#8a8983"),
     ("tinydelta_window_1k", "tinydelta, plain, copies at most 1 KB back", "#8a8983"),
     ("tinydelta_window_4k", "tinydelta, plain, copies at most 4 KB back", "#8a8983"),
@@ -270,8 +272,40 @@ def summary(rows, tools_file, out):
                 lines.append("| %s | {:,} | {:,} | {:,} |".format(
                     round(statistics.median(size)), round(percentile(size, 10)), round(percentile(size, 90))) % label)
             lines.append("")
+    lines += relocation_summary(rows)
     with open(os.path.join(out, "summary.md"), "w") as f:
         f.write("\n".join(lines))
+
+
+def relocation_summary(rows):
+    """Firmware with relocation rules (corpus.json "relocation"): per item
+    and commit step, the patches summed, coded and coded and relocated."""
+    corpus_file = os.environ.get("BENCH_CORPUS", os.path.join(os.path.dirname(os.path.abspath(__file__)), "corpus.json"))
+    corpus = json.load(open(corpus_file)) if os.path.exists(corpus_file) else {}
+    relocated = {n for n, c in corpus.items() if isinstance(c, dict) and "relocation" in c}
+    sel = [r for r in rows if r["corpus"] in relocated and "tinydelta_reloc" in r]
+    if not sel:
+        return []
+    cols = [k for k in ("tinydelta_coded_b", "tinydelta_coded_a", "tinydelta_reloc", "tinydelta_reloc_shipped") if k in sel[0]]
+    labels = {"tinydelta_coded_b": "coded, 777 B", "tinydelta_coded_a": "coded, 1287 B",
+              "tinydelta_reloc": "relocated, 1545 B", "tinydelta_reloc_shipped": "relocated, table shipped"}
+    lines = ["## Relocation", "",
+             "Firmware with relocation rules: patch sizes summed over every pair, in bytes, map and "
+             "header included. Tables are the decoder's tables buffer: the coder's tables, and for "
+             "relocation its map (12 B per entry), plus the rule table when the patch ships it. "
+             "The change is relocated against coded with 1287 B of tables.", "",
+             "| item | rules, base | step | pairs | " + " | ".join(labels[c] for c in cols) + " | change |",
+             "|---|---|---:|---:|" + "---:|" * len(cols) + "---:|"]
+    for key in sorted({(r["corpus"], r["item"], r["step"]) for r in sel}):
+        group = [r for r in sel if (r["corpus"], r["item"], r["step"]) == key]
+        sums = {c: sum(r[c] for r in group) for c in cols}
+        reloc = corpus[key[0]]["relocation"]
+        base = sums.get("tinydelta_coded_a") or sums.get("tinydelta_coded_b")
+        change = "%+.0f%%" % (100 * (sums["tinydelta_reloc"] - base) / base) if base else ""
+        lines.append("| %s/%s | %s, %s | %d | %d | %s | %s |" % (
+            key[0], key[1], reloc["rules"], reloc["base"], key[2], len(group),
+            " | ".join("{:,}".format(sums[c]) for c in cols), change))
+    return lines + [""]
 
 
 # The comparisons the distribution graphs show: the VCDIFF reference, the

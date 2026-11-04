@@ -30,6 +30,16 @@ Tools (set the binaries with environment variables; defaults are on PATH):
     tinydelta_coded_c, _b, _a  tinydelta encode -coder-tables 522/777/1287:
                        the smaller of the plain patch and coded ones whose
                        tables fit, decoded in one pass
+    tinydelta_reloc    tinydelta encode -coder-tables 1545 -reloc <rules> -base
+                       <base>: coded and relocated, for corpora with a
+                       "relocation" setting in corpus.json (firmware); the
+                       decoder has the rules built in. 1545 B of tables: the
+                       coder's (777 B, layout B, or 1287 B, layout A) and the
+                       relocation map's, 12 B per entry. Elsewhere, the same
+                       without -reloc.
+    tinydelta_reloc_shipped  the same with -ship-rules: the patch carries the
+                       rule table (rules/<rules>.yaml, compiled), with that
+                       much more room for tables
     openvcdiff         open-vcdiff encode -target_matches     $OPENVCDIFF
     openvcdiff_zlib   the open-vcdiff patch, zlib level 9
     openvcdiff_interleaved  open-vcdiff encode -interleaved -target_matches:
@@ -63,8 +73,12 @@ HDIFFI = os.environ.get("HDIFFI", "hdiffi")
 HPATCHI = os.environ.get("HPATCHI", "hpatchi")
 WINDOWS = (("tinydelta_window_256", 256), ("tinydelta_window_1k", 1024), ("tinydelta_window_4k", 4096))
 CODED = (("tinydelta_coded_c", 522), ("tinydelta_coded_b", 777), ("tinydelta_coded_a", 1287))
+# Coder tables for the relocated variants: layout B's plus 64 map entries.
+RELOC_TABLES = 777 + 64 * 12
+RULES = os.path.join(HERE, "..", "rules")
 ALL_TOOLS = ["tinydelta", "tinydelta_greedy", "tinydelta_optimal"] + [t for t, _ in WINDOWS] + [
              "tinydelta_cz_twice", "tinydelta_cz_twice_1k"] + [t for t, _ in CODED] + [
+             "tinydelta_reloc", "tinydelta_reloc_shipped"] + [
              "openvcdiff", "openvcdiff_zlib", "openvcdiff_interleaved", "xdelta3", "bsdiff",
              "detools", "hpatchlite_4k", "hpatchlite_32k", "zstd"]
 # Run by default: all but tinydelta_optimal, which takes a few hundred MB
@@ -96,8 +110,10 @@ def read(path):
         return f.read()
 
 
-def encode_all(tools, old, new, work):
-    """Returns {tool: patch size}, after checking each patch decodes to new."""
+def encode_all(tools, old, new, work, relocation=None):
+    """Returns {tool: patch size}, after checking each patch decodes to new.
+    relocation is the corpus's "relocation" setting ({"rules", "base"}), if
+    it has one."""
     target = read(new)
     patch = os.path.join(work, "patch")
     out = os.path.join(work, "out")
@@ -126,6 +142,20 @@ def encode_all(tools, old, new, work):
     for tool, tables in CODED:
         if tool in tools:
             sh(TINYDELTA, "encode", "-coder-tables", str(tables), old, new, patch)
+            check(tool, sh(TINYDELTA, "decode", old, patch))
+            sizes[tool] = os.path.getsize(patch)
+    for tool, ship in (("tinydelta_reloc", False), ("tinydelta_reloc_shipped", True)):
+        if tool in tools:
+            tables, extra = RELOC_TABLES, []
+            if relocation:
+                extra = ["-reloc", relocation["rules"], "-base", relocation["base"]]
+                if ship:
+                    # The rule table travels in the patch and takes room in the tables.
+                    table = os.path.join(work, "rules.bin")
+                    sh(TINYDELTA, "rules", "compile", "-o", table, os.path.join(RULES, relocation["rules"] + ".yaml"))
+                    tables += os.path.getsize(table)
+                    extra.append("-ship-rules")
+            sh(*([TINYDELTA, "encode", "-coder-tables", str(tables)] + extra + [old, new, patch]))
             check(tool, sh(TINYDELTA, "decode", old, patch))
             sizes[tool] = os.path.getsize(patch)
     if "tinydelta_optimal" in tools:
@@ -182,9 +212,9 @@ def fresh(*paths):
             os.remove(path)
 
 
-def encode_pair(tools, old, new):
+def encode_pair(tools, old, new, relocation):
     with tempfile.TemporaryDirectory(prefix="tinydelta-bench-") as work:
-        return encode_all(tools, old, new, work)
+        return encode_all(tools, old, new, work, relocation)
 
 
 def first_line(*cmd):
@@ -232,6 +262,7 @@ def main():
         if name not in corpus:
             continue  # cached builds of a corpus no longer listed
         kind = corpus[name]["kind"]
+        relocation = corpus[name].get("relocation")
         for item in sorted(os.listdir(os.path.join(builds, name))):
             folder = os.path.join(builds, name, item)
             index = os.path.join(folder, "versions.json")
@@ -244,12 +275,12 @@ def main():
                     pairs.append(({"corpus": name, "kind": kind, "item": item, "step": step,
                                    "from": a["commit"][:12], "to": b["commit"][:12],
                                    "dict_bytes": a["size"], "target_bytes": b["size"]},
-                                  os.path.join(folder, a["file"]), os.path.join(folder, b["file"])))
+                                  os.path.join(folder, a["file"]), os.path.join(folder, b["file"]), relocation))
 
     jobs = int(os.environ.get("BENCH_JOBS", os.cpu_count() or 1))
     rows = [None] * len(pairs)
     with concurrent.futures.ProcessPoolExecutor(max_workers=jobs) as pool:
-        futures = {pool.submit(encode_pair, tools, old, new): i for i, (_, old, new) in enumerate(pairs)}
+        futures = {pool.submit(encode_pair, tools, old, new, relocation): i for i, (_, old, new, relocation) in enumerate(pairs)}
         for done, future in enumerate(concurrent.futures.as_completed(futures), 1):
             i = futures[future]
             try:
