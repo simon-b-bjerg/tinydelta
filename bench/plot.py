@@ -636,6 +636,11 @@ def place_labels(fig, ax, points):
         placed.append(extent)
 
 
+# The trade-off graph's footprint axis ends here; a decoder above it (bsdiff:
+# its 2 MB+ of buffers) sits at the edge, labelled with its footprint.
+TRADEOFF_XMAX = 500e3
+
+
 def tradeoff(rows, out):
     """Firmware: typical patch size against the decoder's footprint on the
     device, code plus the RAM buffers it needs, stack excluded
@@ -675,9 +680,12 @@ def tradeoff(rows, out):
         d = decoders[key]
         lower_bound = d["code"] is None or d["plus_old_file"]
         x, y = footprint(key), share(key)
+        label = d["label"] + (" (at least)" if lower_bound else "")
+        if x > TRADEOFF_XMAX:  # off the axis (bsdiff's 2 MB+): at its edge, with the footprint
+            x, label = TRADEOFF_XMAX, "%s, %s" % (label, "%.1f MB" % (footprint(key) / 1e6))
         ax.plot([x], [y], marker=">" if lower_bound else "o", markersize=9, color=colors.get(key, MUTED),
-                markeredgecolor=SURFACE, markeredgewidth=1.5, linestyle="")
-        points.append((x, y, d["label"] + (" (at least)" if lower_bound else "")))
+                markeredgecolor=SURFACE, markeredgewidth=1.5, linestyle="", clip_on=False)
+        points.append((x, y, label))
     xs, ys = [footprint(k) for k, _ in stairs], [share(c) for _, c in stairs]
     ax.plot(xs, ys, color=INK, linewidth=2, zorder=3)
     ax.plot(xs, ys, marker="o", markersize=10, color=INK, markeredgecolor=SURFACE, markeredgewidth=1.5, linestyle="", zorder=4)
@@ -690,12 +698,12 @@ def tradeoff(rows, out):
         points.append((x, y, "tinydelta, two-pass"))
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.margins(x=0.22, y=0.22)
+    ax.margins(y=0.15)
+    ax.set_xlim(min(p[0] for p in points) / 1.6, TRADEOFF_XMAX)
     place_labels(fig, ax, points)
-    ax.xaxis.set_major_locator(ticker.LogLocator(base=10))
+    log_axis(ax.xaxis)
     ax.xaxis.set_major_formatter(ticker.FuncFormatter(
         lambda x, _: "%g MB" % (x / 1e6) if x >= 1e6 else "%g KB" % (x / 1e3) if x >= 1e3 else "%g B" % x))
-    ax.xaxis.set_minor_formatter(ticker.NullFormatter())
     log_axis(ax.yaxis, "%")
     ax.set_title(kind_label(rows, "firmware") + " (%d pairs)" % len(sel), fontsize=11, color=INK, loc="left")
     ax.set_xlabel("decoder footprint: code + RAM buffers, stack excluded (log scale)", fontsize=9, color=MUTED)
@@ -705,7 +713,7 @@ def tradeoff(rows, out):
              ha="left", va="top", fontsize=13, color=INK)
     fig.text(0.02, 1 - 0.45 / height, "Lower left is better. Black: tinydelta's decoders, each step adding to the last.\n"
              "Hollow: two-pass, the plain decoder run twice, the intermediate patch stored in between.\n"
-             "Arrows are lower bounds: code size unknown, or the whole old file in RAM.", ha="left", va="top", fontsize=9, color=MUTED)
+             "Arrows are lower bounds: code size unknown, or the whole old file in RAM; at the right edge, off the axis.", ha="left", va="top", fontsize=9, color=MUTED)
     if RELOC in sel[0]:
         fig.text(0.02, 0.012, "Relocated: firmware without relocation rules gets the coded patch.", ha="left",
                  va="bottom", fontsize=8.5, color=MUTED)
