@@ -304,11 +304,14 @@ static bool check_rule(const tinydelta_reloc_t *p_reloc, small_t pos, small_t en
         }
     }
     for (small_t index = 0u; b_ok && (index < ((flags >> 2) & 7u)); index++) {
-        small_t word = tb(p_reloc, at) & 0x7Fu;
+        /* The condition must fit the rule before any of it is read. */
+        b_ok = (at + (1u + (2u * (small_t)p_reloc->word_bytes))) <= end;
+        if (b_ok) {
+            small_t word = tb(p_reloc, at) & 0x7Fu;
 
-        b_ok = ((at + (1u + (2u * p_reloc->word_bytes))) <= end) && (word < MAX_WORDS) &&
-               ((table_word(p_reloc, at + 1u) & ~table_word(p_reloc, at + 1u + (small_t)p_reloc->word_bytes)) == 0u);
-        words = ((word + 1u) > words) ? (word + 1u) : words;
+            b_ok  = (word < MAX_WORDS) && ((table_word(p_reloc, at + 1u) & ~table_word(p_reloc, at + 1u + (small_t)p_reloc->word_bytes)) == 0u);
+            words = ((word + 1u) > words) ? (word + 1u) : words;
+        }
         at += (1u + (2u * (small_t)p_reloc->word_bytes));
     }
     for (small_t index = 0u; b_ok && (index < addrs); index++) {
