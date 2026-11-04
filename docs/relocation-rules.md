@@ -5,7 +5,9 @@ Status: **draft**. Implemented in Go (rules.go, yamlsubset.go,
 table engine for every rule set, with TINYDELTA_RELOC_SHIPPED for shipped
 tables). The rule files relocate byte for byte as the hand-written rules
 they replace on 66 real firmware updates and 40,000 random images; the C
-engine matches Go in the same tests and under CBMC.
+engine matches Go in the same tests. A CBMC harness for the engine exists
+(c/cbmc/reloc.c) but isn't part of scripts/c-cbmc.sh yet: it needs loop
+bounds that keep it tractable.
 
 Relocation (README, "Relocation") rewrites the addresses in the old image
 before the patch applies, through a map of how code and data moved. Which
