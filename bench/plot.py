@@ -507,18 +507,22 @@ def relocated_corpora():
     return {n for n, c in corpus.items() if isinstance(c, dict) and "relocation" in c}
 
 
+# Where the pair graph draws dashed lines: tinydelta's patch this share of the tool's.
+PAIR_FRACTIONS = ((0.5, "½"), (0.25, "¼"), (0.125, "⅛"))
+
+
 def pair_scatter(rows, out, name):
-    """Every pair, one panel per tool (PAIR_TOOLS): that tool's patch size
-    across, tinydelta's up, for each tinydelta variant measured, coloured:
-    plain, coded (777 B tables), and coded + relocated (only firmware with
-    relocation rules). Marker is the kind of data. The same axes in every
-    panel; dashed lines where tinydelta's patch is half and a quarter of the
+    """Every pair, as a matrix: a row per tinydelta variant measured (plain,
+    coded with 777 B tables, coded + relocated for firmware with relocation
+    rules), a column per tool (PAIR_TOOLS); that tool's patch size across,
+    tinydelta's up, the same axes in every panel. Marker is the kind of
+    data; in each panel, the share of pairs where tinydelta is smaller, and
+    dashed lines where its patch is a half, a quarter and an eighth of the
     tool's."""
     relocated = relocated_corpora()
-    variants = [(plain_key(rows), "tinydelta, plain", "#2a78d6", rows),
-                (CODED, "tinydelta, coded (777 B tables)", INK, rows),
-                (RELOC, "tinydelta, coded + relocated (firmware with rules)", "#e8710a",
-                 [r for r in rows if r["corpus"] in relocated])]
+    variants = [(plain_key(rows), "plain", "#2a78d6", rows),
+                (CODED, "coded", INK, rows),
+                (RELOC, "coded + relocated", "#e8710a", [r for r in rows if r["corpus"] in relocated])]
     variants = [v for v in variants if v[3] and v[0] in v[3][0]]
     labels = {k: label for k, label, _, _, _ in OTHERS}
     tools = [k for k in PAIR_TOOLS if k in rows[0]]
@@ -527,49 +531,46 @@ def pair_scatter(rows, out, name):
     kinds = kinds_of(rows)
     sizes = [r[k] for k in tools for r in rows] + [r[v[0]] for v in variants for r in v[3]]
     lo, hi = max(1, min(sizes)) / 1.5, max(sizes) * 1.5
-    ncols = 2 if len(tools) > 1 else 1
-    nrows = (len(tools) + ncols - 1) // ncols
-    fig, axes = plt.subplots(nrows, ncols, figsize=(5.0 * ncols, 1.1 + 4.8 * nrows), squeeze=False, facecolor=SURFACE)
-    for ax in axes.flat[len(tools):]:
-        ax.remove()
-    for index, (ax, tool) in enumerate(zip(axes.flat, tools)):
-        style(ax)
-        ax.plot([lo, hi], [lo, hi], color=MUTED, linewidth=1)
-        for fraction, mark in ((0.5, "½"), (0.25, "¼")):
-            ax.plot([lo, hi], [lo * fraction, hi * fraction], color=MUTED, linewidth=0.8, linestyle=(0, (4, 3)), alpha=0.6)
-            ax.text(hi / 1.15, hi * fraction / 1.25, mark, color=MUTED, fontsize=9, ha="right", va="top")
-        for key, _, color, sel in variants:
+    decades = [10 ** e for e in range(math.ceil(math.log10(lo)), math.floor(math.log10(hi)) + 1, 2)]
+    fig, axes = plt.subplots(len(variants), len(tools), figsize=(0.6 + 2.6 * len(tools), 1.5 + 2.6 * len(variants)),
+                             squeeze=False, sharex=True, sharey=True, facecolor=SURFACE)
+    for i, (key, label, color, sel) in enumerate(variants):
+        for j, tool in enumerate(tools):
+            ax = axes[i][j]
+            style(ax)
+            ax.plot([lo, hi], [lo, hi], color=MUTED, linewidth=0.9)
+            for fraction, mark in PAIR_FRACTIONS:
+                ax.plot([lo, hi], [lo * fraction, hi * fraction], color=MUTED, linewidth=0.6, linestyle=(0, (3, 3)), alpha=0.6)
+                if i == 0 and j == len(tools) - 1:
+                    ax.text(hi / 1.3, hi * fraction / 1.6, mark, color=MUTED, fontsize=8, ha="right", va="top")
             for kind in kinds:
                 pick = [r for r in sel if r["kind"] == kind]
-                ax.scatter([r[tool] for r in pick], [r[key] for r in pick], s=16, marker=KIND_MARKERS.get(kind, "s"),
-                           color=color, alpha=0.6, edgecolors=SURFACE, linewidths=0.4)
-        ax.set_xscale("log")
-        ax.set_yscale("log")
-        for axis in (ax.xaxis, ax.yaxis):  # decades only: the range spans several
-            axis.set_major_locator(ticker.LogLocator(base=10))
-            axis.set_major_formatter(ticker.FuncFormatter(lambda x, _: "{:,.0f}".format(x)))
-            axis.set_minor_formatter(ticker.NullFormatter())
-        ax.set_xlim(lo, hi)
-        ax.set_ylim(lo, hi)
-        ax.set_aspect("equal")
-        ax.set_title("against %s" % labels.get(tool, tool), fontsize=10.5, color=INK, loc="left")
-        if index + ncols >= len(tools):  # the bottom row: each panel's title names its tool
-            ax.set_xlabel("the tool's patch (bytes, log scale)", fontsize=9, color=MUTED)
-        if index % ncols == 0:
-            ax.set_ylabel("tinydelta's patch (bytes, log scale)", fontsize=9, color=MUTED)
-        ax.text(0.97, 0.05, "below the line:\ntinydelta smaller", transform=ax.transAxes, ha="right",
-                fontsize=8.5, color=MUTED)
-    # One legend for the figure: colour for tinydelta's variant, marker for the kind.
-    handles = [plt.Line2D([], [], marker="o", linestyle="", markersize=6, color=color, label=label)
-               for _, label, color, _ in variants]
-    handles += [plt.Line2D([], [], marker=KIND_MARKERS.get(kind, "s"), linestyle="", markersize=6, color=MUTED, label=kind)
-                for kind in kinds]
+                ax.scatter([r[tool] for r in pick], [r[key] for r in pick], s=8, marker=KIND_MARKERS.get(kind, "s"),
+                           color=color, alpha=0.55, linewidths=0)
+            smaller = sum(r[key] < r[tool] for r in sel)
+            ax.text(0.95, 0.05, "%d%%" % round(100 * smaller / len(sel)), transform=ax.transAxes, ha="right",
+                    va="bottom", fontsize=10, color=INK, weight="bold")
+            ax.set_xscale("log")
+            ax.set_yscale("log")
+            ax.set_xlim(lo, hi)
+            ax.set_ylim(lo, hi)
+            ax.set_aspect("equal")
+            for axis in (ax.xaxis, ax.yaxis):
+                axis.set_major_locator(ticker.FixedLocator(decades))
+                axis.set_major_formatter(ticker.FuncFormatter(
+                    lambda x, _: "%gK" % (x / 1000) if x >= 1000 else "%g" % x))
+                axis.set_minor_formatter(ticker.NullFormatter())
+            ax.tick_params(labelsize=8)
+            if i == 0:
+                ax.set_title(labels.get(tool, tool), fontsize=10.5, color=INK)
+            if j == 0:
+                ax.set_ylabel("tinydelta %s\n(%d pairs)" % (label, len(sel)), fontsize=9.5, color=color)
     height = fig.get_figheight()
-    fig.legend(handles=handles, frameon=False, fontsize=8.5, labelcolor=INK, loc="upper left", ncol=2,
-               bbox_to_anchor=(0.02, 1 - 0.62 / height), handletextpad=0.3, columnspacing=1.5)
-    titled(fig, "tinydelta against open-vcdiff, HPatchLite, detools and bsdiff, every pair",
-           "One panel per tool. Below the line, tinydelta's patch is smaller; dashed: half and a quarter of the tool's.")
-    fig.tight_layout(rect=(0, 0, 1, 1 - 1.35 / height))
+    titled(fig, "tinydelta against other tools, every pair",
+           "Rows: tinydelta's variants; columns: the tools. Patch sizes in bytes (log scale), below the line tinydelta's is "
+           "smaller.\nBold: the share of pairs where it is. Dashed: tinydelta's patch a half, a quarter and an eighth of the "
+           "tool's. ● firmware  ▲ configuration.")
+    fig.tight_layout(rect=(0, 0, 1, 1 - 0.95 / height))
     save(fig, out, name)
 
 
