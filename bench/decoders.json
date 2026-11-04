@@ -1,7 +1,7 @@
 {
   "_comment": "What each tool's decoder costs on the device, for the trade-off graph (plot.py): footprint = code + buffers (+ the old file, if plus_old_file), stack excluded. code is .text in bytes, null where no microcontroller build exists (the point is then a lower bound). buffers is RAM the decoder needs besides its stack: dictionaries, windows, caches. stack is recorded but not counted. With plus_old_file, the decoder holds the whole old file in RAM; the graph adds the median old-file size of each kind of data. basis says where each number comes from: measured (bench/decoder-size.sh, Cortex-M0, -Os) or the tool's documentation.",
   "tinydelta": {
-    "label": "tinydelta\nplain or two-pass",
+    "label": "tinydelta, plain",
     "code": 876,
     "buffers": 256,
     "stack": 185,
@@ -9,12 +9,20 @@
     "basis": "measured: callback decoder, Cortex-M0, -Os: 876 B code with arm-none-eabi-gcc 13.2, ~185 B stack; plus its buffer, counted as one 256-byte flash page (any power of two works; a small one can be on the stack). A two-pass patch is decoded twice, and the intermediate patch has to be stored, e.g. in external flash"
   },
   "tinydelta_coded": {
-    "label": "tinydelta\ncoded",
+    "label": "tinydelta, coded",
     "code": 1708,
     "buffers": 1033,
     "stack": 305,
     "plus_old_file": false,
     "basis": "measured: callback decoder built with TINYDELTA_CODER=1 plus tinydelta_coder.c, Cortex-M0, -Os: 1,084 + 624 B code with arm-none-eabi-gcc 13.2, ~305 B stack; buffers: the 256-byte page buffer plus 777 B of coder tables (layout B), both of which can be short-lived on the stack. Decoded in one pass"
+  },
+  "tinydelta_reloc": {
+    "label": "tinydelta, coded + relocated",
+    "code": 3801,
+    "buffers": 1801,
+    "stack": null,
+    "plus_old_file": false,
+    "basis": "measured: callback decoder built with TINYDELTA_CODER=1 and TINYDELTA_RELOC=TINYDELTA_RELOC_THUMB plus tinydelta_coder.c and tinydelta_reloc.c, Cortex-M0, -Os, arm-none-eabi-gcc 13.2 (README, Code size and stack): 3,801 B code; buffers: the 256-byte page buffer plus 1,545 B of tables (777 B coder tables, layout B, and 768 B for 64 relocation map entries of 12 B), all of which can be short-lived on the stack. On MSP430X -mlarge the code is 7,858 B"
   },
   "hpatchlite_4k": {
     "label": "HPatchLite, 4 KB dict.",

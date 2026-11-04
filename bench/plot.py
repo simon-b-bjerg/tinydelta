@@ -490,70 +490,79 @@ def forest(rows, out):
     save(fig, out, "forest")
 
 
-STEP_MARKERS = ["o", "^", "s", "D"]  # by commit step: 1 apart, 5 apart, ...
+KIND_MARKERS = {"firmware": "o", "configuration": "^"}  # other kinds: "s"
 # The pair graph's tools: the VCDIFF reference, the two embedded
 # alternatives, and the strongest compressors on size.
 PAIR_TOOLS = ["openvcdiff", "hpatchlite_4k", "detools", "bsdiff", "zstd"]
+RELOC = "tinydelta_reloc"
+
+
+def relocated_corpora():
+    """The corpora with relocation rules (corpus.json "relocation"): the
+    only ones whose relocated patches differ from the coded ones."""
+    path = os.environ.get("BENCH_CORPUS", os.path.join(os.path.dirname(os.path.abspath(__file__)), "corpus.json"))
+    corpus = json.load(open(path)) if os.path.exists(path) else {}
+    return {n for n, c in corpus.items() if isinstance(c, dict) and "relocation" in c}
 
 
 def pair_scatter(rows, out, name):
-    """Every pair, once per tool, one panel per kind of data (rows): that
-    tool's patch size across, tinydelta's up. With coded patches measured,
-    two columns: tinydelta coded on the left, without the coder (plain or
-    two-pass) on the right, on the same axes. Colour is the tool, marker
-    the commit step."""
-    cols = [(tiny_key(rows), "tinydelta, coded" if tiny_key(rows) == CODED else "tinydelta")]
-    if tiny_key(rows) == CODED:
-        cols.append((uncoded_key(rows), "tinydelta, plain or two-pass"))
+    """Every pair, once per tool, one panel per tinydelta variant, in a grid
+    of two columns: coded (777 B tables), coded and relocated (firmware with
+    relocation rules only), plain, and two-pass (or plain, if smaller); the
+    variants measured. That tool's patch size across, tinydelta's up, the
+    same axes in every panel. Colour is the tool, marker the kind of data."""
+    relocated = relocated_corpora()
+    panels = [(CODED, "coded, 777 B tables", rows),
+              (RELOC, "coded + relocated, firmware with rules", [r for r in rows if r["corpus"] in relocated]),
+              (plain_key(rows), "plain", rows),
+              (CZ, "two-pass, or plain if smaller", rows)]
+    panels = [(k, label, sel) for k, label, sel in panels if sel and k in sel[0]]
     tools = [t for t in OTHERS if t[0] in PAIR_TOOLS and t[0] in rows[0]]
-    if not tools:
+    if not tools or not panels:
         return
     kinds = kinds_of(rows)
-    steps = sorted({r["step"] for r in rows})
-    fig, axes = plt.subplots(len(kinds), len(cols), figsize=(5.0 * len(cols), 0.9 + 4.6 * len(kinds)), squeeze=False, facecolor=SURFACE)
-    for i, kind in enumerate(kinds):
-        sel = [r for r in rows if r["kind"] == kind]
-        sizes = [r[k] for r in sel for k in [c for c, _ in cols] + [t[0] for t in tools]]
-        lo, hi = max(1, min(sizes)) / 1.5, max(sizes) * 1.5
-        for j, (tiny, tiny_label) in enumerate(cols):
-            ax = axes[i][j]
-            style(ax)
-            ax.plot([lo, hi], [lo, hi], color=MUTED, linewidth=1)
-            for key, label, color, _, _ in tools:
-                for step, marker in zip(steps, STEP_MARKERS):
-                    pick = [r for r in sel if r["step"] == step]
-                    ax.scatter([r[key] for r in pick], [r[tiny] for r in pick], s=18, marker=marker, color=color,
-                               alpha=0.7, edgecolors=SURFACE, linewidths=0.5)
-            ax.set_xscale("log")
-            ax.set_yscale("log")
-            for axis in (ax.xaxis, ax.yaxis):  # decades only: the range spans several
-                axis.set_major_locator(ticker.LogLocator(base=10))
-                axis.set_major_formatter(ticker.FuncFormatter(lambda x, _: "{:,.0f}".format(x)))
-                axis.set_minor_formatter(ticker.NullFormatter())
-            ax.set_xlim(lo, hi)
-            ax.set_ylim(lo, hi)
-            ax.set_aspect("equal")
-            ax.set_title("%s: %s (%d pairs)" % (kind_label(rows, kind).split(",")[0], tiny_label, len(sel)), fontsize=10.5, color=INK, loc="left")
+    sizes = [r[k] for key, _, sel in panels for r in sel for k in [key] + [t[0] for t in tools]]
+    lo, hi = max(1, min(sizes)) / 1.5, max(sizes) * 1.5
+    ncols = 2 if len(panels) > 1 else 1
+    nrows = (len(panels) + ncols - 1) // ncols
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5.0 * ncols, 1.1 + 4.8 * nrows), squeeze=False, facecolor=SURFACE)
+    for ax in axes.flat[len(panels):]:
+        ax.remove()
+    for index, (ax, (tiny, tiny_label, sel)) in enumerate(zip(axes.flat, panels)):
+        style(ax)
+        ax.plot([lo, hi], [lo, hi], color=MUTED, linewidth=1)
+        for key, label, color, _, _ in tools:
+            for kind in kinds:
+                pick = [r for r in sel if r["kind"] == kind]
+                ax.scatter([r[key] for r in pick], [r[tiny] for r in pick], s=18, marker=KIND_MARKERS.get(kind, "s"),
+                           color=color, alpha=0.7, edgecolors=SURFACE, linewidths=0.5)
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        for axis in (ax.xaxis, ax.yaxis):  # decades only: the range spans several
+            axis.set_major_locator(ticker.LogLocator(base=10))
+            axis.set_major_formatter(ticker.FuncFormatter(lambda x, _: "{:,.0f}".format(x)))
+            axis.set_minor_formatter(ticker.NullFormatter())
+        ax.set_xlim(lo, hi)
+        ax.set_ylim(lo, hi)
+        ax.set_aspect("equal")
+        ax.set_title("tinydelta %s (%d pairs)" % (tiny_label, len(sel)), fontsize=10.5, color=INK, loc="left")
+        if index // ncols == nrows - 1 or index + ncols >= len(panels):
             ax.set_xlabel("the other tool's patch (bytes, log scale)", fontsize=9, color=MUTED)
-            if j == 0:
-                ax.set_ylabel("tinydelta's patch (bytes, log scale)", fontsize=9, color=MUTED)
-            ax.text(0.97, 0.05, "below the line:\ntinydelta smaller", transform=ax.transAxes, ha="right",
-                    fontsize=8.5, color=MUTED)
-    # Two legends, in the first row: colour for the tool, marker for the step.
-    tool_handles = [plt.Line2D([], [], marker="o", linestyle="", markersize=6, color=color, label=label)
-                    for _, label, color, _, _ in tools]
-    step_handles = [plt.Line2D([], [], marker=marker, linestyle="", markersize=6, color=MUTED,
-                               label="%d commit%s apart" % (step, "" if step == 1 else "s"))
-                    for step, marker in zip(steps, STEP_MARKERS)]
-    first = axes[0][0].legend(handles=tool_handles, frameon=False, fontsize=8.5, loc="upper left", labelcolor=INK,
-                              title="tool", title_fontsize=8.5, alignment="left")
-    axes[0][0].add_artist(first)
-    axes[0][-1].legend(handles=step_handles, frameon=False, fontsize=8.5, loc="upper left", labelcolor=INK)
-    subtitle = "Each pair once per tool; below the line, tinydelta's patch is smaller."
-    if len(cols) > 1:
-        subtitle = ("Left: tinydelta with the coder (777 B tables). Right: without it, the smaller of plain and "
-                    "two-pass. Below the line, tinydelta's patch is smaller.")
-    titled(fig, "tinydelta against other tools, every pair", subtitle)
+        if index % ncols == 0:
+            ax.set_ylabel("tinydelta's patch (bytes, log scale)", fontsize=9, color=MUTED)
+        ax.text(0.97, 0.05, "below the line:\ntinydelta smaller", transform=ax.transAxes, ha="right",
+                fontsize=8.5, color=MUTED)
+    # One legend for the figure: colour for the tool, marker for the kind.
+    handles = [plt.Line2D([], [], marker="o", linestyle="", markersize=6, color=color, label=label)
+               for _, label, color, _, _ in tools]
+    handles += [plt.Line2D([], [], marker=KIND_MARKERS.get(kind, "s"), linestyle="", markersize=6, color=MUTED, label=kind)
+                for kind in kinds]
+    height = fig.get_figheight()
+    fig.legend(handles=handles, frameon=False, fontsize=8.5, labelcolor=INK, loc="upper left", ncol=(len(handles) + 1) // 2,
+               bbox_to_anchor=(0.02, 1 - 0.62 / height), handletextpad=0.3, columnspacing=1.2)
+    titled(fig, "tinydelta against other tools, every pair",
+           "One panel per tinydelta variant, each pair once per tool. Below the line, tinydelta's patch is smaller.")
+    fig.tight_layout(rect=(0, 0, 1, 1 - 1.1 / height))
     save(fig, out, name)
 
 
@@ -628,58 +637,79 @@ def place_labels(fig, ax, points):
 
 
 def tradeoff(rows, out):
-    """Typical patch size against the decoder's footprint on the device:
-    code plus the RAM buffers it needs, stack excluded (decoders.json).
-    For a decoder that holds the whole old file, the median old file of that
-    kind is added. A point whose code size is unknown, or that holds the old
-    file, is a lower bound, drawn as an arrow."""
+    """Firmware: typical patch size against the decoder's footprint on the
+    device, code plus the RAM buffers it needs, stack excluded
+    (decoders.json). tinydelta is a staircase of the decoders it can be
+    built as: plain, coded, coded and relocating; two-pass hangs below plain,
+    hollow: the same decoder, run twice, with the intermediate patch stored
+    in between. For a decoder that holds the whole old file, the median old
+    file is added. A point whose code size is unknown, or that holds the
+    old file, is a lower bound, drawn as an arrow."""
+    sel = [r for r in rows if r["kind"] == "firmware"]
+    if not sel:
+        return
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "decoders.json")
     decoders = {k: v for k, v in json.load(open(path)).items() if not k.startswith("_")}
     colors = {k: c for k, _, c, _, _ in OTHERS}
     colors["openvcdiff_interleaved"] = colors["openvcdiff"]  # tiny-vcdiff: the same format family
-    colors.update({k: c for k, _, c in TINY_VARIANTS})
-    # decoders.json's "tinydelta" is the decoder without the coder, for the
-    # smaller of plain and two-pass (plain optimal, when measured);
-    # "tinydelta_coded" the one with it, for the coded patches.
-    column = {k: {"tinydelta": uncoded_key(rows), "tinydelta_coded": CODED}.get(k, k) for k in decoders}
+    # tinydelta's decoders (decoders.json) and the patches each decodes.
+    stairs = [(k, c) for k, c in (("tinydelta", plain_key(rows)), ("tinydelta_coded", CODED), ("tinydelta_reloc", RELOC))
+              if k in decoders and c in sel[0]]
     # HPatchLite's 32 KB dictionary is left out to keep the graph readable
     # (it is close to the 4 KB one); it is in the summary.
-    tools = [k for k in decoders if column[k] in rows[0] and k != "hpatchlite_32k"]
-    kinds = kinds_of(rows)
-    # One panel per row: at most ~830 px wide, the width of GitHub's README
-    # column, so it is never shrunk there.
-    fig, axes = plt.subplots(len(kinds), 1, figsize=(7.2, 0.8 + 4.2 * len(kinds)), squeeze=False, facecolor=SURFACE)
-    for ax, kind in zip(axes[:, 0], kinds):
-        sel = [r for r in rows if r["kind"] == kind]
-        old = statistics.median(r["dict_bytes"] for r in sel)
-        style(ax)
-        points = []
-        for key in tools:
-            d = decoders[key]
-            footprint = (d["code"] or 0) + d["buffers"] + (old if d["plus_old_file"] else 0)
-            lower_bound = d["code"] is None or d["plus_old_file"]
-            share = statistics.median(100 * r[column[key]] / max(r["target_bytes"], 1) for r in sel)
-            ax.plot([footprint], [share], marker=">" if lower_bound else "o", markersize=9,
-                    color=colors.get(column[key], INK), markeredgecolor=SURFACE, markeredgewidth=1.5, linestyle="")
-            points.append((footprint, share, d["label"] + (" (at least)" if lower_bound else "")))
-        ax.set_xscale("log")
-        ax.set_yscale("log")
-        ax.margins(x=0.22, y=0.22)
-        place_labels(fig, ax, points)
-        ax.xaxis.set_major_locator(ticker.LogLocator(base=10))
-        ax.xaxis.set_major_formatter(ticker.FuncFormatter(
-            lambda x, _: "%g MB" % (x / 1e6) if x >= 1e6 else "%g KB" % (x / 1e3) if x >= 1e3 else "%g B" % x))
-        ax.xaxis.set_minor_formatter(ticker.NullFormatter())
-        log_axis(ax.yaxis, "%")
-        ax.set_title(kind_label(rows, kind), fontsize=11, color=INK, loc="left")
-        ax.set_xlabel("decoder footprint: code + RAM buffers, stack excluded (log scale)", fontsize=9, color=MUTED)
-        ax.set_ylabel("median patch size, % of target (log scale)", fontsize=9, color=MUTED)
+    others = [k for k in decoders if not k.startswith("tinydelta") and k in sel[0] and k != "hpatchlite_32k"]
+    old = statistics.median(r["dict_bytes"] for r in sel)
+
+    def footprint(key):
+        d = decoders[key]
+        return (d["code"] or 0) + d["buffers"] + (old if d["plus_old_file"] else 0)
+
+    def share(column):
+        return statistics.median(100 * r[column] / max(r["target_bytes"], 1) for r in sel)
+
+    # One panel, at most ~830 px wide, the width of GitHub's README column.
+    fig, ax = plt.subplots(figsize=(7.2, 5.9), facecolor=SURFACE)
+    style(ax)
+    points = []
+    for key in others:
+        d = decoders[key]
+        lower_bound = d["code"] is None or d["plus_old_file"]
+        x, y = footprint(key), share(key)
+        ax.plot([x], [y], marker=">" if lower_bound else "o", markersize=9, color=colors.get(key, MUTED),
+                markeredgecolor=SURFACE, markeredgewidth=1.5, linestyle="")
+        points.append((x, y, d["label"] + (" (at least)" if lower_bound else "")))
+    xs, ys = [footprint(k) for k, _ in stairs], [share(c) for _, c in stairs]
+    ax.plot(xs, ys, color=INK, linewidth=2, zorder=3)
+    ax.plot(xs, ys, marker="o", markersize=10, color=INK, markeredgecolor=SURFACE, markeredgewidth=1.5, linestyle="", zorder=4)
+    points += [(x, y, decoders[k]["label"]) for (k, _), x, y in zip(stairs, xs, ys)]
+    if CZ in sel[0] and stairs and stairs[0][0] == "tinydelta":
+        x, y = xs[0], share(CZ)
+        ax.plot([x, x], [ys[0], y], color=INK, linewidth=1.2, linestyle=(0, (3, 2)), zorder=3)
+        ax.plot([x], [y], marker="o", markersize=10, markerfacecolor=SURFACE, markeredgecolor=INK, markeredgewidth=2,
+                linestyle="", zorder=4)
+        points.append((x, y, "tinydelta, two-pass"))
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.margins(x=0.22, y=0.22)
+    place_labels(fig, ax, points)
+    ax.xaxis.set_major_locator(ticker.LogLocator(base=10))
+    ax.xaxis.set_major_formatter(ticker.FuncFormatter(
+        lambda x, _: "%g MB" % (x / 1e6) if x >= 1e6 else "%g KB" % (x / 1e3) if x >= 1e3 else "%g B" % x))
+    ax.xaxis.set_minor_formatter(ticker.NullFormatter())
+    log_axis(ax.yaxis, "%")
+    ax.set_title(kind_label(rows, "firmware") + " (%d pairs)" % len(sel), fontsize=11, color=INK, loc="left")
+    ax.set_xlabel("decoder footprint: code + RAM buffers, stack excluded (log scale)", fontsize=9, color=MUTED)
+    ax.set_ylabel("median patch size, % of target (log scale)", fontsize=9, color=MUTED)
     height = fig.get_figheight()
-    fig.text(0.02, 1 - 0.15 / height, "Patch size against what the decoder costs on the device",
+    fig.text(0.02, 1 - 0.15 / height, "Firmware: patch size against what the decoder costs on the device",
              ha="left", va="top", fontsize=13, color=INK)
-    fig.text(0.02, 1 - 0.45 / height, "Lower left is better. Arrows are lower bounds: code size unknown, "
-             "or the whole old file in RAM.", ha="left", va="top", fontsize=9, color=MUTED)
-    fig.tight_layout(rect=(0, 0, 1, 1 - 0.7 / height))
+    fig.text(0.02, 1 - 0.45 / height, "Lower left is better. Black: tinydelta's decoders, each step adding to the last.\n"
+             "Hollow: two-pass, the plain decoder run twice, the intermediate patch stored in between.\n"
+             "Arrows are lower bounds: code size unknown, or the whole old file in RAM.", ha="left", va="top", fontsize=9, color=MUTED)
+    if RELOC in sel[0]:
+        fig.text(0.02, 0.012, "Relocated: firmware without relocation rules gets the coded patch.", ha="left",
+                 va="bottom", fontsize=8.5, color=MUTED)
+    fig.tight_layout(rect=(0, 0.03, 1, 1 - 1.15 / height))
     save(fig, out, "tradeoff")
 
 
