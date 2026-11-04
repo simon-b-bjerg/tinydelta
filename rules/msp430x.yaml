@@ -27,22 +27,16 @@ lengths:          # w0 is the word after a prefix, if any; first match wins; non
   - { match: ["0020/F0E0"], length: 4 }     # MOVA &abs20,Rd / x(Rs),Rd
   - { match: ["0060/F0E0"], length: 4 }     # MOVA Rs,&abs20 / Rs,x(Rd)
   - { match: ["0080/F0C0"], length: 4 }     # MOVA, CMPA, ADDA, SUBA #imm20,Rd
-  - { match: ["0000/F000"], length: 2 }
-  # 0x1000-0x12FF, one operand (RRC, SWPB, RRA, SXT, PUSH, CALL): a source word for x(Rn)/&abs (As 1, not R3) or #imm (As 3, R0)
-  - { match: ["1013/FE3F"], length: 2 }     # As 1 on R3: the constant 1
-  - { match: ["1010/FE30"], length: 4 }
-  - { match: ["1030/FE3F"], length: 4 }
-  - { match: ["1000/FE00"], length: 2 }
-  - { match: ["1213/FF3F"], length: 2 }
-  - { match: ["1210/FF30"], length: 4 }
-  - { match: ["1230/FF3F"], length: 4 }
-  - { match: ["1200/FF00"], length: 2 }
   # 0x1300-0x13FF, RETI and CALLA: x(Rd), &abs20, x(PC), #imm20 take a second word
   - { match: ["1350/FFF0"], length: 4 }
   - { match: ["1380/FFE0"], length: 4 }
   - { match: ["13B0/FFF0"], length: 4 }
   - { match: ["1300/FF00"], length: 2 }
-  # the rest below 0x4000: PUSHM, POPM, jumps
+  # 0x1000-0x12FF, one operand (RRC, SWPB, RRA, SXT, PUSH, CALL): a source word for x(Rn)/&abs (As 1, not R3) or #imm (As 3, R0)
+  - { match: ["1013/FC3F"], length: 2 }     # As 1 on R3: the constant 1
+  - { match: ["1010/FC30"], length: 4 }
+  - { match: ["1030/FC3F"], length: 4 }
+  # the rest below 0x4000 (PUSHM, POPM, jumps, and the address instructions above without a second word)
   - { match: ["0000/C000"], length: 2 }
   # 0x4000-0xFFFF, two operands: a source word as above (As bits 5-4, register bits 11-8), a destination word for Ad 1 (bit 7)
   - { match: ["0390/0FB0"], length: 4 }     # As 1 on R3, Ad 1

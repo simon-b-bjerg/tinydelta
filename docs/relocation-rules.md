@@ -126,7 +126,7 @@ A `code` or `data` rule's keys:
 
 ### The two files as of now
 
-MSP430X: the extension-word prefix and 24 length rules (the length
+MSP430X: the extension-word prefix and 18 length rules (the length
 classes of format I, II and the address instructions), 20 code rules (5
 for `CALLA`/`MOVA`, 15 for the extension-word source/destination
 combinations, 6 of them exclusions), 1 data rule (20-bit pointers).
@@ -238,8 +238,8 @@ slice   = (1: bits 0-4 lowest bit, 5-7 word) + (1: bits 0-4 width − 1)
 The CRC is CRC-16/CCITT-FALSE (polynomial 0x1021, initial 0xFFFF) over
 the whole table.
 
-Size: `rules/msp430x.yaml` compiles to 590 B, `rules/thumb.yaml` to 45 B.
-(A layout without the per-rule length, attr and size bytes took 482 B,
+Size: `rules/msp430x.yaml` compiles to 536 B, `rules/thumb.yaml` to 45 B.
+(A layout without the per-rule length, attr and size bytes was about 20% smaller,
 but the C engine then had to decode every rule it skipped; 717 B with
 every field in every rule.)
 
@@ -274,7 +274,7 @@ With 1, the CRC must equal the decoder's built-in table's, else
 applied with the wrong ones. Empty lists cost one byte each. A shipped table is coded at the start of the
 stream, each byte by a bit tree of 255 states that start at even odds
 (the decoder borrows the coder's tables for them and clears them before
-the instructions): the 590-byte MSP430X table costs about 375 B in the
+the instructions): the 536-byte MSP430X table costs about 350 B in the
 patch. The map stays uncoded: per patch it is too small for an adaptive
 model to learn (coding the maps of 17 MSP430X updates gave 575 B for
 605 B raw, and 624 B with a model per field).

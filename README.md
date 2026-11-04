@@ -412,7 +412,7 @@ only the map and the few instruction forms that hold addresses.
 | | coded | coded, relocated |
 |---|---:|---:|
 | ARM Thumb: MicroPython for SAMD21, 44 updates, ~185 KB | 151,935 B | **25,992 B (−83%)** |
-| MSP430X, large code model: mbedtls built with `-mlarge`, 17 updates, ~176 KB | 21,773 B | **6,193 B (−72%)** |
+| MSP430X, large code model: mbedtls built with `-mlarge`, 17 updates, ~176 KB | 21,773 B | **6,221 B (−71%)** |
 
 Sums over consecutive builds, the map included; every patch decoded
 again and compared (`reloc_test.go` runs the same on synthetic images,
@@ -477,10 +477,10 @@ rejected with `TINYDELTA_ERR_VERSION`.
 
 The cost, from [Code size and stack](#code-size-and-stack): on
 Cortex-M0, about 2 KB more than the coded decoders; on MSP430X
-`-mlarge`, about 5 KB more, as most of the relocation code is 32-bit
-address arithmetic, several instructions per operation on a 16-bit
-core. Both include the rule table (45 B for Thumb, 590 B for MSP430X)
-and the engine that reads it. RAM: the map in the tables buffer (12 bytes per entry or RAM
+`-mlarge`, about 4 KB more, as addresses need 32-bit arithmetic, several
+instructions per operation on a 16-bit core (the engine keeps everything
+else in 16 bits). Both include the rule table (45 B for Thumb, 536 B for
+MSP430X) and the engine that reads it. RAM: the map in the tables buffer (12 bytes per entry or RAM
 range, 8 per data run), and in
 the callback decoder a 16-byte cache of raw dictionary bytes.
 
@@ -674,8 +674,8 @@ even on Cortex-M0). Reproduce with [`scripts/c-size.sh`](scripts/c-size.sh).
 | callback decoder | 876 B | 836 B | 836 B | ~185 B\* |
 | memory decoder + coder | 1,416 B | 1,340 B | 1,340 B | ~290 B |
 | callback decoder + coder | 1,716 B | 1,700 B | 1,700 B | ~305 B\* |
-| memory decoder + coder + Thumb relocation | 3,381 B | 3,269 B | 3,285 B | – |
-| callback decoder + coder + Thumb relocation | 3,773 B | 3,681 B | 3,697 B | – |
+| memory decoder + coder + Thumb relocation | 3,409 B | 3,273 B | 3,289 B | – |
+| callback decoder + coder + Thumb relocation | 3,801 B | 3,685 B | 3,701 B | – |
 
 \* Deepest path, excluding your buffer and your callbacks' own stack
 use. With the coder (`TINYDELTA_CODER = 1`), each decoder grows by
@@ -694,8 +694,8 @@ every 32-bit operation takes several 16-bit instructions.
 | callback decoder | 2,350 B | 2,298 B | 2,458 B | ~230 B\* |
 | memory decoder + coder | 2,608 B | 2,544 B | 2,808 B | ~290 B |
 | callback decoder + coder | 3,362 B | 3,268 B | 3,562 B | ~335 B\* |
-| memory decoder + coder + MSP430X relocation | 7,464 B | 7,184 B | 7,722 B | – |
-| callback decoder + coder + MSP430X relocation | 8,378 B | 8,062 B | 8,662 B | – |
+| memory decoder + coder + MSP430X relocation | 6,842 B | 6,522 B | 6,918 B | – |
+| callback decoder + coder + MSP430X relocation | 7,756 B | 7,400 B | 7,858 B | – |
 
 ### Results
 

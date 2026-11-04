@@ -469,7 +469,9 @@ func (m *relocMap) withOutside(dict, target []byte) *relocMap {
 		for k := 0; k < c.length; k += r.unit {
 			p, n := c.oldPos+k, c.newPos+k
 			ru := r.ruleAt(m, dict, p)
-			if ru == nil || ru.relative || ru.space == spaceCode || k+ru.size > c.length {
+			// Only rules that identify an instruction vote: one without
+			// conditions (Thumb's pointers) matches any data.
+			if ru == nil || len(ru.conds) == 0 || ru.relative || ru.space == spaceCode || k+ru.size > c.length {
 				continue
 			}
 			if !r.sameBesideAddresses(ru, dict, p, target, n) {
