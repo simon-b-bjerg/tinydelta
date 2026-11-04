@@ -762,7 +762,7 @@ static void move_at(const tinydelta_reloc_t *p_reloc, const uint8_t *p_rule, uin
     if (uses(FEATURE_RELATIVE) && ((RULE_FLAGS(p_rule) & FLAG_RELATIVE) != 0u)) {
         const uint8_t *p_addr = rule_addr(p_reloc, p_rule, 0u);
         const uint8_t *p_rel  = rule_addr(p_reloc, p_rule, 1u);
-        uint32_t sign         = 1u << (p_rel[1] - 1u);
+        uint32_t sign         = (uint32_t)1u << (p_rel[1] - 1u); /* Cast: unsigned int is 16 bits on MSP430 */
         /* The offset, sign-extended (two's complement), and the site's address. */
         uint32_t offset       = ((join(p_reloc, p_addr, p, &bits) & ((sign << 1) - 1u)) ^ sign) - sign;
         uint32_t site         = p_reloc->base + p;

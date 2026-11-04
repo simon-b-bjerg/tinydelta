@@ -319,7 +319,8 @@ func TestRulesCHeaders(t *testing.T) {
 		crc   string
 	}{{builtinThumb, "thumb", "RULES_THUMB_CRC"}, {builtinMSP430X, "msp430x", "RULES_MSP430X_CRC"}} {
 		got, err := os.ReadFile("c/tinydelta_rules_" + c.file + ".h")
-		if want := c.rules.CHeader("rules/" + c.file + ".yaml"); err != nil || string(got) != want {
+		// Windows checkouts may turn the line ends into CRLF.
+		if want := c.rules.CHeader("rules/" + c.file + ".yaml"); err != nil || strings.ReplaceAll(string(got), "\r\n", "\n") != want {
 			t.Errorf("c/tinydelta_rules_%s.h is out of date: tinydelta rules compile -c c/tinydelta_rules_%s.h rules/%s.yaml", c.file, c.file, c.file)
 		}
 		if def := fmt.Sprintf("#define %-17s 0x%04Xu", c.crc, c.rules.CRC()); !strings.Contains(string(src), def) {
@@ -405,7 +406,11 @@ func TestCRelocationRules(t *testing.T) {
 	// Corrupted shipped patches, in the header and in the coded table: C
 	// accepts and rejects as Go, with the same output.
 	patch := shipped[0]
-	for k := 0; k < 300; k++ {
+	rounds := 300
+	if os.Getenv("TINYDELTA_C_RUNNER") != "" {
+		rounds = 40 // each run is a simulator start
+	}
+	for k := 0; k < rounds; k++ {
 		bad := append([]byte{}, patch...)
 		if k%3 == 0 {
 			bad = bad[:r.Intn(len(bad))]

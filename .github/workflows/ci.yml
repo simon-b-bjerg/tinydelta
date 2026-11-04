@@ -307,7 +307,7 @@ jobs:
           TINYDELTA_C_RUNNER: scripts/sim-run.sh msp430-elf-run
         run: |
           set -o pipefail
-          go test -run 'TestC' -v . 2>&1 | tee "$RUNNER_TEMP/step.log"
+          go test -timeout 30m -run 'TestC' -v . 2>&1 | tee "$RUNNER_TEMP/step.log"
       - name: Code size (MSP430)
         run: |
           set -o pipefail
