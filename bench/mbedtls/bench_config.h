@@ -5,7 +5,8 @@
 /* mbedtls configuration for the benchmark's firmware images (bench/collect.py,
  * collector "mbedtls"): the crypto a small device's firmware update or
  * metering protocol uses, no TLS, no PSA, no operating system. Option names
- * are those of mbedtls 3.6. */
+ * are those of mbedtls 2.28 and 3.6 (MBEDTLS_SHA224_C and MBEDTLS_SHA384_C are
+ * 3.x's; 2.28 has them in MBEDTLS_SHA256_C and MBEDTLS_SHA512_C). */
 #ifndef BENCH_CONFIG_H
 #define BENCH_CONFIG_H
 
@@ -14,6 +15,7 @@
 #define MBEDTLS_PLATFORM_MEMORY
 #define MBEDTLS_PLATFORM_CALLOC_MACRO bench_calloc
 #define MBEDTLS_PLATFORM_FREE_MACRO   bench_free
+#include <limits.h> /* some 2.28 commits use INT_MAX without including it */
 #include <stddef.h>
 void *bench_calloc(size_t count, size_t size);
 void bench_free(void *pointer);

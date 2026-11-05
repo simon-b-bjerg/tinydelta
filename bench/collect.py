@@ -332,8 +332,13 @@ def tail(path, lines=40):
         return "(no log)"
     with open(path, errors="replace") as f:
         log = f.readlines()
-    errors = [line for line in log if " error" in line.lower() or "undefined reference" in line or "Error " in line][:15]
-    return ("First errors:\n" + "".join(errors) + "\nEnd of the log:\n" if errors else "") + "".join(log[-lines:])
+    errors = []
+    for line in log:  # each error once: every commit that failed logs it again
+        if (" error" in line.lower() or "undefined reference" in line or "Error " in line) and line not in errors:
+            errors.append(line)
+    def short(text):  # an archive or link command can run to kilobytes
+        return "".join(line if len(line) <= 300 else line[:300] + " ...\n" for line in text)
+    return ("First errors:\n" + short(errors[:10]) + "\nEnd of the log:\n" if errors else "") + short(log[-lines:])
 
 
 def main():

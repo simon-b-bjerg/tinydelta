@@ -7,10 +7,13 @@
  * as a real firmware links it, and two images differ only where mbedtls
  * changed. It is linked, never run: the calls and the table of function
  * pointers (as an application's dispatch table) keep the code in the image
- * and give it the calls and pointers relocation moves. */
+ * and give it the calls and pointers relocation moves. Builds with mbedtls
+ * 2.28 and 3.6 (whose API differs in a few calls); for a 16-bit int, as on
+ * MSP430, only 2.28: 3.x requires a 32-bit int. */
 #include <stdint.h>
 #include <string.h>
 
+#include "mbedtls/version.h"
 #include "mbedtls/aes.h"
 #include "mbedtls/ccm.h"
 #include "mbedtls/chachapoly.h"
@@ -96,9 +99,15 @@ static int hashes(void) {
     const mbedtls_md_info_t *sha256 = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
     int result = 0;
 
+#if MBEDTLS_VERSION_NUMBER >= 0x03000000
     result |= mbedtls_sha1(input, sizeof input, hash);
     result |= mbedtls_sha256(input, sizeof input, hash, 0);
     result |= mbedtls_sha512(input, sizeof input, hash, 1);
+#else /* 2.x: the functions returning a result have _ret names */
+    result |= mbedtls_sha1_ret(input, sizeof input, hash);
+    result |= mbedtls_sha256_ret(input, sizeof input, hash, 0);
+    result |= mbedtls_sha512_ret(input, sizeof input, hash, 1);
+#endif
     result |= mbedtls_md_hmac(sha256, key, sizeof key, input, sizeof input, hash);
     result |= mbedtls_hkdf(sha256, NULL, 0, key, sizeof key, NULL, 0, output, 32);
     return result;
@@ -127,10 +136,18 @@ static int public_key(void) {
     mbedtls_ecp_group_free(&group);
     mbedtls_ecp_point_free(&point);
 
+#if MBEDTLS_VERSION_NUMBER >= 0x03000000
     mbedtls_rsa_init(&rsa);
+#else
+    mbedtls_rsa_init(&rsa, MBEDTLS_RSA_PKCS_V15, 0);
+#endif
     result |= mbedtls_rsa_import_raw(&rsa, key, sizeof key, NULL, 0, NULL, 0, NULL, 0, iv, 3);
     result |= mbedtls_rsa_complete(&rsa);
+#if MBEDTLS_VERSION_NUMBER >= 0x03000000
     result |= mbedtls_rsa_pkcs1_verify(&rsa, MBEDTLS_MD_SHA256, 32, hash, output);
+#else
+    result |= mbedtls_rsa_pkcs1_verify(&rsa, bench_random, NULL, MBEDTLS_RSA_PUBLIC, MBEDTLS_MD_SHA256, 32, hash, output);
+#endif
     mbedtls_rsa_free(&rsa);
 
     mbedtls_ctr_drbg_init(&ctr_drbg);
