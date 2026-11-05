@@ -1,0 +1,159 @@
+{
+  "_comment": "Benchmark corpus: which versions to build and compare. Every corpus walks consecutive commits in a fixed range of a public repository, so the inputs are reproducible from this file alone. collector says how items are built (default: the corpus's name); relocation, for firmware, the rules and image base the relocated tinydelta variants use (an item's own, else its corpus's). See bench/README.md.",
+  "micropython_samd": {
+    "kind": "firmware",
+    "collector": "micropython",
+    "repo": "https://github.com/micropython/micropython",
+    "from": "v1.25.0",
+    "to": "v1.26.0",
+    "max_versions": 25,
+    "relocation": {
+      "rules": "thumb",
+      "base": "0x2000"
+    },
+    "items": [
+      {
+        "name": "samd-ADAFRUIT_TRINKET_M0",
+        "port": "samd",
+        "board": "ADAFRUIT_TRINKET_M0"
+      },
+      {
+        "name": "samd-SEEED_XIAO_SAMD21",
+        "port": "samd",
+        "board": "SEEED_XIAO_SAMD21"
+      }
+    ]
+  },
+  "defconfig": {
+    "kind": "configuration",
+    "collector": "file",
+    "repo": "https://github.com/torvalds/linux",
+    "shallow_since": "2019-03-01",
+    "from": "v5.0",
+    "to": "v7.3",
+    "max_versions": 25,
+    "items": [
+      {
+        "name": "shmobile_defconfig",
+        "path": "arch/arm/configs/shmobile_defconfig"
+      },
+      {
+        "name": "at91_dt_defconfig",
+        "path": "arch/arm/configs/at91_dt_defconfig"
+      },
+      {
+        "name": "sunxi_defconfig",
+        "path": "arch/arm/configs/sunxi_defconfig"
+      },
+      {
+        "name": "lpc32xx_defconfig",
+        "path": "arch/arm/configs/lpc32xx_defconfig"
+      },
+      {
+        "name": "u8500_defconfig",
+        "path": "arch/arm/configs/u8500_defconfig"
+      },
+      {
+        "name": "bcm2835_defconfig",
+        "path": "arch/arm/configs/bcm2835_defconfig"
+      }
+    ]
+  },
+  "dtb_mcu": {
+    "kind": "configuration",
+    "collector": "dtb",
+    "repo": "https://git.kernel.org/pub/scm/linux/kernel/git/devicetree/devicetree-rebasing.git",
+    "from": "v6.5-dts",
+    "to": "v7.3-dts",
+    "max_versions": 25,
+    "items": [
+      {
+        "name": "stm32f746-disco",
+        "dts": "src/arm/st/stm32f746-disco.dts"
+      },
+      {
+        "name": "stm32f769-disco",
+        "dts": "src/arm/st/stm32f769-disco.dts"
+      },
+      {
+        "name": "stm32h743i-disco",
+        "dts": "src/arm/st/stm32h743i-disco.dts"
+      },
+      {
+        "name": "stm32h750i-art-pi",
+        "dts": "src/arm/st/stm32h750i-art-pi.dts"
+      },
+      {
+        "name": "lpc4357-ea4357-devkit",
+        "dts": "src/arm/nxp/lpc/lpc4357-ea4357-devkit.dts"
+      }
+    ]
+  },
+  "micropython": {
+    "kind": "firmware",
+    "repo": "https://github.com/micropython/micropython",
+    "from": "v1.25.0",
+    "to": "v1.26.0",
+    "max_versions": 25,
+    "items": [
+      {
+        "name": "stm32-NUCLEO_F091RC",
+        "port": "stm32",
+        "board": "NUCLEO_F091RC",
+        "relocation": {
+          "rules": "thumb",
+          "base": "0x08000000"
+        }
+      },
+      {
+        "name": "stm32-PYBV11",
+        "port": "stm32",
+        "board": "PYBV11"
+      }
+    ]
+  },
+  "dtb": {
+    "kind": "large configuration",
+    "repo": "https://git.kernel.org/pub/scm/linux/kernel/git/devicetree/devicetree-rebasing.git",
+    "from": "v7.0-dts",
+    "to": "v7.3-dts",
+    "max_versions": 25,
+    "items": [
+      {
+        "name": "rk3588-rock-5b",
+        "dts": "src/arm64/rockchip/rk3588-rock-5b.dts"
+      },
+      {
+        "name": "imx8mp-evk",
+        "dts": "src/arm64/freescale/imx8mp-evk.dts"
+      },
+      {
+        "name": "k3-am625-sk",
+        "dts": "src/arm64/ti/k3-am625-sk.dts"
+      }
+    ]
+  },
+  "mbedtls_msp430": {
+    "kind": "firmware",
+    "collector": "mbedtls",
+    "repo": "https://github.com/Mbed-TLS/mbedtls",
+    "from": "v2.28.0",
+    "to": "v2.28.10",
+    "max_versions": 25,
+    "relocation": {
+      "rules": "msp430x",
+      "base": "0x10000"
+    },
+    "items": [
+      {
+        "name": "msp430x-large",
+        "cc": "msp430-elf-gcc",
+        "cflags": ["-mcpu=msp430x", "-mlarge"]
+      }
+    ]
+  },
+  "steps": [
+    1,
+    5
+  ]
+}

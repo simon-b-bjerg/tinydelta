@@ -1,0 +1,83 @@
+{
+  "_comment": "What each tool's decoder costs on the device, for the trade-off graph (plot.py): footprint = code + buffers (+ the old file, if plus_old_file), stack excluded. code is .text in bytes, null where no microcontroller build exists (the point is then a lower bound). buffers is RAM the decoder needs besides its stack: dictionaries, windows, caches. stack is recorded but not counted. With plus_old_file, the decoder holds the whole old file in RAM; the graph adds the median old-file size of each kind of data. basis says where each number comes from: measured (bench/decoder-size.sh, Cortex-M0, -Os) or the tool's documentation.",
+  "tinydelta": {
+    "label": "tinydelta, plain",
+    "code": 876,
+    "buffers": 256,
+    "stack": 185,
+    "plus_old_file": false,
+    "basis": "measured: callback decoder, Cortex-M0, -Os: 876 B code with arm-none-eabi-gcc 13.2, ~185 B stack; plus its buffer, counted as one 256-byte flash page (any power of two works; a small one can be on the stack). A two-pass patch is decoded twice, and the intermediate patch has to be stored, e.g. in external flash"
+  },
+  "tinydelta_coded": {
+    "label": "tinydelta, coded",
+    "code": 1708,
+    "buffers": 1033,
+    "stack": 305,
+    "plus_old_file": false,
+    "basis": "measured: callback decoder built with TINYDELTA_CODER=1 plus tinydelta_coder.c, Cortex-M0, -Os: 1,084 + 624 B code with arm-none-eabi-gcc 13.2, ~305 B stack; buffers: the 256-byte page buffer plus 777 B of coder tables (layout B), both of which can be short-lived on the stack. Decoded in one pass"
+  },
+  "tinydelta_reloc": {
+    "label": "tinydelta, coded + relocated",
+    "code": 3857,
+    "buffers": 1801,
+    "stack": null,
+    "plus_old_file": false,
+    "basis": "measured: callback decoder built with TINYDELTA_CODER=1 and TINYDELTA_RELOC=TINYDELTA_RELOC_THUMB plus tinydelta_coder.c and tinydelta_reloc.c, Cortex-M0, -Os, arm-none-eabi-gcc 13.2 (README, Code size and stack): 3,857 B code; buffers: the 256-byte page buffer plus 1,545 B of tables (777 B coder tables, layout B, and 768 B for 64 relocation map entries of 12 B), all of which can be short-lived on the stack. On MSP430X -mlarge the code is 7,858 B"
+  },
+  "hpatchlite_4k": {
+    "label": "HPatchLite, 4 KB dict.",
+    "code": 2229,
+    "buffers": 4096,
+    "stack": null,
+    "plus_old_file": false,
+    "basis": "code: 662 B for the patch code (HPatchLite README, built with Mbed Studio) plus 1,567 B for the tinyuz decompressor (measured, bench/decoder-size.sh: object code, so possibly including functions a decoder does not call); buffers: one decompression dictionary plus an input cache of at least 3 B (HPatchLite README)"
+  },
+  "hpatchlite_32k": {
+    "label": "HPatchLite, 32 KB dict.",
+    "code": 2229,
+    "buffers": 32768,
+    "stack": null,
+    "plus_old_file": false,
+    "basis": "as HPatchLite, 4 KB dict., with the default 32 KB dictionary"
+  },
+  "detools": {
+    "label": "detools (heatshrink)",
+    "code": 1948,
+    "buffers": 640,
+    "stack": null,
+    "plus_old_file": false,
+    "basis": "measured (detools 0.53.0, sequential patch, heatshrink only, Cortex-M0, -Os, --gc-sections, arm-none-eabi-gcc 13.2): 1,948 B code; buffers: struct detools_apply_patch_t, 640 B, which the caller provides (stack or static): heatshrink's 256 B window and 256 B input buffer and the patch state. detools_apply_patch_callbacks, the convenience wrapper, adds a 512 B read buffer (1,184 B stack in all)"
+  },
+  "bsdiff": {
+    "label": "bsdiff",
+    "code": null,
+    "buffers": 2350000,
+    "stack": null,
+    "plus_old_file": false,
+    "basis": "bzip2 manual: decompressing 900 KB blocks needs about 3.7 MB, or 2.3 MB in small mode; bspatch also holds the old and new file in memory"
+  },
+  "zstd": {
+    "label": "zstd --patch-from",
+    "code": 20396,
+    "buffers": 95800,
+    "stack": null,
+    "plus_old_file": true,
+    "basis": "measured (zstd 1.5.7, decoder only, smallest configuration: HUF_FORCE_DECOMPRESS_X1, ZSTD_FORCE_DECOMPRESS_SEQUENCES_SHORT, ZSTD_NO_INLINE, ZSTD_STRIP_ERROR_STRINGS; Cortex-M0, -Os, --gc-sections, linked around ZSTD_decompress, arm-none-eabi-gcc 13.2): 20,396 B code; buffers: sizeof(ZSTD_DCtx) on Cortex-M0, 95,800 B; and --patch-from uses the whole old file as its window, so the decoder needs it in memory too"
+  },
+  "openvcdiff_interleaved": {
+    "label": "tiny-vcdiff (VCDIFF, interleaved)",
+    "code": 3881,
+    "buffers": 3221,
+    "stack": 150,
+    "plus_old_file": false,
+    "basis": "measured on a 230 KB MicroPython image (README, decoder footprint notes): tiny-vcdiff linked into a small test program for Cortex-M0, -Os, --gc-sections: 3,881 B code, 3,221 B static RAM, ~150 B stack; it reads open-vcdiff's interleaved format, so its patch sizes are open-vcdiff's with -interleaved"
+  },
+  "xdelta3": {
+    "label": "xdelta3",
+    "code": 11267,
+    "buffers": 1272,
+    "stack": null,
+    "plus_old_file": true,
+    "basis": "measured (xdelta3 at 5d936d2, decoder only: XD3_ENCODER=0, no secondary compressors; Cortex-M0, -Os, --gc-sections, linked around xd3_decode_memory, arm-none-eabi-gcc 13.2): 11,267 B code; buffers: sizeof(xd3_stream) on Cortex-M0, 1,272 B, plus the old file, which xdelta3 keeps in memory in blocks (default 8 MB source window) and, not counted here, the buffers it allocates for the target window"
+  }
+}
