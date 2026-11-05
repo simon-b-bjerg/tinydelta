@@ -378,6 +378,113 @@ func (m *relocMap) limitTo(ram int) *relocMap {
 	return m.with(es, m.data, m.outside)
 }
 
+// withGaps adds entries for code that moved but no cover maps: a function
+// that changed is in no cover, yet every call to it needs its new address.
+// Address fields (and relative targets) in the covered instructions vote,
+// per old-image offset no entry holds, for the shift they show in the
+// target; from each offset with at least gapMinVotes agreeing, an entry
+// reaches to the next voted offset with another shift or the next entry.
+// Returns m itself if none.
+func (m *relocMap) withGaps(dict, target []byte) *relocMap {
+	r, n := m.rules, len(dict)
+	if n == 0 {
+		return m
+	}
+	inEntries := func(o int64) bool {
+		for _, e := range m.entries {
+			if o >= int64(e.start) && o < int64(e.start)+int64(e.length) {
+				return true
+			}
+		}
+		return false
+	}
+	addr := func(img []byte, p int, ru *rule, a []ruleSlice) int64 {
+		v := r.join(img, p, a)
+		if !ru.relative {
+			return int64(v)
+		}
+		o := int32(v<<(32-ru.signExt)) >> (32 - ru.signExt)
+		return int64(m.base) + int64(p) + int64(ru.relBase) + int64(o)
+	}
+	votes := map[int64]map[int64]int{}
+	for _, c := range findCovers(m.relocate(dict), target) {
+		if c.extra > 0 {
+			continue
+		}
+		for k := 0; k < c.length; k += r.unit {
+			p, q := c.oldPos+k, c.newPos+k
+			ru := r.ruleAt(m, dict, p)
+			// Only rules that identify an instruction, and that can point into
+			// the image.
+			if ru == nil || len(ru.conds) == 0 || ru.space == spaceData || k+ru.size > c.length || !r.sameBesideAddresses(ru, dict, p, target, q) {
+				continue
+			}
+			for _, a := range ru.addrs {
+				old, new := addr(dict, p, ru, a), addr(target, q, ru, a)
+				if !inImage(m.base, n, uint64(old)) || old == new {
+					continue
+				}
+				o := old - int64(m.base)
+				if inEntries(o) {
+					continue
+				}
+				if votes[o] == nil {
+					votes[o] = map[int64]int{}
+				}
+				votes[o][new-old]++
+			}
+		}
+	}
+	offsets := make([]int64, 0, len(votes))
+	for o := range votes {
+		offsets = append(offsets, o)
+	}
+	sort.Slice(offsets, func(i, j int) bool { return offsets[i] < offsets[j] })
+	nextEntry := func(o int64) int64 { // the start of the first entry after o, or the image's end
+		end := int64(n)
+		for _, e := range m.entries {
+			if s := int64(e.start); s > o && s < end {
+				end = s
+			}
+		}
+		return end
+	}
+	var add []relocEntry
+	for i, o := range offsets {
+		var shift int64
+		best := 0
+		for s, v := range votes[o] {
+			if v > best || (v == best && abs64(s) < abs64(shift)) {
+				shift, best = s, v
+			}
+		}
+		if best < gapMinVotes || shift == 0 {
+			continue
+		}
+		end := nextEntry(o)
+		if i+1 < len(offsets) && offsets[i+1] < end {
+			end = offsets[i+1]
+		}
+		if len(add) > 0 {
+			last := &add[len(add)-1]
+			if int64(last.start)+int64(last.length) == o && int64(last.shift) == shift {
+				last.length += uint32(end - o)
+				continue
+			}
+		}
+		add = append(add, relocEntry{uint32(o), uint32(end - o), int32(shift)})
+	}
+	if len(add) == 0 {
+		return m
+	}
+	es := append(append([]relocEntry{}, m.entries...), add...)
+	sort.Slice(es, func(i, j int) bool { return es[i].start < es[j].start })
+	return m.with(es, m.data, m.outside)
+}
+
+// gapMinVotes: address fields that must agree before a gap gets an entry.
+const gapMinVotes = 2
+
 // withDataRuns picks the data runs for an update, for rules with data
 // rules: the blocks of the old image where the data rules make more of
 // the covered bytes match the target than the code rules do. Returns m
@@ -387,7 +494,7 @@ func (m *relocMap) withDataRuns(dict, target []byte) *relocMap {
 		return m
 	}
 	code := m.relocate(dict)
-	all := m.with(m.entries, []relocRun{{0, uint32((len(dict) + relocDataBlock - 1) / relocDataBlock)}}, nil)
+	all := m.with(m.entries, []relocRun{{0, uint32((len(dict) + relocDataBlock - 1) / relocDataBlock)}}, m.outside)
 	data := all.relocate(dict)
 	// Per block, how many old bytes match the target once each version is
 	// aligned with it on its own (a table whose every pointer moved only

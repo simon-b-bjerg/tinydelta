@@ -28,7 +28,9 @@ func RelocationStatsVerbose(dict, target []byte, rules *Rules, base uint32) stri
 
 func relocationStats(dict, target []byte, rules *Rules, base uint32, verbose bool) string {
 	var b strings.Builder
-	m := relocMapFrom(dict, target, rules, base).withDataRuns(dict, target).withOutside(dict, target)
+	// As the encoder builds it: entries, gaps, RAM ranges, then data runs
+	// picked with the ranges in place, and the ranges voted again.
+	m := relocMapFrom(dict, target, rules, base).withGaps(dict, target).withOutside(dict, target).withDataRuns(dict, target).withOutside(dict, target)
 	rd := m.relocate(dict)
 	moved := 0
 	for i := range dict {

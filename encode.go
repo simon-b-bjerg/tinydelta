@@ -158,33 +158,43 @@ func EncodeWith(dict, target []byte, opts EncodeOptions) (Patch, error) {
 		}
 	}
 	if rules != nil && len(layouts) > 0 {
-		full := relocMapFrom(dict, target, rules, opts.ImageBase)
-		full.ship = opts.ShipRules
-		withOutside := full.withOutside(dict, target)
-		for _, layout := range layouts {
-			// The map gets the tables buffer after the coder's tables (and a
-			// shipped rule table).
-			ram := opts.CoderTables - CodedTablesSize(layout)
-			if opts.ShipRules {
-				ram -= len(rules.table)
-			}
-			// With the addresses outside the image that moved if they fit.
-			m := withOutside.limitTo(ram)
-			if m == nil || len(m.entries) == 0 {
-				m = full.limitTo(ram)
-			}
-			if m == nil || len(m.entries) == 0 {
-				continue
-			}
-			// With and without data runs, as either may be smaller.
-			maps := []*relocMap{m}
-			if md := m.withDataRuns(dict, target).limitTo(ram); md != nil && len(md.data) > 0 {
-				maps = append(maps, md)
-			}
-			for _, m := range maps {
-				rd := m.relocate(dict)
-				for _, candidate := range [][]byte{plain(rd, target), withVersion(FormatVersion2, encodeCovers(rd, target, maxLen))} {
-					consider(encodeCodedReloc(candidate, layout, m), 1)
+		// With and without entries for the gaps between covers (code that
+		// changed but moved), as either may give the smaller patch.
+		covered := relocMapFrom(dict, target, rules, opts.ImageBase)
+		fulls := []*relocMap{covered}
+		if gaps := covered.withGaps(dict, target); gaps != covered {
+			fulls = append(fulls, gaps)
+		}
+		for _, full := range fulls {
+			full.ship = opts.ShipRules
+			withOutside := full.withOutside(dict, target)
+			for _, layout := range layouts {
+				// The map gets the tables buffer after the coder's tables (and a
+				// shipped rule table).
+				ram := opts.CoderTables - CodedTablesSize(layout)
+				if opts.ShipRules {
+					ram -= len(rules.table)
+				}
+				// With the addresses outside the image that moved if they fit.
+				m := withOutside.limitTo(ram)
+				if m == nil || len(m.entries) == 0 {
+					m = full.limitTo(ram)
+				}
+				if m == nil || len(m.entries) == 0 {
+					continue
+				}
+				// With and without data runs, as either may be smaller.
+				maps := []*relocMap{m}
+				// Data runs are picked with the RAM ranges in place; the ranges are
+				// then voted again, as data rules vote too.
+				if md := m.withDataRuns(dict, target).withOutside(dict, target).limitTo(ram); md != nil && len(md.data) > 0 {
+					maps = append(maps, md)
+				}
+				for _, m := range maps {
+					rd := m.relocate(dict)
+					for _, candidate := range [][]byte{plain(rd, target), withVersion(FormatVersion2, encodeCovers(rd, target, maxLen))} {
+						consider(encodeCodedReloc(candidate, layout, m), 1)
+					}
 				}
 			}
 		}
