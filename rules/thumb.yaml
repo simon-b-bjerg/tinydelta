@@ -1,16 +1,17 @@
 # SPDX-FileCopyrightText: 2026 Simon Bjerg
 # SPDX-License-Identifier: MIT
 #
-# Relocation rules for ARM Thumb (Cortex-M0/M0+, ARMv6-M). Format:
-# docs/relocation-rules.md. These rules reproduce the hand-written rule of
-# tinydelta 1.1 (reloc.go) exactly.
+# Relocation rules for ARM Thumb: Cortex-M0/M0+ (ARMv6-M) and the Thumb-2
+# cores M3/M4/M7/M33 (ARMv7-M, ARMv8-M). Format: docs/relocation-rules.md.
+# BL and the pointers reproduce the hand-written rule of tinydelta 1.1
+# (reloc.go); B.W came later, for the Thumb-2 cores' tail calls.
 
 version: 1
 name: thumb
 unit: 2           # instructions start at even addresses
 word: 16
 endian: little
-sync: 0           # no instruction-start check: BL's two halfwords can't be mistaken for each other
+sync: 0           # no instruction-start check: a BL's or B.W's two halfwords can't be mistaken for each other
 
 code:
   - name: "BL"
@@ -18,8 +19,13 @@ code:
     address: ["w0[10:0]", "w1[10:0]", "0"]   # a 23-bit signed offset, always even
     relative: { base: 4, sign_extend: 23 }   # target = BL's address + 4 + offset
 
+  - name: "B.W"                             # Thumb-2 only: a tail call, a branch to another function
+    match: ["F000/F800", "B800/F800"]        # as BL, but bit 14 of the second halfword clear
+    address: ["w0[10:0]", "w1[10:0]", "0"]
+    relative: { base: 4, sign_extend: 23 }   # J1 = J2 = 1: within 4 MB, as BL
+
   - name: "32-bit pointer (vector table, literal pools, function tables)"
     align: 4
     match: ["-", "-"]
     address: ["w1[15:0]", "w0[15:0]"]
-    unless: [{ rule: BL, at: [-2, 0, 2] }]   # not overlapping a BL
+    unless: [{ rule: BL, at: [-2, 0, 2] }, { rule: B.W, at: [-2, 0, 2] }]   # not overlapping a BL or B.W

@@ -22,9 +22,10 @@ func legacyRelocate(m *relocMap, dict []byte) []byte {
 // ---- ARM Thumb ----------------------------------------------------------
 
 // thumbBL reports a BL at h: a halfword 0xF000-0xF7FF followed by one
-// 0xF800-0xFFFF. The two ranges don't overlap, so BLs can't overlap.
+// 0xF800-0xFFFF; or since tinydelta 1.2 a Thumb-2 B.W, the second halfword
+// 0xB800-0xBFFF. The ranges don't overlap, so they can't overlap each other.
 func thumbBL(raw []byte, base uint32, h int) bool {
-	return h >= 0 && h+4 <= len(raw) && (base+uint32(h))&1 == 0 && raw[h+1]&0xF8 == 0xF0 && raw[h+3]&0xF8 == 0xF8
+	return h >= 0 && h+4 <= len(raw) && (base+uint32(h))&1 == 0 && raw[h+1]&0xF8 == 0xF0 && (raw[h+3]&0xF8 == 0xF8 || raw[h+3]&0xF8 == 0xB8)
 }
 
 func relocateThumb(m *relocMap, raw, out []byte) {
@@ -47,7 +48,7 @@ func relocateThumb(m *relocMap, raw, out []byte) {
 		w := uint32(next>>1) & 0x3FFFFF
 		out[h+1] = 0xF0 | byte(w>>19&7)
 		out[h] = byte(w >> 11)
-		out[h+3] = 0xF8 | byte(w>>8&7)
+		out[h+3] = raw[h+3]&0xF8 | byte(w>>8&7) // keeps BL's 0xF8 or B.W's 0xB8
 		out[h+2] = byte(w)
 	}
 	for a := 0; a+4 <= n; a++ {

@@ -132,8 +132,8 @@ MSP430X: the extension-word prefix and 18 length rules (the length
 classes of format I, II and the address instructions), 20 code rules (5
 for `CALLA`/`MOVA`, 15 for the extension-word source/destination
 combinations, 6 of them exclusions), 1 data rule (20-bit pointers).
-Thumb: 2 code rules (`BL`, and 4-byte-aligned pointers not overlapping a
-`BL`).
+Thumb: 3 code rules (`BL`, the Thumb-2 tail call `B.W`, and 4-byte-aligned
+pointers not overlapping either).
 
 ## What the engine does
 
@@ -242,7 +242,7 @@ slice   = (1: bits 0-4 lowest bit, 5-7 word) + (1: bits 0-4 width − 1)
 The CRC is CRC-16/CCITT-FALSE (polynomial 0x1021, initial 0xFFFF) over
 the whole table.
 
-Size: `rules/msp430x.yaml` compiles to 536 B, `rules/thumb.yaml` to 45 B.
+Size: `rules/msp430x.yaml` compiles to 536 B, `rules/thumb.yaml` to 73 B.
 (A layout without the per-rule length, attr and size bytes was about 20% smaller,
 but the C engine then had to decode every rule it skipped; 717 B with
 every field in every rule.)

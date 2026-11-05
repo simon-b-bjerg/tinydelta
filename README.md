@@ -377,7 +377,7 @@ buffer holds the map too.
 
 | rules | addresses they move |
 |---|---|
-| `thumb` (ARM Cortex-M) | `BL` calls into the image, and 4-byte-aligned 32-bit pointers into it (vector table, literal pools, function tables) |
+| `thumb` (ARM Cortex-M) | `BL` calls and, on Thumb-2 cores (M3/M4/M7/M33), `B.W` tail calls into the image; 4-byte-aligned 32-bit pointers into it (vector table, literal pools, function tables) |
 | `msp430x` (large code model) | the 20-bit addresses of `CALLA`, `MOVA`/`ADDA`/`CMPA`/`SUBA`, and of extension-word instructions; 4-byte pointers in data blocks the encoder picks; addresses into RAM by a second list of ranges, when variables move |
 
 Which bytes form an address is decided from a few bytes of the old
@@ -650,8 +650,8 @@ even on Cortex-M0). Reproduce with [`scripts/c-size.sh`](scripts/c-size.sh).
 | callback decoder | 876 B | 836 B | 836 B | ~185 B\* |
 | memory decoder + coder | 1,416 B | 1,340 B | 1,340 B | ~290 B |
 | callback decoder + coder | 1,716 B | 1,700 B | 1,700 B | ~305 B\* |
-| memory decoder + coder + Thumb relocation | 3,437 B | 3,297 B | 3,313 B | – |
-| callback decoder + coder + Thumb relocation | 3,829 B | 3,709 B | 3,725 B | – |
+| memory decoder + coder + Thumb relocation | 3,465 B | 3,325 B | 3,341 B | – |
+| callback decoder + coder + Thumb relocation | 3,857 B | 3,737 B | 3,753 B | – |
 
 \* Deepest path, excluding your buffer and your callbacks' own stack
 use. With the coder (`TINYDELTA_CODER = 1`), each decoder grows by
