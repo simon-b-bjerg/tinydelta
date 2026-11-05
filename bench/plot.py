@@ -514,6 +514,10 @@ def relocation_settings():
     return settings
 
 
+# Where the pair graph draws dashed lines: tinydelta's patch this share of the tool's.
+PAIR_FRACTIONS = ((0.5, "½"), (0.25, "¼"), (0.125, "⅛"))
+
+
 def pair_scatter(rows, out, name):
     """Every pair, as a matrix: a row per tinydelta variant measured (plain,
     coded with 777 B tables, coded + relocated for firmware with relocation
@@ -671,6 +675,8 @@ def tradeoff(rows, out):
     # tinydelta's decoders (decoders.json) and the patches each decodes.
     stairs = [(k, c) for k, c in (("tinydelta", plain_key(rows)), ("tinydelta_coded", CODED), ("tinydelta_reloc", RELOC))
               if k in decoders and c in sel[0]]
+    if not any((r["corpus"], r["item"]) in relocation_settings() for r in sel):
+        stairs = [(k, c) for k, c in stairs if c != RELOC]
     # HPatchLite's 32 KB dictionary is left out to keep the graph readable
     # (it is close to the 4 KB one); it is in the summary.
     others = [k for k in decoders if not k.startswith("tinydelta") and k in sel[0] and k != "hpatchlite_32k"]
@@ -680,8 +686,15 @@ def tradeoff(rows, out):
         d = decoders[key]
         return (d["code"] or 0) + d["buffers"] + (old if d["plus_old_file"] else 0)
 
+    # The relocated step is the median over the firmware with relocation
+    # rules only: elsewhere its patches are the coded ones, and a median
+    # over both would land between the two groups.
+    settings = relocation_settings()
+    with_rules = [r for r in sel if (r["corpus"], r["item"]) in settings]
+
     def share(column):
-        return statistics.median(100 * r[column] / max(r["target_bytes"], 1) for r in sel)
+        pick = with_rules if column == RELOC else sel
+        return statistics.median(100 * r[column] / max(r["target_bytes"], 1) for r in pick)
 
     # One panel, at most ~830 px wide, the width of GitHub's README column.
     fig, ax = plt.subplots(figsize=(7.2, 5.9), facecolor=SURFACE)
@@ -718,8 +731,9 @@ def tradeoff(rows, out):
              ha="left", va="top", fontsize=13, color=INK)
     fig.text(0.02, 1 - 0.45 / height, "Lower left is better. Black: tinydelta's decoders, each step adding to the last.\n"
              "Arrows are lower bounds: code size unknown, or the whole old file in RAM; at the right edge, off the axis.", ha="left", va="top", fontsize=9, color=MUTED)
-    if RELOC in sel[0]:
-        fig.text(0.02, 0.012, "Relocated: firmware without relocation rules gets the coded patch.", ha="left",
+    if any(c == RELOC for _, c in stairs):
+        fig.text(0.02, 0.012, "Coded + relocated: the median over the firmware with relocation rules only (%d of %d pairs)."
+                 % (len(with_rules), len(sel)), ha="left",
                  va="bottom", fontsize=8.5, color=MUTED)
     fig.tight_layout(rect=(0, 0.03, 1, 1 - 0.95 / height))
     save(fig, out, "tradeoff")
