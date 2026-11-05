@@ -170,15 +170,18 @@ and 0.85×). Their numbers and
 [graph](docs/benchmark/ratio_ecdf_large_configuration.svg) are with the
 [summary](docs/benchmark/summary.md).
 
-What that compression costs on the device:
+What that compression costs on the device, for firmware: each of
+tinydelta's decoders, from plain to coded to relocating, is a step down
+in patch size for a step up in code.
 
-![Patch size against decoder footprint](docs/benchmark/tradeoff.svg)
+![Firmware: patch size against decoder footprint, tinydelta's decoders as a staircase](docs/benchmark/tradeoff.svg)
 
 | decoder | code (Cortex-M0, `-Os`) | RAM besides stack | stack |
 |---|---:|---:|---:|
 | **tinydelta**, memory decoder | **500 B** | **0** | ~110 B |
 | **tinydelta**, callback decoder | **876 B** | **256 B** buffer\* | ~185 B |
 | **tinydelta**, callback decoder + coder | **1,708 B** | **256 B** buffer\* + 777 B tables‡ | ~305 B |
+| **tinydelta**, callback decoder + coder + Thumb relocation | **3,857 B** | **256 B** buffer\* + 1,545 B tables and map‡ | – |
 | HPatchLite + tinyuz | ~2.2 KB | 4–32 KB dictionary | – |
 | detools + heatshrink | 1,948 B | 640 B state† | ~0.5 KB |
 | tiny-vcdiff (open-vcdiff's format) | 3,881 B | 3,221 B | ~150 B |
@@ -195,16 +198,12 @@ array is fine ([Coded patches](#coded-patches)).
 
 What you give up:
 
-- **The coder, or two passes, for large changes.** Without either, on
-  firmware updates of 1 KB and up, tinydelta's patch is typically 17%
-  larger than HPatchLite's and 53% larger than bsdiff's. With the coder
-  it is about even with bsdiff, whose decoder needs thousands of times
-  more RAM (see the graph above).
-- **The coder costs code and RAM.** The smallest firmware patches need
-  the optional coder, about 0.9 KB more code on Cortex-M0 and its tables
-  ([Coded patches](#coded-patches)); without it, two passes come
-  closest, with room for the intermediate patch
-  ([Two-pass patches](#two-pass-patches)).
+- **Each step costs code.** The coder adds about 0.9 KB of code on
+  Cortex-M0 and short-lived tables ([Coded patches](#coded-patches));
+  relocation about 2 KB more, for firmware whose instruction set has
+  rules ([Relocation](#relocation)). Without the coder, two passes give
+  smaller firmware patches for no code, with room for the intermediate
+  patch ([Two-pass patches](#two-pass-patches)).
 - **Speed was not compared.** The goal is a small decoder, not a fast one.
 - **Small patch reads.** The callback decoder reads instruction headers
   a few bytes at a time; on slow flash, wrap `patch_read` in a small
@@ -219,7 +218,9 @@ What you give up:
 Pairs are builds of consecutive commits, so every one is a real change,
 and a build equal to any earlier one is skipped: MicroPython's stm32
 port (NUCLEO_F091RC, PYBV11) and samd port (ADAFRUIT_TRINKET_M0,
-SEEED_XIAO_SAMD21) between `v1.25.0` and `v1.26.0`; six Linux
+SEEED_XIAO_SAMD21) between `v1.25.0` and `v1.26.0`; Mbed TLS between
+`v2.28.0` and `v2.28.10`, linked into a fixed program for MSP430X with
+the large code model ([`bench/mbedtls/`](bench/mbedtls/)); six Linux
 `arch/arm/configs` files between `v5.0` and `v7.3`; five
 microcontroller boards' device trees (STM32F7, STM32H7, LPC4357) between
 `v6.5-dts` and `v7.3-dts`; and three arm64 boards' device trees
@@ -228,9 +229,10 @@ microcontroller boards' device trees (STM32F7, STM32H7, LPC4357) between
 library's default encoding, as users get it: optimal, but greedy above
 roughly 100 KB, so greedy for the firmware. Each pair is encoded with
 `encode -coder-tables 777`, which returns the coded patch or the plain
-one, whichever is smaller; that one counts. For tinydelta without the
-coder, in the trade-off graph, each pair is encoded both plain and as
-a two-pass patch (`encode -two-pass`) and the smaller counts. Every
+one, whichever is smaller; that one counts. Firmware with relocation
+rules (all but PYBV11, whose image is two flash regions joined) is also
+encoded with `-coder-tables 1545 -reloc thumb` or `msp430x` and its
+image's base address. Every
 variant is listed on its own in the summary. The other tools run at their
 smallest settings: open-vcdiff with `-target_matches`, xdelta3 `-9 -S
 none`, HPatchLite `hdiffi -c-tuz-4k` (and `-32k`), detools with
