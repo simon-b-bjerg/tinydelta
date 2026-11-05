@@ -687,8 +687,8 @@ even on Cortex-M0). Reproduce with [`scripts/c-size.sh`](scripts/c-size.sh).
 | callback decoder | 876 B | 836 B | 836 B | ~185 B\* |
 | memory decoder + coder | 1,416 B | 1,340 B | 1,340 B | ~290 B |
 | callback decoder + coder | 1,716 B | 1,700 B | 1,700 B | ~305 B\* |
-| memory decoder + coder + Thumb relocation | 3,409 B | 3,273 B | 3,289 B | – |
-| callback decoder + coder + Thumb relocation | 3,801 B | 3,685 B | 3,701 B | – |
+| memory decoder + coder + Thumb relocation | 3,437 B | 3,297 B | 3,313 B | – |
+| callback decoder + coder + Thumb relocation | 3,829 B | 3,709 B | 3,725 B | – |
 
 \* Deepest path, excluding your buffer and your callbacks' own stack
 use. With the coder (`TINYDELTA_CODER = 1`), each decoder grows by

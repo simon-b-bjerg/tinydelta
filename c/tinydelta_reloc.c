@@ -763,13 +763,11 @@ static void move_at(const tinydelta_reloc_t *p_reloc, const uint8_t *p_rule, uin
         uint32_t offset       = ((join(p_reloc, p_addr, p, &bits) & ((sign << 1) - 1u)) ^ sign) - sign;
         uint32_t site         = p_reloc->base + p;
         uint32_t delta        = offset + ((p_rel[0] >= 0x80u) ? ((uint32_t)p_rel[0] | 0xFFFFFF00u) : (uint32_t)p_rel[0]); /* Cast: widens; |.| < 2^31. */
-        uint32_t next         = offset - address_shift(p_reloc, site, SPACE_CODE);
+        uint32_t next         = offset - address_shift(p_reloc, site, SPACE_CODE) + address_shift(p_reloc, site + delta, space);
 
-        if (no_wrap(site, delta)) {
-            next += address_shift(p_reloc, site + delta, space);
-        }
-        /* Within sign_extend bits (as two's complement), and changed. */
-        if ((next != offset) && ((next + sign) < (sign << 1))) {
+        /* Only a target inside the image (data that looks like a call aims far
+         * outside it), within sign_extend bits (as two's complement), and changed. */
+        if (no_wrap(site, delta) && in_image(p_reloc, site + delta) && (next != offset) && ((next + sign) < (sign << 1))) {
             split(p_reloc, p_span, p_addr, p, next & low_mask(bits));
         }
     } else {

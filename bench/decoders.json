@@ -18,11 +18,11 @@
   },
   "tinydelta_reloc": {
     "label": "tinydelta, coded + relocated",
-    "code": 3801,
+    "code": 3829,
     "buffers": 1801,
     "stack": null,
     "plus_old_file": false,
-    "basis": "measured: callback decoder built with TINYDELTA_CODER=1 and TINYDELTA_RELOC=TINYDELTA_RELOC_THUMB plus tinydelta_coder.c and tinydelta_reloc.c, Cortex-M0, -Os, arm-none-eabi-gcc 13.2 (README, Code size and stack): 3,801 B code; buffers: the 256-byte page buffer plus 1,545 B of tables (777 B coder tables, layout B, and 768 B for 64 relocation map entries of 12 B), all of which can be short-lived on the stack. On MSP430X -mlarge the code is 7,858 B"
+    "basis": "measured: callback decoder built with TINYDELTA_CODER=1 and TINYDELTA_RELOC=TINYDELTA_RELOC_THUMB plus tinydelta_coder.c and tinydelta_reloc.c, Cortex-M0, -Os, arm-none-eabi-gcc 13.2 (README, Code size and stack): 3,829 B code; buffers: the 256-byte page buffer plus 1,545 B of tables (777 B coder tables, layout B, and 768 B for 64 relocation map entries of 12 B), all of which can be short-lived on the stack. On MSP430X -mlarge the code is 7,858 B"
   },
   "hpatchlite_4k": {
     "label": "HPatchLite, 4 KB dict.",

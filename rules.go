@@ -1135,9 +1135,14 @@ func (r *Rules) moveAt(m *relocMap, ru *rule, raw, out []byte, p int) {
 		bits := totalBits(ru.addrs[0])
 		o := int64(int32(r.join(raw, p, ru.addrs[0])<<(32-ru.signExt)) >> (32 - ru.signExt))
 		site := int64(m.base) + int64(p)
-		// The new offset is computed modulo 2^32 (as the C decoder does),
-		// then must fit sign_extend bits.
-		next := int64(int32(uint32(o) + uint32(m.shiftOf(site+int64(ru.relBase)+o, n, ru.space)) - uint32(m.shiftOf(site, n, spaceCode))))
+		target := site + int64(ru.relBase) + o
+		// Only a target inside the image: data that looks like a call aims
+		// far outside it. The new offset is computed modulo 2^32 (as the C
+		// decoder does), then must fit sign_extend bits.
+		if !inImage(m.base, n, uint64(target)) || target < 0 {
+			return
+		}
+		next := int64(int32(uint32(o) + uint32(m.shiftOf(target, n, ru.space)) - uint32(m.shiftOf(site, n, spaceCode))))
 		if next == o || next < -(1<<(ru.signExt-1)) || next >= 1<<(ru.signExt-1) {
 			return
 		}

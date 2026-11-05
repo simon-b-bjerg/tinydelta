@@ -5,4 +5,8 @@
 // Go fuzzers can compare the Go and C decoders in the same process. It is
 // built only with cgo; without it the package is empty and Available is
 // false.
+//
+// The C files here #include the library's sources from c/, which Go's build
+// cache doesn't track: after changing them, run go clean -cache (or go test
+// -a) before trusting a local result. CI builds from scratch.
 package cdiff

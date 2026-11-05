@@ -5,7 +5,8 @@ package tinydelta
 
 // The hand-written Thumb and MSP430X rules of tinydelta 1.1, kept as the
 // reference the rule tables (rules/*.yaml) must reproduce byte for byte
-// (rules_test.go).
+// (rules_test.go); with one change since: a relative field (a Thumb BL)
+// moves only if its target is inside the image.
 
 func legacyRelocate(m *relocMap, dict []byte) []byte {
 	out := append([]byte{}, dict...)
@@ -35,10 +36,10 @@ func relocateThumb(m *relocMap, raw, out []byte) {
 		v := uint32(raw[h+1]&7)<<19 | uint32(raw[h])<<11 | uint32(raw[h+3]&7)<<8 | uint32(raw[h+2])
 		off := int64(int32(v<<10) >> 9) // sign-extend 22 bits, times 2
 		callee := int64(h) + 4 + off
-		var s2 int64
-		if callee >= 0 && callee < int64(n) {
-			s2 = m.addressShift(m.base+uint32(callee), n)
+		if callee < 0 || callee >= int64(n) {
+			continue // since tinydelta 1.2: data that looks like a BL calls far outside the image
 		}
+		s2 := m.addressShift(m.base+uint32(callee), n)
 		next := off + s2 - m.addressShift(m.base+uint32(h), n)
 		if next == off || next&1 != 0 || next < -(1<<22) || next >= 1<<22 {
 			continue

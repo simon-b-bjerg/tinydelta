@@ -198,10 +198,12 @@ For an absolute address `a` (the slices joined):
   stays as it is and the patch carries the difference.
 
 For a relative field, the offset `o` (slices joined, sign-extended from
-`sign_extend` bits) gives the target `t = base + p + B + o`. The new
-offset is `o + shift(t) − shift(base + p)`, each shift looked up as
-above; it is written back if it changed and fits (in `sign_extend` bits,
-fixed bits included).
+`sign_extend` bits) gives the target `t = base + p + B + o`. Only a target
+inside the image counts: data that looks like a call (a Thumb `BL`) aims
+far outside it, and a real call outside the image (into a ROM, say) is
+left to the patch. The new offset is `o + shift(t) − shift(base + p)`,
+each shift looked up as above; it is written back if it changed and fits
+(in `sign_extend` bits, fixed bits included).
 
 Writing back puts each slice's bits into its word and leaves every other
 bit alone, so where two overlapping matches both move addresses (data
