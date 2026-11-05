@@ -278,7 +278,7 @@ func yamlInt(n *yamlNode, what string, lo, hi int) (int, error) {
 	if n == nil || n.kind != 'v' || n.quoted {
 		return 0, fmt.Errorf("%s: expected a number", what)
 	}
-	v, err := strconv.ParseInt(n.scalar, 0, 64)
+	v, err := strconv.ParseInt(n.scalar, 0, 32) // every number in a rule file fits 32 bits, and so an int
 	if err != nil || v < int64(lo) || v > int64(hi) {
 		return 0, yamlError(n.line, "%s: expected a number from %d to %d, not %q", what, lo, hi, n.scalar)
 	}
@@ -616,7 +616,10 @@ func (r *Rules) slicesFromYAML(items []*yamlNode, what string) ([]ruleSlice, int
 			return nil, 0, err
 		}
 		if strings.Trim(s, "01") == "" {
-			v, _ := strconv.ParseUint(s, 2, 32)
+			v, err := strconv.ParseUint(s, 2, 31) // fixed bits: fewer than 32, so their value fits an int
+			if err != nil {
+				return nil, 0, yamlError(it.line, "%s: fixed bits %q: at most 31 of them", what, s)
+			}
 			out = append(out, ruleSlice{word: 0xFF, hi: len(s), lo: int(v), fixed: true})
 			continue
 		}

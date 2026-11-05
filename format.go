@@ -135,10 +135,10 @@ const maxVarintLen = 5
 // big-endian base-128 varint).
 func appendVarint(b []byte, v uint64) []byte {
 	for v >= 0x80 {
-		b = append(b, byte(v)|0x80)
+		b = append(b, byte(v&0x7F)|0x80) // the low 7 bits, and more to come
 		v >>= 7
 	}
-	return append(b, byte(v))
+	return append(b, byte(v&0x7F)) // v < 0x80 here
 }
 
 // varintLen is the encoded length of v.
