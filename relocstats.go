@@ -14,6 +14,19 @@ import (
 // images that can't be shared (tinydelta relocstats). It reports counts
 // and instruction words only, no image content beyond those.
 func RelocationStats(dict, target []byte, rules *Rules, base uint32) string {
+	return relocationStats(dict, target, rules, base, false)
+}
+
+// RelocationStatsVerbose is RelocationStats, then the map itself (entries,
+// data runs, RAM ranges) and every address field left wrong, one per line:
+// where it is, the rule, its old and new address, the map's shift and the
+// one it needed, and why. Numbers and rule names only, so it can be shared
+// where the images can't.
+func RelocationStatsVerbose(dict, target []byte, rules *Rules, base uint32) string {
+	return relocationStats(dict, target, rules, base, true)
+}
+
+func relocationStats(dict, target []byte, rules *Rules, base uint32, verbose bool) string {
 	var b strings.Builder
 	m := relocMapFrom(dict, target, rules, base).withDataRuns(dict, target).withOutside(dict, target)
 	rd := m.relocate(dict)
@@ -115,8 +128,27 @@ func RelocationStats(dict, target []byte, rules *Rules, base uint32) string {
 		}
 		fmt.Fprintf(&b, "  %5d  0x%04x       0x%04x\n", c.v, c.k.prev, c.k.next)
 	}
-	fieldStats(&b, m, dict, rd, target)
+	var detail *strings.Builder
+	if verbose {
+		detail = &strings.Builder{}
+	}
+	fieldStats(&b, m, dict, rd, target, detail)
 	baseCheck(&b, m.rules, dict, target, base)
+	if verbose {
+		fmt.Fprintf(&b, "\nmap entries (old address, length, shift):\n")
+		for _, e := range m.entries {
+			fmt.Fprintf(&b, "  0x%05x  0x%05x  %+d\n", base+e.start, e.length, e.shift)
+		}
+		fmt.Fprintf(&b, "\ndata runs (address, length):\n")
+		for _, d := range m.data {
+			fmt.Fprintf(&b, "  0x%05x  0x%05x\n", base+d.start*relocDataBlock, d.length*relocDataBlock)
+		}
+		fmt.Fprintf(&b, "\nRAM ranges (address, length, shift):\n")
+		for _, e := range m.outside {
+			fmt.Fprintf(&b, "  0x%05x  0x%05x  %+d\n", e.start, e.length, e.shift)
+		}
+		fmt.Fprintf(&b, "\naddress fields left wrong (instruction address, rule, old address -> new, map shift, needed, why):\n%s", detail.String())
+	}
 	return b.String()
 }
 
@@ -124,7 +156,9 @@ func RelocationStats(dict, target []byte, rules *Rules, base uint32) string {
 // data run, not an instruction start (the sync decode took it for part of
 // another instruction), excluded by unless, an address outside the image
 // with no RAM range, or a shift other than the one the address needed.
-func fieldStats(b *strings.Builder, m *relocMap, dict, rd, target []byte) {
+// fieldStats counts address fields left wrong, by reason; with detail, it
+// also lists each one there.
+func fieldStats(b *strings.Builder, m *relocMap, dict, rd, target []byte, detail *strings.Builder) {
 	const none = int(^uint(0) >> 1)
 	r := m.rules
 	moved := make([]int, len(dict)) // where each old byte really went, from the covers
@@ -170,11 +204,13 @@ func fieldStats(b *strings.Builder, m *relocMap, dict, rd, target []byte) {
 					right++
 					continue
 				}
+				var why string
+				var mapShift int64
 				switch {
 				case m.inData(p):
-					reasons["in a data run"]++
+					why = "in a data run"
 				case r.sync > 0 && !r.starts(m, dict, p):
-					reasons["taken for part of another instruction by the instruction-start decode"]++
+					why = "taken for part of another instruction by the instruction-start decode"
 					var ctx [4]uint32
 					for j := range ctx {
 						if q := p - (4-j)*r.unit; q >= 0 && q+r.wordBytes <= len(dict) {
@@ -183,23 +219,28 @@ func fieldStats(b *strings.Builder, m *relocMap, dict, rd, target []byte) {
 					}
 					rejected[ctx]++
 				case r.ruleAt(m, dict, p) == nil:
-					reasons["excluded by unless"]++
+					why = "excluded by unless"
 				case ru.relative:
-					reasons["relative: the map's shifts don't give the new offset"]++
+					why = "relative: the map's shifts don't give the new offset"
 				default:
 					a64 := int64(oldV)
-					s := m.shiftOf(a64, len(dict), ru.space)
+					mapShift = m.shiftOf(a64, len(dict), ru.space)
 					needed := int64(newV) - a64
 					inside := inImage(m.base, len(dict), uint64(oldV))
 					switch {
-					case !inside && s == 0:
-						reasons["address outside the image, in no RAM range"]++
+					case !inside && mapShift == 0:
+						why = "address outside the image, in no RAM range"
 					case inside && moved[oldV-m.base] != none && int64(moved[oldV-m.base]) == needed:
-						reasons["map shift differs from where the address really moved"]++
+						why = "map shift differs from where the address really moved"
 					default:
-						reasons["map shift differs, and the address's target changed too"]++
+						why = "map shift differs, and the address's target changed too"
 					}
-					wrong[pair{s, needed}]++
+					wrong[pair{mapShift, needed}]++
+				}
+				reasons[why]++
+				if detail != nil {
+					fmt.Fprintf(detail, "  0x%05x  %-60q  0x%05x -> 0x%05x  map %+d  needed %+d  %s\n",
+						m.base+uint32(p), ru.name, oldV, newV, mapShift, int64(newV)-int64(oldV), why)
 				}
 			}
 		}

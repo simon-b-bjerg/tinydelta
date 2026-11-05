@@ -5,7 +5,7 @@
 //
 //	tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-reloc thumb|msp430x | -rules FILE [-ship-rules] -base ADDR] [-max-len N] [-v] <dictionary> <target> [<patch>]
 //	tinydelta decode [-two-pass] [-max-size N] [-rules FILE] [-v] <dictionary> <patch> [<target>]
-//	tinydelta relocstats [-reloc thumb|msp430x | -rules FILE] -base ADDR <old image> <new image>
+//	tinydelta relocstats [-reloc thumb|msp430x | -rules FILE] -base ADDR [-v] <old image> <new image>
 //	tinydelta rules check|compile [-o table.bin] [-c rules.h] <rules.yaml>
 //	tinydelta version
 //
@@ -41,7 +41,7 @@ const usageText = `tinydelta creates and applies compact binary patches.
 Usage:
   tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-reloc thumb|msp430x | -rules FILE [-ship-rules] -base ADDR] [-max-len N] [-v] <dictionary> <target> [<patch>]
   tinydelta decode [-two-pass] [-max-size N] [-rules FILE] [-v] <dictionary> <patch> [<target>]
-  tinydelta relocstats [-reloc thumb|msp430x | -rules FILE] -base ADDR <old image> <new image>
+  tinydelta relocstats [-reloc thumb|msp430x | -rules FILE] -base ADDR [-v] <old image> <new image>
   tinydelta rules check|compile [-o table.bin] [-c rules.h] <rules.yaml>
   tinydelta version
 
@@ -100,11 +100,12 @@ func relocstatsCommand(args []string, stdout, stderr io.Writer) int {
 	reloc := fs.String("reloc", "msp430x", "instruction set: thumb or msp430x (built-in rule tables)")
 	rulesFile := fs.String("rules", "", "a relocation rule file (YAML) instead of -reloc")
 	base := fs.String("base", "0", "the address the image starts at on the device")
+	verbose := fs.Bool("v", false, "also list the map and every address field left wrong (numbers only)")
 	if err := fs.Parse(args); err != nil {
 		return parseExit(err)
 	}
 	if fs.NArg() != 2 {
-		fmt.Fprintln(stderr, "Usage: tinydelta relocstats [-reloc thumb|msp430x | -rules FILE] -base ADDR <old image> <new image>")
+		fmt.Fprintln(stderr, "Usage: tinydelta relocstats [-reloc thumb|msp430x | -rules FILE] -base ADDR [-v] <old image> <new image>")
 		return exitUsage
 	}
 	rules, code := loadRules(*rulesFile, *reloc, stderr)
@@ -124,7 +125,11 @@ func relocstatsCommand(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, err)
 	}
-	fmt.Fprint(stdout, tinydelta.RelocationStats(dict, target, rules, uint32(imageBase)))
+	if *verbose {
+		fmt.Fprint(stdout, tinydelta.RelocationStatsVerbose(dict, target, rules, uint32(imageBase)))
+	} else {
+		fmt.Fprint(stdout, tinydelta.RelocationStats(dict, target, rules, uint32(imageBase)))
+	}
 	return 0
 }
 

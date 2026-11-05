@@ -365,7 +365,9 @@ tinydelta encode -coder-tables 1545 -reloc thumb -base 0x08000000 old.bin new.bi
 `-base` is the image's link address; the map takes 12 bytes per entry
 of the tables buffer, and updates here needed only a few entries. A
 wrong base doesn't fail, it only gains little: `tinydelta relocstats`
-checks it, and shows what relocation leaves to the patch.
+checks it, and shows what relocation leaves to the patch (`-v`: every
+address it left wrong, as numbers only, shareable where the images
+aren't).
 
 On the device, build with `TINYDELTA_RELOC = TINYDELTA_RELOC_THUMB` (or
 `_MSP430X`) as well as the coder, and add `tinydelta_reloc.c`: about 2 KB
@@ -378,7 +380,7 @@ buffer holds the map too.
 | rules | addresses they move |
 |---|---|
 | `thumb` (ARM Cortex-M) | `BL` calls and, on Thumb-2 cores (M3/M4/M7/M33), `B.W` tail calls into the image; 4-byte-aligned 32-bit pointers into it (vector table, literal pools, function tables) |
-| `msp430x` (large code model) | the 20-bit addresses of `CALLA`, `MOVA`/`ADDA`/`CMPA`/`SUBA`, and of extension-word instructions; 4-byte pointers in data blocks the encoder picks; addresses into RAM by a second list of ranges, when variables move |
+| `msp430x` (large code model) | the 20-bit addresses of `CALLA`, `MOVA`/`ADDA`/`CMPA`/`SUBA`, and of extension-word instructions; the 16-bit `&abs`, `x(Rn)` and `#imm` operands of classic instructions (not stack offsets or PC-relative ones); 4-byte pointers in data blocks the encoder picks; addresses into RAM by a second list of ranges, when variables move |
 
 Which bytes form an address is decided from a few bytes of the old
 image around each position, so the decoder relocates whatever part it

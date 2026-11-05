@@ -5,6 +5,7 @@ package tinydelta
 
 import (
 	"bytes"
+	"encoding/binary"
 	"testing"
 
 	"github.com/simon-b-bjerg/tinydelta/internal/cdiff"
@@ -87,4 +88,64 @@ func FuzzRelocGoVsC(f *testing.F) {
 			t.Fatalf("an intact patch didn't decode to its target: %v", goErr)
 		}
 	})
+}
+
+// TestMSP430X16BitAddresses checks the rules for classic MSP430 instructions'
+// 16-bit addresses, hand-assembled: those into a RAM range that moved move
+// with it, stack offsets, PC-relative operands and the constant generator
+// stay; and the C decoder relocates them exactly as Go does.
+func TestMSP430X16BitAddresses(t *testing.T) {
+	type insn struct {
+		what        string
+		words, want []uint16
+	}
+	const shift = 0x20 // RAM from 0x1C00 moves up by 0x20
+	insns := []insn{
+		{"MOV.W &0x1C10,R12", []uint16{0x421C, 0x1C10}, []uint16{0x421C, 0x1C30}},
+		{"MOV.B #1,0x1C20(R10)", []uint16{0x43DA, 0x1C20}, []uint16{0x43DA, 0x1C40}},
+		{"MOV.W #0x1C30,R12", []uint16{0x403C, 0x1C30}, []uint16{0x403C, 0x1C50}},
+		{"MOV.W &0x1C10,&0x1C12", []uint16{0x4292, 0x1C10, 0x1C12}, []uint16{0x4292, 0x1C30, 0x1C32}},
+		{"MOV.W #0x1C30,0x1C40(R9)", []uint16{0x40B9, 0x1C30, 0x1C40}, []uint16{0x40B9, 0x1C50, 0x1C60}},
+		{"PUSH &0x1C14", []uint16{0x1212, 0x1C14}, []uint16{0x1212, 0x1C34}},
+		{"PUSH #0x1C16", []uint16{0x1230, 0x1C16}, []uint16{0x1230, 0x1C36}},
+		{"ADD.W 0x1C18(R4),R5", []uint16{0x5415, 0x1C18}, []uint16{0x5415, 0x1C38}},
+		{"MOV.W 0x1C08(SP),R12 (stack offset)", []uint16{0x411C, 0x1C08}, []uint16{0x411C, 0x1C08}},
+		{"MOV.W 0x1C00(PC),R12 (PC-relative)", []uint16{0x401C, 0x1C00}, []uint16{0x401C, 0x1C00}},
+		{"MOV.W R12,0x1C00(PC) (PC-relative)", []uint16{0x4C80, 0x1C00}, []uint16{0x4C80, 0x1C00}},
+		{"MOV.W #0x1C02,0x1C04(SP)", []uint16{0x40B1, 0x1C02, 0x1C04}, []uint16{0x40B1, 0x1C22, 0x1C04}},
+		{"MOV.W 0x1C06(SP),&0x1C0A", []uint16{0x4192, 0x1C06, 0x1C0A}, []uint16{0x4192, 0x1C06, 0x1C2A}},
+		{"MOV.W #1,&0x1C0C (constant generator)", []uint16{0x4392, 0x1C0C}, []uint16{0x4392, 0x1C2C}},
+		{"MOV.W #0x0123,R12 (not in a RAM range)", []uint16{0x403C, 0x0123}, []uint16{0x403C, 0x0123}},
+		{"RETI", []uint16{0x1300}, []uint16{0x1300}},
+	}
+	var img, want []byte
+	for _, in := range insns {
+		for i, w := range in.words {
+			img = binary.LittleEndian.AppendUint16(img, w)
+			want = binary.LittleEndian.AppendUint16(want, in.want[i])
+		}
+	}
+	m := &relocMap{rules: builtinMSP430X, base: 0x4400, entries: []relocEntry{{0, uint32(len(img)), 0}},
+		outside: []relocEntry{{0x1C00, 0x800, shift}}}
+	got := m.relocate(img)
+	at := 0
+	for _, in := range insns {
+		n := 2 * len(in.words)
+		if !bytes.Equal(got[at:at+n], want[at:at+n]) {
+			t.Errorf("%s: % x, want % x", in.what, got[at:at+n], want[at:at+n])
+		}
+		at += n
+	}
+	if !cdiff.Available {
+		return
+	}
+	v, err := Encode(got, want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	patch := encodeCodedReloc(v, codedLayoutA, m)
+	out, rc := cdiff.Decode(img, patch, len(want), CodedTablesSize(codedLayoutA)+256)
+	if rc != cdiff.OK || !bytes.Equal(out, want) {
+		t.Fatalf("C decoder: result %d, output equal %v", rc, bytes.Equal(out, want))
+	}
 }

@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: MIT
 #
 # Relocation rules for MSP430X with the large code model (20-bit addresses).
-# Format: docs/relocation-rules.md. These rules reproduce the hand-written
-# rule of tinydelta 1.1 (reloc.go) exactly.
+# Format: docs/relocation-rules.md. The 20-bit rules reproduce the
+# hand-written rule of tinydelta 1.1 (reloc.go); the 16-bit ones (classic
+# instructions' &abs, x(Rn), #imm) came later.
 #
 # Words are 16 bits, as the CPU reads them: the bytes b3 13 are w0 = 13B3.
 # A condition is value/mask: (word AND mask) == value; "!" negates it, "&"
@@ -119,6 +120,64 @@ code:             # outside data runs, at instruction starts only
     match: ["1800/F800", "0080/0080"]
     address: ["w0[3:0]", "w2[15:0]"]
     size: 6
+
+  # Classic (non-extended) instructions with 16-bit addresses: &abs and
+  # x(Rn), as source (w1) or destination (the word after the source's), and
+  # #imm. In the large model these address RAM variables and arrays, and
+  # constants below 64 KB. Not moved: x(SP) (stack offsets), PC-relative
+  # operands (R0), the constant generator (R3, As 1), which take a word or
+  # none but hold no address. #imm moves only into RAM ranges (space data):
+  # an immediate in the image's address range is usually a mask.
+  # Two operands (0x4000-0xFFFF): w0 = opcode, Rs (11-8), Ad (7), B/W, As (5-4), Rd (3-0).
+  - name: "two operands: #imm, destination x(SP) or PC-relative"
+    match: ["!0000/C000 & 0030/0F30 & 0080/008E"]
+    address: ["w1[15:0]"]
+    space: data
+    size: 6
+  - name: "two operands: #imm, destination &abs or x(Rd)"
+    match: ["!0000/C000 & 0030/0F30 & 0080/0080"]
+    address: ["w1[15:0]"]
+    address2: ["w2[15:0]"]
+    space: data
+  - name: "two operands: #imm"
+    match: ["!0000/C000 & 0030/0F30"]
+    address: ["w1[15:0]"]
+    space: data
+  - name: "two operands: source x(SP) or PC-relative, destination x(SP) or PC-relative"
+    match: ["!0000/C000 & 0010/0E30 & 0080/008E"]
+  - name: "two operands: source x(SP) or PC-relative, destination &abs or x(Rd)"
+    match: ["!0000/C000 & 0010/0E30 & 0080/0080"]
+    address: ["w2[15:0]"]
+  - name: "two operands: source x(SP) or PC-relative"
+    match: ["!0000/C000 & 0010/0E30"]
+  # As 1 on R3 (the constant 1) has no source word: it falls through to
+  # the "no source word" rules.
+  - name: "two operands: source &abs or x(Rs), destination x(SP) or PC-relative"
+    match: ["!0000/C000 & 0010/0030 & !0300/0F00 & 0080/008E"]
+    address: ["w1[15:0]"]
+    size: 6
+  - name: "two operands: source &abs or x(Rs), destination &abs or x(Rd)"
+    match: ["!0000/C000 & 0010/0030 & !0300/0F00 & 0080/0080"]
+    address: ["w1[15:0]"]
+    address2: ["w2[15:0]"]
+  - name: "two operands: source &abs or x(Rs)"
+    match: ["!0000/C000 & 0010/0030 & !0300/0F00"]
+    address: ["w1[15:0]"]
+  - name: "two operands: no source word, destination x(SP) or PC-relative"
+    match: ["!0000/C000 & 0080/008E"]
+  - name: "two operands: no source word, destination &abs or x(Rd)"
+    match: ["!0000/C000 & 0080/0080"]
+    address: ["w1[15:0]"]
+  # One operand (RRC, SWPB, RRA, SXT, PUSH, CALL; 0x1000-0x12FF): As (5-4), Rn (3-0).
+  - name: "one operand: #imm"
+    match: ["1000/FC00 & !1300/FF00 & 0030/003F"]
+    address: ["w1[15:0]"]
+    space: data
+  - name: "one operand: x(SP) or PC-relative"
+    match: ["1000/FC00 & !1300/FF00 & 0010/003E"]
+  - name: "one operand: &abs or x(Rn) (not the constant 1, R3)"
+    match: ["1000/FC00 & !1300/FF00 & 0010/0030 & !0003/000F"]
+    address: ["w1[15:0]"]
 
 data:             # inside data runs (constant tables, initial values)
   - name: "20-bit pointer into the image, 32 bits little-endian"

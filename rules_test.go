@@ -31,6 +31,26 @@ func checkSameAsLegacy(t *testing.T, what string, m *relocMap, dict []byte) {
 	}
 }
 
+// legacyRules is the rule table that reproduces the hand-written rules:
+// Thumb's shipped one; for MSP430X the rules frozen at tinydelta 1.1, as
+// the shipped ones have grown 16-bit addresses since.
+func legacyRules(t *testing.T, arch Relocation) *Rules {
+	t.Helper()
+	if arch != RelocationMSP430X {
+		return rulesFor(arch)
+	}
+	src, err := os.ReadFile("testdata/rules/msp430x-1.1.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := ParseRules(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.builtin = RelocationMSP430X // legacyRelocate picks the hand-written rule by this
+	return r
+}
+
 func countDiff(a, b []byte) int {
 	n := 0
 	for i := range a {
@@ -112,7 +132,7 @@ func randomCode(r *rand.Rand, rules *Rules, base uint32, n int) []byte {
 func TestRulesSameAsHandWritten(t *testing.T) {
 	r := rand.New(rand.NewSource(91))
 	for _, c := range relocCases {
-		rules := rulesFor(c.arch)
+		rules := legacyRules(t, c.arch)
 		// The synthetic firmware updates the other tests use, with their real maps.
 		for seed := 0; seed < 6; seed++ {
 			old, new := fakeFirmware(rand.New(rand.NewSource(int64(seed))), c.arch, c.base, 60+20*seed)
@@ -160,6 +180,9 @@ func TestRulesSameAsHandWrittenOnCorpus(t *testing.T) {
 		rules, err := BuiltinRules(p[1])
 		if err != nil {
 			t.Fatal(err)
+		}
+		if rules.builtin == RelocationMSP430X {
+			rules = legacyRules(t, RelocationMSP430X)
 		}
 		var base uint32
 		fmt.Sscan(p[2], &base)
@@ -359,7 +382,7 @@ func TestCRelocationRules(t *testing.T) {
 
 	r := rand.New(rand.NewSource(77))
 	old, new := fakeFirmware(r, RelocationMSP430X, 0x10000, 45)
-	tables := CodedTablesSize(codedLayoutA) + 64*relocEntrySize
+	tables := CodedTablesSize(codedLayoutA) + 64*relocEntrySize + len(custom.Table())
 	var shipped, named [][]byte
 	for _, layout := range []int{codedLayoutA, codedLayoutB, codedLayoutC} {
 		m := relocMapFrom(old, new, custom, 0x10000).withOutside(old, new)
