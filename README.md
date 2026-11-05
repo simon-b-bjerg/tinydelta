@@ -637,6 +637,7 @@ beyond `memcpy`.
 | **memory decoder** | `tinydelta.h`, `tinydelta_internal.h`, `tinydelta_decode.c` | dictionary, patch and output buffer are all in RAM |
 | **callback decoder** | `tinydelta.h`, `tinydelta_internal.h`, `tinydelta_io.h`, `tinydelta_io.c` | the data is elsewhere, e.g. external flash, reached through your own read/write functions; one buffer of yours caches flash pages and the recent output |
 | **coder** (optional) | `tinydelta_coder.h`, `tinydelta_coder.c`, and `TINYDELTA_CODER=1` for all files | either decoder should read [coded patches](#coded-patches) |
+| **relocation** (optional, with the coder) | `tinydelta_reloc.h`, `tinydelta_reloc.c`, the built-in rule table's header (`tinydelta_rules_thumb.h` or `tinydelta_rules_msp430x.h`), and `TINYDELTA_RELOC=TINYDELTA_RELOC_THUMB` or `_MSP430X` for all files | either decoder should read [relocated patches](#relocation) (firmware) |
 
 ### Code size and stack
 
