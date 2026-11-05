@@ -6,6 +6,7 @@ package tinydelta
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 )
 
@@ -427,12 +428,32 @@ func (m *relocMap) withDataRuns(dict, target []byte) *relocMap {
 // ranges of neighbouring addresses with the same shift, each reaching to
 // the next range. Returns m itself if none moved.
 func (m *relocMap) withOutside(dict, target []byte) *relocMap {
+	// Votes come from instructions in covers; code dense with RAM addresses
+	// only lines up once those addresses are relocated, so vote again with
+	// the ranges found, until they settle.
+	cur := m
+	for round := 0; round < outsideRounds; round++ {
+		next := m.outsideFrom(dict, target, cur)
+		if slices.Equal(next.outside, cur.outside) {
+			break
+		}
+		cur = next
+	}
+	return cur
+}
+
+// outsideRounds bounds withOutside's votes; ranges settle in two or three.
+const outsideRounds = 4
+
+// outsideFrom is m with RAM ranges from the votes of the instructions in
+// the covers of seen's relocation of dict.
+func (m *relocMap) outsideFrom(dict, target []byte, seen *relocMap) *relocMap {
 	if len(dict) == 0 {
 		return m
 	}
 	r := m.rules
 	votes := map[uint32]map[int32]int{}
-	for _, c := range findCovers(m.relocate(dict), target) {
+	for _, c := range findCovers(seen.relocate(dict), target) {
 		if c.extra > 0 {
 			continue
 		}

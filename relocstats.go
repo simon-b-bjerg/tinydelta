@@ -156,6 +156,18 @@ func relocationStats(dict, target []byte, rules *Rules, base uint32, verbose boo
 // data run, not an instruction start (the sync decode took it for part of
 // another instruction), excluded by unless, an address outside the image
 // with no RAM range, or a shift other than the one the address needed.
+// afterPrefix reports whether a prefix (an MSP430X extension word) comes
+// right before p: the instruction at p is then the prefixed one, whose rule
+// at the prefix accounts for its addresses.
+func afterPrefix(r *Rules, dict []byte, base uint32, p int) bool {
+	for i := range r.lists[rulePrefixes] {
+		if ru := &r.lists[rulePrefixes][i]; r.matches(ru, dict, base, p-ru.n) {
+			return true
+		}
+	}
+	return false
+}
+
 // fieldStats counts address fields left wrong, by reason; with detail, it
 // also lists each one there.
 func fieldStats(b *strings.Builder, m *relocMap, dict, rd, target []byte, detail *strings.Builder) {
@@ -188,7 +200,7 @@ func fieldStats(b *strings.Builder, m *relocMap, dict, rd, target []byte, detail
 				continue
 			}
 			i := r.first(ruleCode, dict, m.base, p)
-			if i < 0 || len(r.lists[ruleCode][i].addrs) == 0 || k+r.lists[ruleCode][i].size > c.length {
+			if i < 0 || len(r.lists[ruleCode][i].addrs) == 0 || k+r.lists[ruleCode][i].size > c.length || afterPrefix(r, dict, m.base, p) {
 				continue
 			}
 			ru := &r.lists[ruleCode][i]
