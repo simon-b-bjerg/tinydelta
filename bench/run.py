@@ -31,8 +31,9 @@ Tools (set the binaries with environment variables; defaults are on PATH):
                        the smaller of the plain patch and coded ones whose
                        tables fit, decoded in one pass
     tinydelta_reloc    tinydelta encode -coder-tables 1545 -reloc <rules> -base
-                       <base>: coded and relocated, for corpora with a
-                       "relocation" setting in corpus.json (firmware); the
+                       <base>: coded and relocated, for items with a
+                       "relocation" setting in corpus.json (firmware: the
+                       item's own, else its corpus's); the
                        decoder has the rules built in. 1545 B of tables: the
                        coder's (777 B, layout B, or 1287 B, layout A) and the
                        relocation map's, 12 B per entry. Elsewhere, the same
@@ -112,8 +113,8 @@ def read(path):
 
 def encode_all(tools, old, new, work, relocation=None):
     """Returns {tool: patch size}, after checking each patch decodes to new.
-    relocation is the corpus's "relocation" setting ({"rules", "base"}), if
-    it has one."""
+    relocation is the item's "relocation" setting ({"rules", "base"}), or its
+    corpus's, if it has one."""
     target = read(new)
     patch = os.path.join(work, "patch")
     out = os.path.join(work, "out")
@@ -262,8 +263,10 @@ def main():
         if name not in corpus:
             continue  # cached builds of a corpus no longer listed
         kind = corpus[name]["kind"]
-        relocation = corpus[name].get("relocation")
+        items = {it["name"]: it for it in corpus[name].get("items", [])}
         for item in sorted(os.listdir(os.path.join(builds, name))):
+            # An item's own relocation setting, else its corpus's.
+            relocation = items.get(item, {}).get("relocation", corpus[name].get("relocation"))
             folder = os.path.join(builds, name, item)
             index = os.path.join(folder, "versions.json")
             versions = json.load(open(index)) if os.path.exists(index) else []

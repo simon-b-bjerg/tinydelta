@@ -280,10 +280,8 @@ def summary(rows, tools_file, out):
 def relocation_summary(rows):
     """Firmware with relocation rules (corpus.json "relocation"): per item
     and commit step, the patches summed, coded and coded and relocated."""
-    corpus_file = os.environ.get("BENCH_CORPUS", os.path.join(os.path.dirname(os.path.abspath(__file__)), "corpus.json"))
-    corpus = json.load(open(corpus_file)) if os.path.exists(corpus_file) else {}
-    relocated = {n for n, c in corpus.items() if isinstance(c, dict) and "relocation" in c}
-    sel = [r for r in rows if r["corpus"] in relocated and "tinydelta_reloc" in r]
+    settings = relocation_settings()
+    sel = [r for r in rows if (r["corpus"], r["item"]) in settings and "tinydelta_reloc" in r]
     if not sel:
         return []
     cols = [k for k in ("tinydelta_coded_b", "tinydelta_coded_a", "tinydelta_reloc", "tinydelta_reloc_shipped") if k in sel[0]]
@@ -299,7 +297,7 @@ def relocation_summary(rows):
     for key in sorted({(r["corpus"], r["item"], r["step"]) for r in sel}):
         group = [r for r in sel if (r["corpus"], r["item"], r["step"]) == key]
         sums = {c: sum(r[c] for r in group) for c in cols}
-        reloc = corpus[key[0]]["relocation"]
+        reloc = settings[key[:2]]
         base = sums.get("tinydelta_coded_a") or sums.get("tinydelta_coded_b")
         change = "%+.0f%%" % (100 * (sums["tinydelta_reloc"] - base) / base) if base else ""
         lines.append("| %s/%s | %s, %s | %d | %d | %s | %s |" % (
@@ -499,16 +497,21 @@ PAIR_TOOLS = ["openvcdiff", "hpatchlite_4k", "detools", "bsdiff"]
 RELOC = "tinydelta_reloc"
 
 
-def relocated_corpora():
-    """The corpora with relocation rules (corpus.json "relocation"): the
-    only ones whose relocated patches differ from the coded ones."""
+def relocation_settings():
+    """{(corpus, item): its relocation setting} for the items with
+    relocation rules (corpus.json "relocation": the item's own, else its
+    corpus's): the only ones whose relocated patches differ from the coded
+    ones."""
     path = os.environ.get("BENCH_CORPUS", os.path.join(os.path.dirname(os.path.abspath(__file__)), "corpus.json"))
     corpus = json.load(open(path)) if os.path.exists(path) else {}
-    return {n for n, c in corpus.items() if isinstance(c, dict) and "relocation" in c}
-
-
-# Where the pair graph draws dashed lines: tinydelta's patch this share of the tool's.
-PAIR_FRACTIONS = ((0.5, "½"), (0.25, "¼"), (0.125, "⅛"))
+    settings = {}
+    for name, spec in corpus.items():
+        if isinstance(spec, dict):
+            for it in spec.get("items", []):
+                setting = it.get("relocation", spec.get("relocation"))
+                if setting:
+                    settings[(name, it["name"])] = setting
+    return settings
 
 
 def pair_scatter(rows, out, name):
@@ -519,10 +522,10 @@ def pair_scatter(rows, out, name):
     data; in each panel, the share of pairs where tinydelta is smaller, and
     dashed lines where its patch is a half, a quarter and an eighth of the
     tool's."""
-    relocated = relocated_corpora()
+    relocated = relocation_settings()
     variants = [(plain_key(rows), "plain", "#2a78d6", rows),
                 (CODED, "coded", INK, rows),
-                (RELOC, "coded + relocated", "#e8710a", [r for r in rows if r["corpus"] in relocated])]
+                (RELOC, "coded + relocated", "#e8710a", [r for r in rows if (r["corpus"], r["item"]) in relocated])]
     variants = [v for v in variants if v[3] and v[0] in v[3][0]]
     labels = {k: label for k, label, _, _, _ in OTHERS}
     tools = [k for k in PAIR_TOOLS if k in rows[0]]
