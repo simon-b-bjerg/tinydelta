@@ -127,46 +127,41 @@ A patch carries no checksum, so before shipping, read
 
 ## Benchmark
 
-492 real version pairs, one and five commits apart, against six other
-delta tools: firmware (MicroPython builds for four Cortex-M boards,
-185–364 KB) and configuration (Linux kernel configuration files and
-microcontroller device trees, 3–20 KB). Every patch was decoded again
-and checked against the target.
-For each update, tinydelta's figure is its [coded patch](#coded-patches)
-for a decoder with 777 B of coder tables (or the plain patch, when that
-is smaller), the one an update server would send. The trade-off graph
-also shows tinydelta without the coder: the smaller of its plain and
-[two-pass](#two-pass-patches) patch.
+520 real version pairs, one and five commits apart, against six other
+delta tools: firmware (MicroPython builds for four Cortex-M boards, and
+Mbed TLS for MSP430X, 112–364 KB) and configuration (Linux kernel
+configuration files and microcontroller device trees, 3–20 KB). Every
+patch was decoded again and checked against the target. tinydelta's
+patch is its [coded patch](#coded-patches) for a decoder with 777 B of
+coder tables (or the plain one, when that is smaller), the one an update
+server would send; for the firmware with [relocation](#relocation) rules
+(160 pairs) also its relocated patch.
 
-![Every pair: tinydelta against open-vcdiff, HPatchLite, detools, bsdiff and zstd](docs/benchmark/pairs.svg)
+![Every pair: tinydelta plain, coded and coded and relocated, against open-vcdiff, HPatchLite, detools and bsdiff](docs/benchmark/pairs.svg)
 
-Typical ratio of tinydelta's patch to the other tool's (geometric mean;
-below 1, tinydelta's is smaller) and how often tinydelta's is smaller:
+Each panel is one tinydelta variant (rows) against one tool (columns),
+every pair a dot; below the diagonal tinydelta's patch is smaller, and
+the bold figure is how often. Typical ratio of tinydelta's patch to the
+other tool's (geometric mean; below 1, tinydelta's is smaller):
 
-| compared with | configuration, 3–20 KB (316 pairs) | firmware, 185–364 KB (176 pairs) |
-|---|---|---|
-| open-vcdiff | **0.36**, smaller in 100% | **0.12**, smaller in 100% |
-| xdelta3 | 0.33, smaller in 100% | 0.21, smaller in 100% |
-| HPatchLite, 4 KB dictionary | **0.62**, smaller in 97% | **0.72**, smaller in 100% |
-| detools (heatshrink) | 0.25, smaller in 100% | 0.41, smaller in 100% |
-| bsdiff | **0.20**, smaller in 100% | 0.85, smaller in 67% |
-| zstd `--patch-from` | 0.63, smaller in 90% | 0.51, smaller in 100% |
+| compared with | configuration, 3–20 KB (316 pairs) | firmware, coded, 112–364 KB (204 pairs) | firmware, relocated (160 pairs) |
+|---|---|---|---|
+| open-vcdiff | 0.36, smaller in 100% | 0.12, smaller in 100% | 0.02, smaller in 100% |
+| xdelta3 | 0.33, smaller in 100% | 0.22, smaller in 100% | 0.04, smaller in 100% |
+| HPatchLite, 4 KB dictionary | 0.62, smaller in 97% | 0.72, smaller in 100% | 0.13, smaller in 100% |
+| detools (heatshrink) | 0.25, smaller in 100% | 0.40, smaller in 100% | 0.07, smaller in 100% |
+| bsdiff | 0.20, smaller in 100% | 0.83, smaller in 68% | 0.15, smaller in 100% |
+| zstd `--patch-from` | 0.63, smaller in 90% | 0.52, smaller in 100% | 0.10, smaller in 100% |
 
-tinydelta's patch is smaller than the VCDIFF tools', detools' and
-zstd's in every firmware pair, and than HPatchLite's in every firmware
-pair and 97% of configuration pairs. Against bsdiff it depends on the
-size of the change: when tinydelta's patch is under 1 KB (333 pairs,
-nearly all configuration updates), it is the smaller one in every pair,
-typically 0.20× bsdiff's; at 1 KB and above (159 pairs, nearly all
-firmware), the two are about even: tinydelta's is the smaller in 64%,
-typically 0.97× bsdiff's, whose decoder needs megabytes of RAM. The
-median configuration update is about 55 bytes; the median firmware
-update about 6 KB, 2.7% of the image.
+The median configuration update is about 56 bytes; the median firmware
+update 5.3 KB coded (2.6% of the image), and with relocation
+816 B (0.41%). bsdiff comes closest on large firmware
+changes, with a decoder that needs megabytes of RAM.
 
 Larger configuration files (arm64 device trees, 47–107 KB, 38 pairs)
 are left out of the graphs above: tinydelta's lead narrows as the files
-grow (0.72× HPatchLite's and 0.51× bsdiff's; five commits apart, 0.84×
-and 0.85×). Their numbers and
+grow (0.65× HPatchLite's and 0.38× bsdiff's; five commits apart,
+0.84× and 0.85×). Their numbers and
 [graph](docs/benchmark/ratio_ecdf_large_configuration.svg) are with the
 [summary](docs/benchmark/summary.md).
 
