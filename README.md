@@ -371,8 +371,9 @@ On the device, build with `TINYDELTA_RELOC = TINYDELTA_RELOC_THUMB` (or
 more code on Cortex-M0, 4 KB on MSP430X. Nothing else changes; the tables
 buffer holds the map too. It costs time: the decoder checks the rules at
 every position of the old image it reads, about 6,000 cycles per byte
-on MSP430 with the `msp430x` rules (a 256 KB image at 16 MHz: about 100
-seconds), far less with Thumb's three rules.
+on MSP430 with the `msp430x` rules for the memory decoder, a third more
+for the callback decoder in small chunks (a 256 KB image at 16 MHz:
+about 100 to 130 seconds), far less with Thumb's three rules.
 
 <details>
 <summary>Which addresses move, and your own rules</summary>
