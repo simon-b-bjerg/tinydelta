@@ -93,7 +93,7 @@ def encode(dictionary: _BytesLike, target: _BytesLike, *, greedy: bool = False, 
     rules, instead of relocation, is the path of a relocation rule file
     (YAML, docs/relocation-rules.md); the patch names its table by CRC, so
     decode needs the same rules=, unless ship_rules puts the table in the
-    patch (experimental).
+    patch.
 
     greedy uses the fast greedy encoder instead of the optimal one (patches
     are typically a few percent larger). max_instruction_len, if above 0,

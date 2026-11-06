@@ -24,7 +24,7 @@ Goals:
 - the encoder and `relocstats` read the YAML directly, so trying a rule is
   edit and rerun, on the developer's machine, without sharing images;
 - a patch can carry its own table, so devices in the field can use new
-  rules without a new decoder (experimental);
+  rules without a new decoder;
 - native speed and no control flow in tables: the engine only matches
   masks and moves bits, so it is easy to bound, review and model-check;
 - `rules/thumb.yaml` and `rules/msp430x.yaml` reproduce the hand-written

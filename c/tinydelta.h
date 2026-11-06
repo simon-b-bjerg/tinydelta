@@ -84,7 +84,7 @@ tinydelta_result_t tinydelta_decode(
  * entry of the tables buffer, after the coder's tables. A patch made with
  * another table is rejected with TINYDELTA_ERR_VERSION.
  *
- * TINYDELTA_RELOC_SHIPPED = 1 (experimental) also accepts patches that ship
+ * TINYDELTA_RELOC_SHIPPED = 1 also accepts patches that ship
  * their own rule table; it takes its length of the tables buffer, before the
  * map, and is checked before use. */
 

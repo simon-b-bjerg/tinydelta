@@ -49,7 +49,7 @@ encode writes a patch that turns <dictionary> (the old file) into
 <target> (the new file). decode applies it. An omitted output file, or
 "-", means standard output; a <patch> of "-" is read from standard input.
 relocstats shows what relocation leaves to the patch of a firmware
-update (experimental); rules checks or compiles a relocation rule file
+update; rules checks or compiles a relocation rule file
 (docs/relocation-rules.md). Flags go before the file names. Run
 "tinydelta <command> -h" for a command's flags.
 `
@@ -93,7 +93,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 // relocstatsCommand prints what relocation leaves to the patch of an
-// update (experimental; see tinydelta.RelocationStats).
+// update (see tinydelta.RelocationStats).
 func relocstatsCommand(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("relocstats", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -142,7 +142,7 @@ func encodeCommand(args []string, stdout, stderr io.Writer) int {
 	twoPass := fs.Bool("two-pass", false, "allow a patch the device decodes twice (decode -two-pass); prints the\nnumber of passes, 1 or 2, to standard error")
 	reloc := fs.String("reloc", "", "firmware images: the decoder relocates addresses for this instruction set\n(C: TINYDELTA_RELOC): thumb (ARM Cortex-M) or msp430x (large code model);\nneeds -coder-tables, with 12 bytes more per map entry")
 	rulesFile := fs.String("rules", "", "firmware images: a relocation rule file (YAML; docs/relocation-rules.md)\ninstead of -reloc; the patch names the table by CRC, so the decoder must\nhave it built in, unless -ship-rules")
-	shipRules := fs.Bool("ship-rules", false, "with -rules or -reloc: put the rule table in the patch (experimental)")
+	shipRules := fs.Bool("ship-rules", false, "with -rules or -reloc: put the rule table in the patch")
 	base := fs.String("base", "0", "with -reloc or -rules: the address the image starts at on the device, e.g. 0x10000")
 	maxLen := fs.Int("max-len", 0, "limit the target bytes any one instruction produces\n(0 means no limit)")
 	verbose := fs.Bool("v", false, "print sizes to standard error")

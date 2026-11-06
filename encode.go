@@ -83,7 +83,7 @@ type EncodeOptions struct {
 	// (decode such patches in Go with DecodeRules), unless ShipRules.
 	Rules *Rules
 
-	// ShipRules puts the rule table in the patch (experimental): any
+	// ShipRules puts the rule table in the patch: any
 	// decoder that accepts shipped tables can then use it. It costs the
 	// table's size in the patch and in the decoder's tables buffer.
 	ShipRules bool

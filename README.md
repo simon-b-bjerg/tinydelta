@@ -392,7 +392,7 @@ pass a rule file with `-rules` instead of `-reloc` (`tinydelta rules
 check` validates it); the patch names its table by CRC, so the decoder
 needs that table built in (`tinydelta rules compile -c`), or the patch
 carries it with `-ship-rules` for a decoder built with
-`TINYDELTA_RELOC_SHIPPED` (experimental).
+`TINYDELTA_RELOC_SHIPPED`.
 
 </details>
 
@@ -1147,6 +1147,14 @@ instruction set gets a new version byte, and decoders reject versions
 they don't implement. Encoders may still produce different, usually
 smaller, patches for the same input in later releases; they stay valid
 patches of the same version.
+
+Relocation is stable in the same way: the map, the rule-table format and
+the built-in Thumb and MSP430X tables (named in the patch by CRC) are fixed,
+and new rules come as new tables. It has been tested on few platforms so far:
+Cortex-M0 (STM32F091), Cortex-M0+ (SAMD21), Cortex-M4 (STM32L476) and MSP430X
+(IAR and GCC builds). Rules that miss or misread a field on another core or
+compiler cost patch size, never correctness, as encoder and decoder relocate
+the old image the same way; `tinydelta relocstats -v` shows what they miss.
 
 The Go API follows [semantic versioning](https://semver.org) from
 v1.1.0. v1.0.0 predates the version byte: patches made with it don't

@@ -10,7 +10,7 @@ import (
 )
 
 // RelocationStats describes, for a firmware update, what relocation
-// leaves to the patch: experimental, for tuning the relocation rules on
+// leaves to the patch, for tuning the relocation rules on
 // images that can't be shared (tinydelta relocstats). It reports counts
 // and instruction words only, no image content beyond those.
 func RelocationStats(dict, target []byte, rules *Rules, base uint32) string {
