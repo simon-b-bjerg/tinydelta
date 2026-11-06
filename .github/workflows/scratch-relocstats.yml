@@ -1,0 +1,52 @@
+# Throwaway: relocation statistics for Mbed TLS on MSP430X, 16-bit rules against 20-bit only.
+name: Scratch relocstats
+on:
+  push:
+    branches: [scratch-mbedtls-relocstats]
+permissions:
+  contents: read
+jobs:
+  stats:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Restore cached MSP430 toolchain
+        id: toolchain
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/msp430
+          key: msp430-ubuntu-24.04-${{ hashFiles('scripts/msp430-toolchain.sh') }}
+      - name: Build MSP430 GCC (when not cached)
+        if: steps.toolchain.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgmp-dev libmpfr-dev libmpc-dev
+          scripts/msp430-toolchain.sh ~/.cache/msp430
+      - run: echo "$HOME/.cache/msp430/bin" >> "$GITHUB_PATH"
+      - name: Build Mbed TLS versions
+        env:
+          BENCH_CORPUS: bench/corpus-mbedtls.json
+        run: python3 bench/collect.py "$RUNNER_TEMP/cache"
+      - name: Relocation statistics
+        run: |
+          go build -o td ./cmd/tinydelta
+          dir="$RUNNER_TEMP/cache/builds/mbedtls_msp430/msp430x-large"
+          files=($(python3 -c "import json,sys; print(' '.join(v['file'] for v in json.load(open('$dir/versions.json'))))"))
+          echo "versions: ${#files[@]}"
+          for i in $(seq 1 $((${#files[@]} - 1))) 5; do
+            a="$dir/${files[0]}"; [ "$i" = 5 ] || a="$dir/${files[$((i - 1))]}"
+            b="$dir/${files[$i]}"
+            [ "$i" = 5 ] && echo "=== pair 0 -> 5" || echo "=== pair $((i - 1)) -> $i"
+            for rules in "-reloc msp430x" "-rules bench/msp430x-20bit.yaml"; do
+              ./td encode -coder-tables 1545 $rules -base 0x10000 "$a" "$b" p.td
+              echo "$rules: patch $(stat -c %s p.td) B"
+              ./td relocstats $rules -base 0x10000 "$a" "$b" | tail -n 8
+            done
+            ./td relocstats -v -reloc msp430x -base 0x10000 "$a" "$b" > v16.txt
+            ./td relocstats -v -rules bench/msp430x-20bit.yaml -base 0x10000 "$a" "$b" > v20.txt
+            echo "--- verbose diff (16-bit rules vs 20-bit only), first 120 lines"
+            diff v20.txt v16.txt | head -n 120 || true
+          done

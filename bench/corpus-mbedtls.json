@@ -1,0 +1,24 @@
+{
+  "mbedtls_msp430": {
+    "kind": "firmware",
+    "collector": "mbedtls",
+    "repo": "https://github.com/Mbed-TLS/mbedtls",
+    "from": "v2.28.0",
+    "to": "v2.28.10",
+    "max_versions": 8,
+    "relocation": {
+      "rules": "msp430x",
+      "base": "0x10000"
+    },
+    "items": [
+      {
+        "name": "msp430x-large",
+        "cc": "msp430-elf-gcc",
+        "cflags": [
+          "-mcpu=msp430x",
+          "-mlarge"
+        ]
+      }
+    ]
+  }
+}
