@@ -30,23 +30,9 @@ jobs:
         env:
           BENCH_CORPUS: bench/corpus-mbedtls.json
         run: python3 bench/collect.py "$RUNNER_TEMP/cache"
-      - name: Relocation statistics
+      - name: Images
         run: |
-          go build -o td ./cmd/tinydelta
           dir="$RUNNER_TEMP/cache/builds/mbedtls_msp430/msp430x-large"
-          files=($(python3 -c "import json,sys; print(' '.join(v['file'] for v in json.load(open('$dir/versions.json'))))"))
-          echo "versions: ${#files[@]}"
-          for i in $(seq 1 $((${#files[@]} - 1))) 5; do
-            a="$dir/${files[0]}"; [ "$i" = 5 ] || a="$dir/${files[$((i - 1))]}"
-            b="$dir/${files[$i]}"
-            [ "$i" = 5 ] && echo "=== pair 0 -> 5" || echo "=== pair $((i - 1)) -> $i"
-            for rules in "-reloc msp430x" "-rules bench/msp430x-20bit.yaml"; do
-              ./td encode -coder-tables 1545 $rules -base 0x10000 "$a" "$b" p.td
-              echo "$rules: patch $(stat -c %s p.td) B"
-              ./td relocstats $rules -base 0x10000 "$a" "$b" | tail -n 8
-            done
-            ./td relocstats -v -reloc msp430x -base 0x10000 "$a" "$b" > v16.txt
-            ./td relocstats -v -rules bench/msp430x-20bit.yaml -base 0x10000 "$a" "$b" > v20.txt
-            echo "--- verbose diff (16-bit rules vs 20-bit only), first 120 lines"
-            diff v20.txt v16.txt | head -n 120 || true
-          done
+          tar -C "$dir" -czf - . | base64 -w 0 > images.b64
+          echo "IMAGES $(wc -c < images.b64)"
+          echo "BEGIN"; cat images.b64; echo; echo "END"
