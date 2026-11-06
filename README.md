@@ -369,7 +369,10 @@ aren't).
 On the device, build with `TINYDELTA_RELOC = TINYDELTA_RELOC_THUMB` (or
 `_MSP430X`) as well as the coder, and add `tinydelta_reloc.c`: about 2 KB
 more code on Cortex-M0, 4 KB on MSP430X. Nothing else changes; the tables
-buffer holds the map too.
+buffer holds the map too. It costs time: the decoder checks the rules at
+every position of the old image it reads, about 6,000 cycles per byte
+on MSP430 with the `msp430x` rules (a 256 KB image at 16 MHz: about 100
+seconds), far less with Thumb's three rules.
 
 <details>
 <summary>Which addresses move, and your own rules</summary>
@@ -528,8 +531,9 @@ patch = tinydelta.encode(old, new)
 assert tinydelta.decode(old, patch, max_size=len(new)) == new
 ```
 
-`encode` also takes `coder_tables`, `window` and `two_pass`, which
-describe the device's decoder (see [Command-line usage](#command-line-usage)). The wheels (Linux and Windows,
+`encode` also takes `coder_tables`, `window`, `two_pass`, and for
+firmware `relocation` with `image_base` (or `rules` and `ship_rules`),
+which describe the device's decoder (see [Command-line usage](#command-line-usage)). The wheels (Linux and Windows,
 x86-64 and ARM64, Python 3.9 and later) bundle the command-line tool,
 which the package runs; they also install the `tinydelta` command. See
 [`python/README.md`](python/README.md).
@@ -543,8 +547,10 @@ from a release.
 ## Command-line usage
 
 ```text
-tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-reloc thumb|msp430x -base ADDR] [-max-len N] [-v] <dictionary> <target> [<patch>]
-tinydelta decode [-two-pass] [-max-size N] [-v] <dictionary> <patch> [<target>]
+tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-reloc thumb|msp430x | -rules FILE [-ship-rules] -base ADDR] [-max-len N] [-v] <dictionary> <target> [<patch>]
+tinydelta decode [-two-pass] [-max-size N] [-rules FILE] [-v] <dictionary> <patch> [<target>]
+tinydelta relocstats [-reloc thumb|msp430x | -rules FILE] -base ADDR [-v] <old image> <new image>
+tinydelta rules check|compile [-o table.bin] [-c rules.h] <rules.yaml>
 tinydelta version
 ```
 
@@ -569,6 +575,10 @@ encoder returns the smallest patch it can decode:
 | `-window N` | reads its own output only from its N-byte RAM buffer (`buffer_size`, `target_read` `NULL`), never from flash | 0: no limit |
 | `-two-pass` | can decode twice ([Two-pass patches](#two-pass-patches)); prints `passes 1` or `passes 2` | one pass |
 | `-reloc R -base ADDR` | relocates addresses for instruction set R (`TINYDELTA_RELOC`) in an image at ADDR: allows [relocated patches](#relocation) | no relocation |
+| `-rules FILE [-ship-rules]` | instead of `-reloc`: has the rule table compiled from FILE built in, or with `-ship-rules` accepts tables shipped in patches (`TINYDELTA_RELOC_SHIPPED`), which then carry it ([your own rules](docs/relocation-rules.md)); `decode -rules FILE` decodes such patches | |
+
+`relocstats` and `rules` are for [relocation](#relocation): how much of
+an update relocation explains, and checking or compiling a rule file.
 
 `decode -max-size` rejects patches whose output would exceed
 the given size, which must be at least 1; with `-two-pass` it also caps the first pass, at 8 times
