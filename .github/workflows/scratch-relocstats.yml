@@ -33,6 +33,6 @@ jobs:
       - name: Images
         run: |
           dir="$RUNNER_TEMP/cache/builds/mbedtls_msp430/msp430x-large"
-          tar -C "$dir" -czf - . | base64 -w 0 > images.b64
+          tar -C "$dir" -czf - . | base64 -w 76 > images.b64
           echo "IMAGES $(wc -c < images.b64)"
           echo "BEGIN"; cat images.b64; echo; echo "END"
