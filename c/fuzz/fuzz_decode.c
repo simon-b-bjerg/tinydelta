@@ -398,10 +398,23 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     uint64_t ref_len       = 0;
     uint32_t mem_len       = 0;
     tinydelta_result_t ref = ref_decode(dict, dict_len, patch, patch_len, ref_out, out_cap, &ref_len);
+#if TINYDELTA_CODER
     static uint8_t tables[FUZZ_TABLES_SIZE];
     tinydelta_result_t mem = tinydelta_decode_coded(dict, dict_len, patch, patch_len, mem_out, out_cap, tables, sizeof tables, &mem_len);
     /* A relocated coded patch: features bits 2-3 (the reference knows none). */
     int relocated = patch_len >= 2 && (patch[0] == 0x81 || patch[0] == 0x82) && (patch[1] & 0x0C) != 0 && (patch[1] & 0xF0) == 0 && (patch[1] & 3) != 0;
+#else
+    /* Without the coder (the smallest build): coded patches are refused as
+     * an unknown version, plain ones decode as the reference does. */
+    tinydelta_result_t mem = tinydelta_decode(dict, dict_len, patch, patch_len, mem_out, out_cap, &mem_len);
+    int relocated          = 0;
+    if (patch_len >= 1 && (patch[0] == 0x81 || patch[0] == 0x82)) {
+        if (mem != TINYDELTA_ERR_VERSION) {
+            FAIL("decoder without the coder returned %d for a coded patch", mem);
+        }
+        ref = TINYDELTA_ERR_VERSION;
+    }
+#endif
     if (!relocated && mem != ref) {
         FAIL("memory decoder returned %d, reference %d", mem, ref);
     }

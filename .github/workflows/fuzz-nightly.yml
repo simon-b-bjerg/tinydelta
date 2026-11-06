@@ -51,18 +51,19 @@ jobs:
             fuzz-corpus
             fuzz-corpus-device
             fuzz-corpus-thumb
+            fuzz-corpus-plain
             fuzz-corpus-reloc
             fuzz-corpus-reloc-device
             fuzz-corpus-reloc-thumb
           key: c-fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: c-fuzz-corpus-
       - name: Corpus size before
-        run: echo "::notice title=C corpus before::$(find fuzz-corpus* -type f 2>/dev/null | wc -l) inputs in 6 corpora"
+        run: echo "::notice title=C corpus before::$(find fuzz-corpus* -type f 2>/dev/null | wc -l) inputs in 7 corpora"
       - name: Fuzz
         env:
           CLANG: clang-18
-        # Six builds (decoders, relocation engine; shipped tables, device,
-        # Thumb) share the time.
+        # Seven builds (decoders, relocation engine; shipped tables, device,
+        # Thumb; decoders without the coder) share the time.
         run: scripts/c-fuzz.sh "$(( MINUTES * 10 ))" fuzz-corpus
       - name: Save the corpus
         if: always()
@@ -72,6 +73,7 @@ jobs:
             fuzz-corpus
             fuzz-corpus-device
             fuzz-corpus-thumb
+            fuzz-corpus-plain
             fuzz-corpus-reloc
             fuzz-corpus-reloc-device
             fuzz-corpus-reloc-thumb

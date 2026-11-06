@@ -9,11 +9,11 @@ package cdiff
 const Available = false
 
 // Decode and DecodeIO are not available without cgo.
-func Decode(dict, patch []byte, capacity, tablesSize int) ([]byte, int) {
+func Decode(build Build, dict, patch []byte, capacity, tablesSize int) ([]byte, int) {
 	panic("cdiff: built without cgo")
 }
 
 // DecodeIO is not available without cgo.
-func DecodeIO(dict, patch []byte, capacity, tablesSize int, cfg IOConfig) ([]byte, int, string) {
+func DecodeIO(build Build, dict, patch []byte, capacity, tablesSize int, cfg IOConfig) ([]byte, int, string) {
 	panic("cdiff: built without cgo")
 }

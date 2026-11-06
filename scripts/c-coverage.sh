@@ -21,7 +21,7 @@ FILES=(c/tinydelta_decode.c c/tinydelta_io.c c/tinydelta_coder.c c/tinydelta_rel
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-builds=(fuzz_decode fuzz_decode_device fuzz_decode_thumb fuzz_reloc fuzz_reloc_device fuzz_reloc_thumb)
+builds=(fuzz_decode fuzz_decode_device fuzz_decode_thumb fuzz_decode_plain fuzz_reloc fuzz_reloc_device fuzz_reloc_thumb)
 for build in "${builds[@]}"; do
   scripts/c-fuzz-build.sh "$build" "$work/$build" -O0 -fprofile-instr-generate -fcoverage-mapping
 done
@@ -29,10 +29,10 @@ TINYDELTA_C_FUZZ_SEEDS="$work/seeds" TINYDELTA_C_FUZZ_RELOC_SEEDS="$work/reloc-s
   go test -count=1 -run '^TestWriteCFuzz' . >/dev/null
 
 # -runs=0: run every input once, no fuzzing. Each build replays the seeds
-# and every corpus kept for that harness (all three builds' corpora).
+# and every corpus kept for that harness (all its builds' corpora).
 decode_dirs=() reloc_dirs=()
 for dir in "$@"; do
-  for s in "" -device -thumb; do
+  for s in "" -device -thumb -plain; do
     [ -d "$dir$s" ] && decode_dirs+=("$dir$s")
     [ -d "$dir-reloc$s" ] && reloc_dirs+=("$dir-reloc$s")
   done

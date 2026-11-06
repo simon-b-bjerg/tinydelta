@@ -7,7 +7,8 @@
 # the decoders (c/fuzz/fuzz_decode.c) and the relocation engine on its own
 # (c/fuzz/fuzz_reloc.c), each in three builds (scripts/c-fuzz-build.sh):
 # shipped tables accepted, MSP430X built in only (a device's build), Thumb
-# built in only. Each of the six runs for the given time.
+# built in only; and the decoders without the coder. Each of the seven runs
+# for the given time.
 #
 # Usage: scripts/c-fuzz.sh [seconds [corpus dir]]   (default 60 s each)
 # Needs clang with libFuzzer (on Debian/Ubuntu: clang and libclang-rt-<N>-dev)
@@ -26,7 +27,7 @@ seconds="${1:-60}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 corpus="${2:-$work/corpus}"
-builds=(fuzz_decode fuzz_decode_device fuzz_decode_thumb fuzz_reloc fuzz_reloc_device fuzz_reloc_thumb)
+builds=(fuzz_decode fuzz_decode_device fuzz_decode_thumb fuzz_decode_plain fuzz_reloc fuzz_reloc_device fuzz_reloc_thumb)
 for build in "${builds[@]}"; do
   scripts/c-fuzz-build.sh "$build" "$work/$build" -O1 -fsanitize=address,undefined -fno-sanitize-recover=all
 done

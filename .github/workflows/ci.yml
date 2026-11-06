@@ -105,12 +105,13 @@ jobs:
             fuzz-corpus
             fuzz-corpus-device
             fuzz-corpus-thumb
+            fuzz-corpus-plain
             fuzz-corpus-reloc
             fuzz-corpus-reloc-device
             fuzz-corpus-reloc-thumb
           key: c-fuzz-corpus-none
           restore-keys: c-fuzz-corpus-
-      - name: Fuzz the decoders and the relocation engine, 3 builds each, 40 s each
+      - name: Fuzz the decoders (4 builds) and the relocation engine (3 builds), 40 s each
         env:
           CLANG: clang-18
         run: scripts/c-fuzz.sh 40 fuzz-corpus

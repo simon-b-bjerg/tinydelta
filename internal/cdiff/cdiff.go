@@ -12,6 +12,14 @@ package cdiff
 #include "tinydelta.h"
 #include "tinydelta_io.h"
 
+// The second build, Thumb built in (thumb.h).
+tinydelta_result_t thumb_tinydelta_decode_coded(const uint8_t *, uint32_t, const uint8_t *, uint32_t, uint8_t *, uint32_t, uint8_t *, uint32_t, uint32_t *);
+tinydelta_result_t thumb_tinydelta_decode_io(const tinydelta_io_t *, uint32_t *);
+
+static tinydelta_result_t cdiff_decode(int thumb, const uint8_t *d, uint32_t dn, const uint8_t *p, uint32_t pn, uint8_t *o, uint32_t cap, uint8_t *t, uint32_t tn, uint32_t *on) {
+	return thumb ? thumb_tinydelta_decode_coded(d, dn, p, pn, o, cap, t, tn, on) : tinydelta_decode_coded(d, dn, p, pn, o, cap, t, tn, on);
+}
+
 // The callback decoder's side: the patch and dictionary in memory, the
 // target as flash written in whole pages, in order. A broken promise of
 // the decoder's (a read out of range, a write out of order) is recorded
@@ -63,7 +71,7 @@ static int cdiff_target_write(void *c, uint32_t off, const uint8_t *b, uint32_t 
 	return 0;
 }
 
-static int cdiff_decode_io(cdiff_io *s, uint8_t *buffer, uint32_t buffer_size, uint8_t *tables, uint32_t tables_size, uint32_t *out_len) {
+static int cdiff_decode_io(int thumb, cdiff_io *s, uint8_t *buffer, uint32_t buffer_size, uint8_t *tables, uint32_t tables_size, uint32_t *out_len) {
 	tinydelta_io_t io;
 	memset(&io, 0, sizeof io);
 	io.patch_read = cdiff_patch_read; io.p_patch_ctx = s; io.patch_len = s->patch_len;
@@ -72,7 +80,7 @@ static int cdiff_decode_io(cdiff_io *s, uint8_t *buffer, uint32_t buffer_size, u
 	io.target_cap = s->cap;
 	io.p_buffer = buffer; io.buffer_size = buffer_size; io.page_size = s->page;
 	io.p_tables = tables; io.tables_size = tables_size;
-	return (int)tinydelta_decode_io(&io, out_len);
+	return (int)(thumb ? thumb_tinydelta_decode_io(&io, out_len) : tinydelta_decode_io(&io, out_len));
 }
 */
 import "C"
@@ -89,9 +97,10 @@ func cbytes(b []byte, size int) *C.uint8_t {
 	return p
 }
 
-// Decode runs tinydelta_decode_coded: the target (capacity bytes at most)
-// and the result code, OK on success. The tables buffer is tablesSize bytes.
-func Decode(dict, patch []byte, capacity, tablesSize int) ([]byte, int) {
+// Decode runs build's tinydelta_decode_coded: the target (capacity bytes
+// at most) and the result code, OK on success. The tables buffer is
+// tablesSize bytes.
+func Decode(build Build, dict, patch []byte, capacity, tablesSize int) ([]byte, int) {
 	d, p := cbytes(dict, len(dict)), cbytes(patch, len(patch))
 	out, tables := cbytes(nil, capacity), cbytes(nil, tablesSize)
 	defer C.free(unsafe.Pointer(d))
@@ -99,17 +108,17 @@ func Decode(dict, patch []byte, capacity, tablesSize int) ([]byte, int) {
 	defer C.free(unsafe.Pointer(out))
 	defer C.free(unsafe.Pointer(tables))
 	var n C.uint32_t
-	rc := int(C.tinydelta_decode_coded(d, C.uint32_t(len(dict)), p, C.uint32_t(len(patch)), out, C.uint32_t(capacity), tables, C.uint32_t(tablesSize), &n))
+	rc := int(C.cdiff_decode(C.int(build), d, C.uint32_t(len(dict)), p, C.uint32_t(len(patch)), out, C.uint32_t(capacity), tables, C.uint32_t(tablesSize), &n))
 	if rc != OK {
 		return nil, rc
 	}
 	return C.GoBytes(unsafe.Pointer(out), C.int(n)), rc
 }
 
-// DecodeIO runs tinydelta_decode_io with cfg: the target, the result code,
-// and the first broken promise of the decoder's towards its callbacks
-// ("" if none).
-func DecodeIO(dict, patch []byte, capacity, tablesSize int, cfg IOConfig) ([]byte, int, string) {
+// DecodeIO runs build's tinydelta_decode_io with cfg: the target, the
+// result code, and the first broken promise of the decoder's towards its
+// callbacks ("" if none).
+func DecodeIO(build Build, dict, patch []byte, capacity, tablesSize int, cfg IOConfig) ([]byte, int, string) {
 	s := (*C.cdiff_io)(C.calloc(1, C.size_t(unsafe.Sizeof(C.cdiff_io{}))))
 	defer C.free(unsafe.Pointer(s))
 	s.dict, s.patch = cbytes(dict, len(dict)), cbytes(patch, len(patch))
@@ -122,7 +131,7 @@ func DecodeIO(dict, patch []byte, capacity, tablesSize int, cfg IOConfig) ([]byt
 	defer C.free(unsafe.Pointer(buffer))
 	defer C.free(unsafe.Pointer(tables))
 	var n C.uint32_t
-	rc := int(C.cdiff_decode_io(s, buffer, C.uint32_t(cfg.BufferSize), tables, C.uint32_t(tablesSize), &n))
+	rc := int(C.cdiff_decode_io(C.int(build), s, buffer, C.uint32_t(cfg.BufferSize), tables, C.uint32_t(tablesSize), &n))
 	violation := ""
 	if s.violation != nil {
 		violation = C.GoString(s.violation)
