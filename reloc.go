@@ -535,12 +535,20 @@ func (m *relocMap) withDataRuns(dict, target []byte) *relocMap {
 // ranges of neighbouring addresses with the same shift, each reaching to
 // the next range. Returns m itself if none moved.
 func (m *relocMap) withOutside(dict, target []byte) *relocMap {
+	return m.withOutsideSmoothed(dict, target, 0)
+}
+
+// withOutsideSmoothed is withOutside where a level of shifts with at most
+// smooth votes between two of the same shift joins them: one range instead
+// of three, for a few fields left wrong (often numbers that look like RAM
+// addresses). Either may give the smaller patch.
+func (m *relocMap) withOutsideSmoothed(dict, target []byte, smooth int) *relocMap {
 	// Votes come from instructions in covers; code dense with RAM addresses
 	// only lines up once those addresses are relocated, so vote again with
 	// the ranges found, until they settle.
 	cur := m
 	for round := 0; round < outsideRounds; round++ {
-		next := m.outsideFrom(dict, target, cur)
+		next := m.outsideFrom(dict, target, cur, smooth)
 		if slices.Equal(next.outside, cur.outside) {
 			break
 		}
@@ -552,9 +560,13 @@ func (m *relocMap) withOutside(dict, target []byte) *relocMap {
 // outsideRounds bounds withOutside's votes; ranges settle in two or three.
 const outsideRounds = 4
 
+// outsideSmooth is the smoothing the encoder tries besides none
+// (withOutsideSmoothed).
+const outsideSmooth = 2
+
 // outsideFrom is m with RAM ranges from the votes of the instructions in
-// the covers of seen's relocation of dict.
-func (m *relocMap) outsideFrom(dict, target []byte, seen *relocMap) *relocMap {
+// the covers of seen's relocation of dict, smoothed (withOutsideSmoothed).
+func (m *relocMap) outsideFrom(dict, target []byte, seen *relocMap, smooth int) *relocMap {
 	if len(dict) == 0 {
 		return m
 	}
@@ -598,6 +610,7 @@ func (m *relocMap) outsideFrom(dict, target []byte, seen *relocMap) *relocMap {
 	type level struct {
 		start uint32
 		shift int32
+		votes int // for its shift, over its addresses
 	}
 	var levels []level // where the shift changes
 	for _, a := range addrs {
@@ -609,7 +622,18 @@ func (m *relocMap) outsideFrom(dict, target []byte, seen *relocMap) *relocMap {
 			}
 		}
 		if len(levels) == 0 || levels[len(levels)-1].shift != shift {
-			levels = append(levels, level{a, shift})
+			levels = append(levels, level{a, shift, 0})
+		}
+		levels[len(levels)-1].votes += best
+	}
+	for merged := smooth > 0; merged; {
+		merged = false
+		for i := 1; i+1 < len(levels); i++ {
+			if levels[i-1].shift == levels[i+1].shift && levels[i].votes <= smooth {
+				levels[i-1].votes += levels[i].votes + levels[i+1].votes
+				levels = append(levels[:i], levels[i+2:]...)
+				merged = true
+			}
 		}
 	}
 	var out []relocEntry

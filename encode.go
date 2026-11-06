@@ -6,6 +6,7 @@ package tinydelta
 import (
 	"compress/flate"
 	"fmt"
+	"slices"
 )
 
 // Encode produces the smallest patch it can find that reconstructs target
@@ -165,9 +166,23 @@ func EncodeWith(dict, target []byte, opts EncodeOptions) (Patch, error) {
 		if gaps := covered.withGaps(dict, target); gaps != covered {
 			fulls = append(fulls, gaps)
 		}
+		type variant struct {
+			full    *relocMap
+			outside *relocMap
+			smooth  int
+		}
+		var variants []variant
 		for _, full := range fulls {
 			full.ship = opts.ShipRules
-			withOutside := full.withOutside(dict, target)
+			plainOutside := full.withOutside(dict, target)
+			variants = append(variants, variant{full, plainOutside, 0})
+			// Smoothed RAM ranges (fewer, a few fields wrong), if different.
+			if smoothed := full.withOutsideSmoothed(dict, target, outsideSmooth); !slices.Equal(smoothed.outside, plainOutside.outside) {
+				variants = append(variants, variant{full, smoothed, outsideSmooth})
+			}
+		}
+		for _, v := range variants {
+			full, withOutside := v.full, v.outside
 			for _, layout := range layouts {
 				// The map gets the tables buffer after the coder's tables (and a
 				// shipped rule table).
@@ -187,7 +202,7 @@ func EncodeWith(dict, target []byte, opts EncodeOptions) (Patch, error) {
 				maps := []*relocMap{m}
 				// Data runs are picked with the RAM ranges in place; the ranges are
 				// then voted again, as data rules vote too.
-				if md := m.withDataRuns(dict, target).withOutside(dict, target).limitTo(ram); md != nil && len(md.data) > 0 {
+				if md := m.withDataRuns(dict, target).withOutsideSmoothed(dict, target, v.smooth).limitTo(ram); md != nil && len(md.data) > 0 {
 					maps = append(maps, md)
 				}
 				for _, m := range maps {
