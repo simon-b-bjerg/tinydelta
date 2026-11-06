@@ -724,16 +724,18 @@ static bool starts(const tinydelta_reloc_t *p_reloc, sync_t *p_sync, uint32_t p)
 }
 
 /* The rule that applies at p before unless (NULL if none, or an
- * exclusion), its list and index. */
+ * exclusion), its list and index. With sync, a code position that doesn't
+ * start an instruction is ruled out first: the check is cheap (*p_sync),
+ * the code rules aren't. */
 static const uint8_t *applies(const tinydelta_reloc_t *p_reloc, sync_t *p_sync, uint32_t p, small_t *p_list, small_t *p_index) {
     const uint8_t *p_rule = NULL;
 
     *p_list = in_data(p_reloc, p) ? LIST_DATA : LIST_CODE;
-    if ((p < p_reloc->dict_len) && (((p_reloc->base + p) & (unit_of(p_reloc) - 1u)) == 0u)) {
+    if ((p < p_reloc->dict_len) && (((p_reloc->base + p) & (unit_of(p_reloc) - 1u)) == 0u) &&
+        ((*p_list == LIST_DATA) || (sync_of(p_reloc) == 0u) || starts(p_reloc, p_sync, p))) {
         p_rule = first_rule(p_reloc, *p_list, p, p_index);
     }
-    if ((p_rule != NULL) && (((RULE_FLAGS(p_rule) & 3u) == 0u) || !inside(p_reloc, p, RULE_N(p_rule)) ||
-                             ((*p_list == LIST_CODE) && (sync_of(p_reloc) > 0u) && !starts(p_reloc, p_sync, p)))) {
+    if ((p_rule != NULL) && (((RULE_FLAGS(p_rule) & 3u) == 0u) || !inside(p_reloc, p, RULE_N(p_rule)))) {
         p_rule = NULL;
     }
     return p_rule;

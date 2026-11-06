@@ -314,8 +314,13 @@ earlier one always hides, a field bit used twice, slices that cover a
 condition's bits.
 
 Within these limits the work per position is bounded: at most 64
-condition checks per list, `sync` length decodes, and two `unless`
-evaluations of one rule each.
+condition checks per list, two `unless` evaluations of one rule each,
+and one instruction length decode, as the C engine keeps the last `sync`
+lengths while it scans a span, and checks the code rules only where an
+instruction starts. On MSP430, relocating costs about 6,000 cycles per
+byte of the old image with the `msp430x` rules (measured with clang
+`-Os` on a test image), most of it checking the 34 code rules and 18
+length rules; Thumb's three rules cost far less.
 
 ## Tools
 
@@ -324,8 +329,8 @@ tinydelta rules check  rules/msp430x.yaml
 tinydelta rules compile rules/msp430x.yaml -o msp430x.bin        # the binary table
 tinydelta rules compile rules/msp430x.yaml -c msp430x_rules.h    # a const C array and its CRC, for the decoder build
 
-tinydelta encode   -rules rules/msp430x.yaml -base 0xDF80 [-ship-rules] old.bin new.bin update.td
-tinydelta relocstats -rules rules/msp430x.yaml -base 0xDF80 old.bin new.bin
+tinydelta encode   -rules rules/msp430x.yaml -base 0x10000 [-ship-rules] old.bin new.bin update.td
+tinydelta relocstats -rules rules/msp430x.yaml -base 0x10000 old.bin new.bin
 ```
 
 `-reloc thumb` and `-reloc msp430x` stay as shorthands for the two files,

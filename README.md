@@ -348,9 +348,9 @@ Google's Courgette, without a disassembler.
 
 | firmware, consecutive builds | coded | coded and relocated |
 |---|---:|---:|
-| MicroPython, NUCLEO_F091RC (Thumb), 24 updates | 98,726 B | **7,452 B (−92%)** |
-| MicroPython, SAMD21 (Thumb), 24 updates | 89,338 B | **15,320 B (−83%)** |
-| Mbed TLS 2.28, MSP430X `-mlarge`, 16 updates | 26,839 B | **5,175 B (−81%)** |
+| MicroPython, NUCLEO_F091RC (Thumb), 24 updates | 98,726 B | **6,701 B (−93%)** |
+| MicroPython, SAMD21 (Thumb), 24 updates | 89,338 B | **15,198 B (−83%)** |
+| Mbed TLS 2.28, MSP430X `-mlarge`, 16 updates | 26,839 B | **5,294 B (−80%)** |
 
 From the [benchmark](#benchmark), map included; every patch is decoded
 again and compared.
@@ -1243,7 +1243,13 @@ What is tested, and how:
 | `TestCHeadersFromCPlusPlus` | C++ code can include the headers and link against the decoders |
 | `TestTwoPass`, `TestCTwoPass` | [two-pass patches](#two-pass-patches) end to end: the outer patch decoded, then the inner one, with the Go decoder and both C decoders |
 | `TestVectors`, `TestCVectors` | the Go decoder, the C memory decoder and the C callback decoder (several buffer and page sizes) against every [conformance vector](#conformance-vectors) |
-| C fuzzing ([`c/fuzz/fuzz_decode.c`](c/fuzz/fuzz_decode.c)) | libFuzzer with AddressSanitizer and UndefinedBehaviorSanitizer: every input through an independent reference decoder and all C decoder configurations, which must agree exactly; any memory error, undefined behaviour or breach of the callback contract fails; injected callback failures must give `TINYDELTA_ERR_IO` |
+| C fuzzing ([`c/fuzz/fuzz_decode.c`](c/fuzz/fuzz_decode.c)) | libFuzzer with AddressSanitizer and UndefinedBehaviorSanitizer: every input through an independent reference decoder and the memory and callback decoders, which must agree exactly, in four builds (MSP430X built in with shipped tables accepted, MSP430X only, Thumb only, no coder); any memory error, undefined behaviour or breach of the callback contract fails; injected callback failures must give `TINYDELTA_ERR_IO` |
+| `TestCRelocation`, `TestCRelocationRules` | [relocated patches](#relocation) end to end with the C decoders (Thumb and MSP430X built in, shipped tables, a table of one's own), memory and callback decoder at several buffer and page sizes, and corrupted or cut patches accepted or rejected exactly as Go does; on 32-bit ARM and MSP430 too |
+| `TestMSP430X16BitAddresses` | hand-assembled MSP430 instructions with 16-bit addresses: those that point into a moved RAM range move with it; stack offsets, PC-relative operands and the constant generator stay |
+| `FuzzRelocRoundTrip` (Go fuzzing) | firmware-like images with code inserted so that code moves, Thumb or MSP430X, built-in or shipped table, with data runs and moved RAM: the patch the encoder picks, and a relocated one it might not, decode back to the target |
+| `FuzzRelocGoVsC` (Go fuzzing, cgo) | the same patches, intact, damaged or with one byte too little room, through the Go decoder and the C memory and callback decoders linked in (Thumb built in, or MSP430X built in with shipped tables accepted): the same result and bytes |
+| `FuzzRulesTable`, `FuzzParseRules` (Go fuzzing) | any bytes as a binary rule table and any text as a YAML rule file: no panic; what is accepted round-trips exactly and relocates without a panic |
+| C fuzzing ([`c/fuzz/fuzz_reloc.c`](c/fuzz/fuzz_reloc.c)) | the relocation engine on its own, with any table, image and map: the table checker never reads past the table, and relocating the image in one go or in chunks of 1–16 bytes in any order gives the same bytes; in three builds (shipped tables, MSP430X only, Thumb only) |
 | `scripts/c-check.sh` | the C library builds with strict warnings as errors |
 | `scripts/c-format.sh` | the C sources match [`c/.clang-format`](c/.clang-format) |
 | `scripts/c-analyze.sh` | static analysis of the C library with GCC's analyzer, the Clang Static Analyzer, clang-tidy (bug-finding checks, see [`c/.clang-tidy`](c/.clang-tidy)) and cppcheck's MISRA C:2012 addon (see [C coding rules](#c-coding-rules)); any finding fails |
@@ -1262,7 +1268,8 @@ or a copy that ends exactly at the end of the dictionary, that
 hand-written tests tend to miss. Both fuzzers check properties that
 must hold for every input, rather than comparing with expected output.
 
-There are two, one for each side of the format:
+The main two, one for each side of the format (relocation has its own,
+in the table above):
 
 - **`FuzzEncodeRoundTrip` tests the encoders** with Go's built-in
   fuzzing. Each input is a dictionary, an edit script and an
@@ -1292,8 +1299,8 @@ There are two, one for each side of the format:
 
 | job | runs |
 |---|---|
-| Go tests (Go 1.21 and current) | `gofmt`, `go vet`, `go test ./...` (including the C decoder tests, built with gcc on x86-64); on current Go also 60 s of `FuzzEncodeRoundTrip` and 30 s of `FuzzDecode`, starting from the nightly corpus |
-| C decoders fuzzed | `scripts/c-fuzz.sh 60`, starting from the nightly corpus; crashing inputs are hex dumped in the log and uploaded as a build artifact. Then `scripts/c-coverage.sh` reports how much of the C library the corpus reaches, with the lines it never reaches, in the job summary |
+| Go tests (Go 1.21 and current) | `gofmt`, `go vet`, `go test ./...` (including the C decoder tests, built with gcc on x86-64); on current Go also 60 s of `FuzzEncodeRoundTrip`, 30 s each of `FuzzDecode`, `FuzzRelocRoundTrip` and `FuzzRelocGoVsC`, and 15 s each of `FuzzRulesTable` and `FuzzParseRules`, starting from the nightly corpus |
+| C decoders fuzzed | `scripts/c-fuzz.sh 40`: 40 s for each of the seven builds of the two C fuzzers, starting from the nightly corpus; crashing inputs are hex dumped in the log and uploaded as a build artifact. Then `scripts/c-coverage.sh` reports how much of the C library the corpus reaches, with the lines it never reaches, in the job summary |
 | Go coverage | `go test -cover` over the library and the CLI, per function in the job summary |
 | Update coverage badges | on pushes to `main` only: writes the Go and C coverage figures and the number of conformance vectors for the badges above to the `badges` branch |
 | Go tests on Windows | `go test ./...` for the library and the CLI |
@@ -1303,7 +1310,7 @@ There are two, one for each side of the format:
 | C decoders model-checked | `scripts/c-cbmc.sh` (CBMC from Ubuntu's packages), a few minutes |
 | License headers (REUSE) | `reuse lint`: every file carries an SPDX license header, or is covered by [`REUSE.toml`](REUSE.toml) |
 | CodeQL (separate workflow, also weekly) | CodeQL over the Go code and the C library |
-| Nightly fuzzing (separate workflow) | every night on `main`, an hour each of the C fuzzer and `FuzzEncodeRoundTrip`, and a quarter of that of `FuzzDecode`, continuing from the previous night's corpus, kept in the Actions cache; crashing inputs are uploaded as artifacts |
+| Nightly fuzzing (separate workflow) | every night on `main`, 10 minutes for each of the seven C fuzzer builds, an hour of `FuzzEncodeRoundTrip`, a quarter of that each of `FuzzDecode`, `FuzzRelocRoundTrip` and `FuzzRelocGoVsC`, and an eighth each of `FuzzRulesTable` and `FuzzParseRules`, continuing from the previous night's corpus, kept in the Actions cache; crashing inputs are uploaded as artifacts |
 | C library on 32-bit ARM | `scripts/c-check.sh` for x86-64 and ARM, the C decoder tests on 32-bit ARM under QEMU, and the Cortex-M code size and stack report (informational) |
 | C library on MSP430 | `scripts/c-check.sh` for 16-bit MSP430 and MSP430X (small and large memory models), the C decoder tests on MSP430X under GNU's MSP430 instruction simulator, and the MSP430 code size and stack report (informational). The toolchain is built from GNU sources by [`scripts/msp430-toolchain.sh`](scripts/msp430-toolchain.sh) and cached |
 

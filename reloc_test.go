@@ -190,7 +190,7 @@ func TestRelocationMapHeader(t *testing.T) {
 		}
 	}
 	// MSP430X: data runs and addresses outside the image too.
-	mx := &relocMap{rules: builtinMSP430X, base: 0xDF80, entries: []relocEntry{{16, 100, 8}}, data: []relocRun{{3, 2}}, outside: []relocEntry{{0x1C00, 0x40, 6}, {0x1C80, 0x10, -4}}}
+	mx := &relocMap{rules: builtinMSP430X, base: 0x8000, entries: []relocEntry{{16, 100, 8}}, data: []relocRun{{3, 2}}, outside: []relocEntry{{0x1C00, 0x40, 6}, {0x1C80, 0x10, -4}}}
 	bx := mx.appendHeader(nil)
 	if got, n, err := parseRelocMap(featuresBuiltinRules, bx, nil); err != nil || n != len(bx) || fmt.Sprint(got) != fmt.Sprint(mx) {
 		t.Fatalf("parse MSP430X: %+v %d %v", got, n, err)
@@ -200,7 +200,7 @@ func TestRelocationMapHeader(t *testing.T) {
 			t.Errorf("truncated MSP430X map (%d of %d bytes) accepted", cut, len(bx))
 		}
 	}
-	if mx.addressShift(0x1C3E, 1000) != 6 || mx.addressShift(0x1C84, 1000) != -4 || mx.addressShift(0x1C40, 1000) != 0 || mx.addressShift(0xDF80+20, 1000) != 8 {
+	if mx.addressShift(0x1C3E, 1000) != 6 || mx.addressShift(0x1C84, 1000) != -4 || mx.addressShift(0x1C40, 1000) != 0 || mx.addressShift(0x8000+20, 1000) != 8 {
 		t.Error("addressShift outside the image")
 	}
 	// An entry past 32 bits.
