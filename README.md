@@ -367,13 +367,16 @@ address it left wrong, as numbers only, shareable where the images
 aren't).
 
 On the device, build with `TINYDELTA_RELOC = TINYDELTA_RELOC_THUMB` (or
-`_MSP430X`) as well as the coder, and add `tinydelta_reloc.c`: about 2 KB
-more code on Cortex-M0, 4 KB on MSP430X. Nothing else changes; the tables
+`_MSP430X`) as well as the coder, and add `tinydelta_reloc.c`: about
+2.3 KB more code on Cortex-M0 with the `thumb` rules, 6 KB on MSP430X
+(`-mlarge`) with the `msp430x` rules. Nothing else changes; the tables
 buffer holds the map too. It costs time: the decoder checks the rules at
-every position of the old image it reads, about 6,000 cycles per byte
+every position of the old image it reads, about 1,700 cycles per byte
 on MSP430 with the `msp430x` rules for the memory decoder, a third more
 for the callback decoder in small chunks (a 256 KB image at 16 MHz:
-about 100 to 130 seconds), far less with Thumb's three rules.
+about 30 to 40 seconds); on Cortex-M0 with the `thumb` rules, about 210
+instructions per byte, 300 for the callback decoder.
+[`scripts/c-time.py`](scripts/c-time.py) measures both.
 
 <details>
 <summary>Which addresses move, and your own rules</summary>
@@ -680,11 +683,11 @@ every 32-bit operation takes several 16-bit instructions.
 | part | MSP430 | MSP430X | MSP430X, `-mlarge` | stack (`-mlarge`) |
 |---|---:|---:|---:|---:|
 | memory decoder | 1,104 B | 1,080 B | 1,202 B | ~145 B |
-| callback decoder | 2,350 B | 2,298 B | 2,458 B | ~230 B\* |
-| memory decoder + coder | 2,608 B | 2,544 B | 2,808 B | ~290 B |
-| callback decoder + coder | 3,362 B | 3,268 B | 3,562 B | ~335 B\* |
-| memory decoder + coder + MSP430X relocation | 6,842 B | 6,522 B | 6,918 B | – |
-| callback decoder + coder + MSP430X relocation | 7,756 B | 7,400 B | 7,858 B | – |
+| callback decoder | 2,350 B | 2,298 B | 2,458 B | ~220 B\* |
+| memory decoder + coder | 2,608 B | 2,544 B | 2,810 B | ~290 B |
+| callback decoder + coder | 3,362 B | 3,268 B | 3,564 B | ~320 B\* |
+| memory decoder + coder + MSP430X relocation | 8,608 B | 8,320 B | 8,812 B | ~505 B |
+| callback decoder + coder + MSP430X relocation | 9,644 B | 9,306 B | 9,870 B | ~605 B\* |
 
 ### Results
 
