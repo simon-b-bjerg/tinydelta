@@ -161,14 +161,22 @@ func TestWriteCFuzzRelocSeeds(t *testing.T) {
 		seed := []byte{byte(len(table)), byte(len(table) >> 8), byte(len(image))}
 		seed = le32(seed, base)
 		seed = append(seed, byte(entries|runs<<3|ranges<<5), byte(r.Intn(256)))
+		// The records as the header gives them: gaps from the previous
+		// record's end, zigzag shifts.
+		end := uint32(0)
 		for _, e := range m.entries[:entries] {
-			seed = le32(le32(le32(seed, e.start), e.length), uint32(e.shift))
+			seed = le32(le32(le32(seed, e.start-end), e.length), uint32(zigzagEncode(int64(e.shift))))
+			end = e.start + e.length
 		}
+		end = 0
 		for _, d := range m.data[:runs] {
-			seed = le32(le32(seed, d.start), d.length)
+			seed = le32(le32(seed, d.start-end), d.length)
+			end = d.start + d.length
 		}
+		end = 0
 		for _, e := range m.outside[:ranges] {
-			seed = le32(le32(le32(seed, e.start), e.length), uint32(e.shift))
+			seed = le32(le32(le32(seed, e.start-end), e.length), uint32(zigzagEncode(int64(e.shift))))
+			end = e.start + e.length
 		}
 		seed = append(append(seed, table...), image...)
 		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("seed%03d", i)), seed, 0o644); err != nil {

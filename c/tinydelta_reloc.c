@@ -58,6 +58,7 @@
 #define SPACE_CODE        1u
 #define SPACE_DATA        2u
 #define DATA_BLOCK_LOG    8u /* data runs are in blocks of 256 bytes */
+#define RUN_SIZE          8u /* a data run as stored: start and length, 4 bytes each */
 
 /* Table fields, bit counts and bit positions (below 256): 16 bits on MSP430,
  * a register on 32-bit cores, so they never take 32-bit arithmetic. */
@@ -74,8 +75,9 @@ typedef struct {
     uint8_t *p_out;
 } span_t;
 
-/* Instruction lengths for starts(), kept while a span is scanned forwards so
- * each position's length is decoded once, not sync times. */
+/* What a span's scan keeps, as positions come in order: instruction lengths
+ * for starts(), so each position's length is decoded once, not sync times;
+ * and the data run or gap the last position was in. */
 #if TINYDELTA_RELOC_SHIPPED
 #define SYNC_SLOTS MAX_SYNC
 #elif TINYDELTA_RELOC_RULES_SYNC > 0u
@@ -84,7 +86,10 @@ typedef struct {
 #define SYNC_SLOTS 1u
 #endif
 typedef struct {
-    uint32_t next;             /* the position just past the newest length */
+    uint32_t next;      /* the position just past the newest length */
+    uint32_t data_low;  /* [data_low, data_high): the data run, or the gap between runs, b_data says which, */
+    uint32_t data_high; /* last looked up: positions come in order, so the next is usually inside it */
+    bool b_data;
     uint8_t units[SYNC_SLOTS]; /* units[i]: the length, in units, at next - (i + 1) units; 0 before position 0 */
 } sync_t;
 
@@ -100,15 +105,15 @@ typedef struct {
 #endif
 
 /* The image's bytes at a position, as far as a rule reaches (fewer near the
- * image's end): read once, then checked against every rule of a list. */
-#if TINYDELTA_RELOC_SHIPPED
-#define WINDOW MAX_SIZE
-#else
-#define WINDOW (TINYDELTA_RELOC_RULES_REACH + 1u)
+ * image's end): read once, then checked against every rule of a list. For
+ * an instruction length, a prefix's skip further, so the prefix and the
+ * length rules share one. */
+#if (MAX_SIZE + MAX_SKIP) > TINYDELTA_RELOC_RAW_MAX
+#error "a window is more than the raw callback gives at once"
 #endif
 typedef struct {
+    const uint8_t *p_bytes; /* the image's own, in memory or in the callbacks' cache */
     small_t count;
-    uint8_t bytes[WINDOW];
 } window_t;
 
 /* ---- the map -------------------------------------------------------------- */
@@ -156,6 +161,13 @@ read_list(tinydelta_varint_fn_t varint, void *p_varint_ctx, uint8_t **pp_storage
         record[0] += end;
         record[2] = zigzag_decode(record[2]);
         end       = record[0] + record[1];
+        if (fields == 2u) {
+            /* A data run: kept in bytes, not 256-byte blocks, so in_data needs no
+             * shift (a 32-bit one is a loop on 16-bit cores); past 2^32 bytes it
+             * runs to the end, where no image offset reaches. */
+            record[0] = (record[0] > (0xFFFFFFFFu >> DATA_BLOCK_LOG)) ? 0xFFFFFFFFu : (record[0] << DATA_BLOCK_LOG);
+            record[1] = ((end > (0xFFFFFFFFu >> DATA_BLOCK_LOG)) ? 0xFFFFFFFFu : (end << DATA_BLOCK_LOG)) - record[0];
+        }
         for (small_t field = 0u; field < fields; field++) {
             store_le32(*pp_storage, record[field]);
             *pp_storage += 4u;
@@ -219,7 +231,7 @@ tinydelta_result_t tinydelta_reloc_read_header(tinydelta_reloc_t *p_reloc,
     if (result == TINYDELTA_OK) {
         result = read_list(varint, p_ctx, &p_storage, &storage_size, 3u, &p_reloc->count);
     }
-    p_reloc->p_runs = p_storage; /* data runs, in 256-byte blocks */
+    p_reloc->p_runs = p_storage; /* data runs, in 256-byte blocks in the patch, in bytes here */
     if (result == TINYDELTA_OK) {
         result = read_list(varint, p_ctx, &p_storage, &storage_size, 2u, &p_reloc->run_count);
     }
@@ -230,20 +242,40 @@ tinydelta_result_t tinydelta_reloc_read_header(tinydelta_reloc_t *p_reloc,
     return result;
 }
 
+/* How many of count records of record_size bytes, in order and not
+ * overlapping (as the header guarantees), start at or before key. Binary
+ * search: maps can be long. */
+static uint32_t records_before(const uint8_t *p_first, uint32_t count, small_t record_size, uint32_t key) {
+    uint32_t low  = 0u;
+    uint32_t high = count;
+
+    while (low < high) {
+        uint32_t middle = low + ((high - low) >> 1);
+        uint32_t at     = middle * record_size;
+
+        if (load_le32(p_first + at) <= key) {
+            low = middle + 1u;
+        } else {
+            high = middle;
+        }
+    }
+    return low;
+}
+
 /* The shift of the entry holding key among count entries; 0 if none. */
 static uint32_t entry_shift(const uint8_t *p_entry, uint32_t count, uint32_t key) {
-    for (uint32_t index = 0u; index < count; index++) {
-        uint32_t start = load_le32(p_entry);
+    uint32_t before = records_before(p_entry, count, TINYDELTA_RELOC_ENTRY_SIZE, key);
+    uint32_t shift  = 0u;
 
-        if (start > key) {
-            break; /* entries are in order */
+    if (before > 0u) {
+        uint32_t at             = (before - 1u) * TINYDELTA_RELOC_ENTRY_SIZE;
+        const uint8_t *p_record = p_entry + at; /* the last starting at or before key */
+
+        if ((key - load_le32(p_record)) < load_le32(p_record + 4u)) {
+            shift = load_le32(p_record + 8u);
         }
-        if ((key - start) < load_le32(p_entry + 4u)) {
-            return load_le32(p_entry + 8u);
-        }
-        p_entry += TINYDELTA_RELOC_ENTRY_SIZE;
     }
-    return 0u;
+    return shift;
 }
 
 static bool in_image(const tinydelta_reloc_t *p_reloc, uint32_t address) {
@@ -265,25 +297,6 @@ static uint32_t address_shift(const tinydelta_reloc_t *p_reloc, uint32_t address
         /* an address outside the image, in the code space only: stays */
     }
     return shift;
-}
-
-/* Whether old-image offset h is in a data run. */
-static bool in_data(const tinydelta_reloc_t *p_reloc, uint32_t h) {
-    const uint8_t *p_run = p_reloc->p_runs;
-    uint32_t block       = h >> DATA_BLOCK_LOG;
-
-    for (uint32_t index = 0u; index < p_reloc->run_count; index++) {
-        uint32_t start = load_le32(p_run);
-
-        if (start > block) {
-            break; /* runs are in order */
-        }
-        if ((block - start) < load_le32(p_run + 4u)) {
-            return true;
-        }
-        p_run += 8u;
-    }
-    return false;
 }
 
 /* ---- the table ------------------------------------------------------------
@@ -549,7 +562,7 @@ static small_t cond_bytes(const tinydelta_reloc_t *p_reloc) {
 #define RULE_N(p_rule)     ((small_t)(p_rule)[3])
 
 static uint8_t raw_byte(const tinydelta_reloc_t *p_reloc, uint32_t index) {
-    return (p_reloc->p_dict != NULL) ? p_reloc->p_dict[index] : p_reloc->raw(p_reloc->p_raw_ctx, index);
+    return (p_reloc->p_dict != NULL) ? p_reloc->p_dict[index] : *p_reloc->raw(p_reloc->p_raw_ctx, index, 1u);
 }
 
 /* Address k of a rule (k = its address count: just past its addresses). */
@@ -575,7 +588,7 @@ static bool inside(const tinydelta_reloc_t *p_reloc, uint32_t p, small_t n) {
  * they read inside the image (p_window: the bytes at p). A condition
  * compares byte by byte, from the word's least significant (the table's
  * value, then mask, little-endian), and stops at the first that differs. */
-static bool matches(const tinydelta_reloc_t *p_reloc, const uint8_t *p_rule, uint32_t p, const window_t *p_window) {
+static bool matches(const tinydelta_reloc_t *p_reloc, const uint8_t *p_rule, uint32_t p, const uint8_t *p_bytes, small_t count) {
     const uint8_t *p_cond = p_rule + HEAD_SIZE;
     bool b_ok             = ((p_reloc->base + p) & ((1u << ((RULE_ATTR(p_rule) >> 2) & 3u)) - 1u)) == 0u;
 
@@ -583,11 +596,11 @@ static bool matches(const tinydelta_reloc_t *p_reloc, const uint8_t *p_rule, uin
         small_t first = ((small_t)*p_cond & 0x7Fu) * word_bytes_of(p_reloc); /* Cast: widens. */
         bool b_equal  = true;
 
-        b_ok = (word_bytes_of(p_reloc) <= p_window->count) && (first <= (p_window->count - word_bytes_of(p_reloc))); /* inside the window */
+        b_ok = (word_bytes_of(p_reloc) <= count) && (first <= (count - word_bytes_of(p_reloc))); /* inside the window */
         for (small_t byte = 0u; b_ok && b_equal && (byte < word_bytes_of(p_reloc)); byte++) {
             small_t at = first + (big_of(p_reloc) ? ((word_bytes_of(p_reloc) - 1u) - byte) : byte);
 
-            b_equal = (p_window->bytes[at] & p_cond[1u + word_bytes_of(p_reloc) + byte]) == p_cond[1u + byte];
+            b_equal = (p_bytes[at] & p_cond[1u + word_bytes_of(p_reloc) + byte]) == p_cond[1u + byte];
         }
         if ((*p_cond & 0x80u) != 0u) { /* negated */
             b_equal = !b_equal;
@@ -674,19 +687,26 @@ static void split(const tinydelta_reloc_t *p_reloc, const span_t *p_span, const 
     }
 }
 
-/* The first rule of a list matching at p (NULL if none), its index in
- * *p_index. A prefix or length rule must fit the image; one with require
- * counts only if it fits and its first address points into the image. */
-static const uint8_t *first_rule(const tinydelta_reloc_t *p_reloc, small_t list, uint32_t p, small_t *p_index) {
-    const uint8_t *p_rule = p_reloc->p_rules + list_start_of(p_reloc, list);
-    window_t window;
+/* Sets *p_window to up to want bytes of the image from p (fewer near its
+ * end, none past it), the image's own: in memory, or the callbacks' cache,
+ * valid until the next read outside them. */
+static void fill_window(const tinydelta_reloc_t *p_reloc, uint32_t p, small_t want, window_t *p_window) {
+    static const uint8_t none[1] = {0u}; /* for no bytes: a pointer that points somewhere */
 
-    /* reach + 1 bytes, or to the image's end (p is inside it, or nothing matches: count 0). */
-    window.count = (p < p_reloc->dict_len) ? (((p_reloc->dict_len - p) > reach_of(p_reloc)) ? (reach_of(p_reloc) + 1u) : (small_t)(p_reloc->dict_len - p))
-                                           : 0u; /* Cast: at most reach. */
-    for (small_t index = 0u; index < window.count; index++) {
-        window.bytes[index] = (p_reloc->p_dict != NULL) ? p_reloc->p_dict[p + index] : p_reloc->raw(p_reloc->p_raw_ctx, p + index);
+    p_window->count   = (p < p_reloc->dict_len) ? (((p_reloc->dict_len - p) > want) ? want : (small_t)(p_reloc->dict_len - p)) : 0u; /* Cast: below want. */
+    p_window->p_bytes = none;
+    if (p_window->count > 0u) {
+        p_window->p_bytes = (p_reloc->p_dict != NULL) ? &p_reloc->p_dict[p] : p_reloc->raw(p_reloc->p_raw_ctx, p, p_window->count);
     }
+}
+
+/* The first rule of list matching at p (NULL if none), its index in
+ * *p_index, given the image's bytes from p (count of them, as far as a rule
+ * reaches or to the image's end). A prefix or length rule must fit the
+ * image; one with require counts only if it fits and its first address
+ * points into the image. */
+static const uint8_t *first_rule(const tinydelta_reloc_t *p_reloc, small_t list, uint32_t p, small_t *p_index, const uint8_t *p_bytes, small_t count) {
+    const uint8_t *p_rule = p_reloc->p_rules + list_start_of(p_reloc, list);
 
 #if RULE_MATCHER
     static const uint8_t firsts[TINYDELTA_RULE_LISTS] = TINYDELTA_RELOC_RULES_FIRSTS;
@@ -697,7 +717,7 @@ static const uint8_t *first_rule(const tinydelta_reloc_t *p_reloc, small_t list,
     (void)p_rule;
     while (from < list_count_of(p_reloc, list)) {
         /* Casts: the window holds at most 16 bytes; a rule's alignment needs only the address's low byte. */
-        small_t index = tinydelta_reloc_match((uint8_t)list, (uint8_t)from, window.bytes, (uint8_t)window.count, (uint8_t)(p_reloc->base + p));
+        small_t index = tinydelta_reloc_match((uint8_t)list, (uint8_t)from, p_bytes, (uint8_t)count, (uint8_t)(p_reloc->base + p));
         small_t bits;
 
         from = list_count_of(p_reloc, list); /* none further, unless require turns this one down */
@@ -718,7 +738,7 @@ static const uint8_t *first_rule(const tinydelta_reloc_t *p_reloc, small_t list,
     for (small_t index = 0u; index < list_count_of(p_reloc, list); index++) {
         small_t bits;
 
-        if (matches(p_reloc, p_rule, p, &window) && ((list >= LIST_CODE) || inside(p_reloc, p, word_bytes_of(p_reloc))) &&
+        if (matches(p_reloc, p_rule, p, p_bytes, count) && ((list >= LIST_CODE) || inside(p_reloc, p, word_bytes_of(p_reloc))) &&
             (!uses(FEATURE_REQUIRE) || ((RULE_FLAGS(p_rule) & FLAG_REQUIRE) == 0u) ||
              (inside(p_reloc, p, RULE_N(p_rule)) && in_image(p_reloc, join(p_reloc, rule_addr(p_reloc, p_rule, 0u), p, &bits))))) {
             *p_index = index;
@@ -730,21 +750,51 @@ static const uint8_t *first_rule(const tinydelta_reloc_t *p_reloc, small_t list,
 #endif
 }
 
+/* Whether old-image offset h is in a data run, from the run or gap *p_sync
+ * last found if h is in it. */
+static bool in_data(const tinydelta_reloc_t *p_reloc, sync_t *p_sync, uint32_t h) {
+    if ((h - p_sync->data_low) >= (p_sync->data_high - p_sync->data_low)) {
+        uint32_t before = records_before(p_reloc->p_runs, p_reloc->run_count, RUN_SIZE, h);
+        uint32_t at     = before * RUN_SIZE; /* the next run's, if any */
+
+        p_sync->b_data    = false;
+        p_sync->data_low  = 0u;
+        p_sync->data_high = 0xFFFFFFFFu; /* no offset reaches it */
+        if (before > 0u) {
+            const uint8_t *p_run = p_reloc->p_runs + (at - RUN_SIZE);        /* the last starting at or before h */
+            uint32_t end         = load_le32(p_run) + load_le32(p_run + 4u); /* within 32 bits (read_list) */
+
+            p_sync->b_data   = (h - load_le32(p_run)) < load_le32(p_run + 4u);
+            p_sync->data_low = p_sync->b_data ? load_le32(p_run) : end;
+            if (p_sync->b_data) {
+                p_sync->data_high = end;
+            }
+        }
+        if (!p_sync->b_data && (before < p_reloc->run_count)) {
+            p_sync->data_high = load_le32(p_reloc->p_runs + at); /* the next run's start */
+        }
+    }
+    return p_sync->b_data;
+}
+
 /* The instruction length at q for finding instruction starts: 0 outside
  * the image, at a misaligned position or in a data run. */
-static small_t length_at(const tinydelta_reloc_t *p_reloc, uint32_t q) {
+static small_t length_at(const tinydelta_reloc_t *p_reloc, sync_t *p_sync, uint32_t q) {
     small_t index;
     const uint8_t *p_rule;
     small_t skip = 0u;
+    window_t window; /* from q, a prefix's skip beyond a rule's reach: for both lists */
 
-    if (!inside(p_reloc, q, word_bytes_of(p_reloc)) || (((p_reloc->base + q) & (unit_of(p_reloc) - 1u)) != 0u) || in_data(p_reloc, q)) {
+    if (!inside(p_reloc, q, word_bytes_of(p_reloc)) || (((p_reloc->base + q) & (unit_of(p_reloc) - 1u)) != 0u) || in_data(p_reloc, p_sync, q)) {
         return 0u;
     }
-    p_rule = first_rule(p_reloc, LIST_PREFIXES, q, &index);
+    fill_window(p_reloc, q, reach_of(p_reloc) + 1u + MAX_SKIP, &window);
+    p_rule = first_rule(p_reloc, LIST_PREFIXES, q, &index, window.p_bytes, (window.count > reach_of(p_reloc)) ? (reach_of(p_reloc) + 1u) : window.count);
     if ((p_rule != NULL) && inside(p_reloc, q, RULE_N(p_rule) + word_bytes_of(p_reloc))) {
-        skip = RULE_N(p_rule);
+        skip = RULE_N(p_rule); /* inside: the window holds more than skip bytes */
     }
-    p_rule = first_rule(p_reloc, LIST_LENGTHS, q + skip, &index);
+    p_rule = first_rule(p_reloc, LIST_LENGTHS, q + skip, &index, &window.p_bytes[skip],
+                        ((window.count - skip) > reach_of(p_reloc)) ? (reach_of(p_reloc) + 1u) : (window.count - skip));
     return skip + ((p_rule != NULL) ? RULE_N(p_rule) : unit_of(p_reloc));
 }
 
@@ -752,8 +802,8 @@ static small_t length_at(const tinydelta_reloc_t *p_reloc, uint32_t q) {
  * lands on it. The lengths come from *p_sync, brought up to p; a p behind
  * it, too far ahead or not in step with it restarts it sync units back. */
 static bool starts(const tinydelta_reloc_t *p_reloc, sync_t *p_sync, uint32_t p) {
-    uint32_t covered = 0u; /* bit i: the unit i units on is inside an instruction */
-    uint32_t back    = sync_of(p_reloc) * unit_of(p_reloc);
+    small_t covered = 0u; /* units still inside the last instruction decoded (README's bitmask, as a count) */
+    uint32_t back   = sync_of(p_reloc) * unit_of(p_reloc);
 
     if (((p - p_sync->next) > back) || (((p - p_sync->next) & (unit_of(p_reloc) - 1u)) != 0u)) {
         p_sync->next = p - back; /* wraps near the image's start */
@@ -763,15 +813,18 @@ static bool starts(const tinydelta_reloc_t *p_reloc, sync_t *p_sync, uint32_t p)
             p_sync->units[i] = p_sync->units[i - 1u];
         }
         /* In units (1, 2 or 4 bytes: unit >> 1 is its log2). Cast: at most MAX_SKIP + MAX_LENGTH. 0 before the image's start (wrapped past p): skipped. */
-        p_sync->units[0] = (p_sync->next < p) ? (uint8_t)(length_at(p_reloc, p_sync->next) >> (unit_of(p_reloc) >> 1u)) : 0u;
+        p_sync->units[0] = (p_sync->next < p) ? (uint8_t)(length_at(p_reloc, p_sync, p_sync->next) >> (unit_of(p_reloc) >> 1u)) : 0u;
     }
     for (small_t i = sync_of(p_reloc); i > 0u; i--) {
-        if (((covered & 1u) == 0u) && (p_sync->units[i - 1u] > 0u)) {
-            covered |= low_mask(p_sync->units[i - 1u]) & ~1u;
+        if (covered > 0u) {
+            covered--; /* inside the instruction before */
+        } else if (p_sync->units[i - 1u] > 0u) {
+            covered = p_sync->units[i - 1u] - 1u; /* an instruction starts here, and covers the units after it */
+        } else {
+            /* outside the image or a data run: a unit on its own */
         }
-        covered >>= 1;
     }
-    return (covered & 1u) == 0u;
+    return covered == 0u;
 }
 
 /* The rule that applies at p before unless (NULL if none, or an
@@ -781,10 +834,13 @@ static bool starts(const tinydelta_reloc_t *p_reloc, sync_t *p_sync, uint32_t p)
 static const uint8_t *applies(const tinydelta_reloc_t *p_reloc, sync_t *p_sync, uint32_t p, small_t *p_list, small_t *p_index) {
     const uint8_t *p_rule = NULL;
 
-    *p_list = in_data(p_reloc, p) ? LIST_DATA : LIST_CODE;
+    *p_list = in_data(p_reloc, p_sync, p) ? LIST_DATA : LIST_CODE;
     if ((p < p_reloc->dict_len) && (((p_reloc->base + p) & (unit_of(p_reloc) - 1u)) == 0u) &&
         ((*p_list == LIST_DATA) || (sync_of(p_reloc) == 0u) || starts(p_reloc, p_sync, p))) {
-        p_rule = first_rule(p_reloc, *p_list, p, p_index);
+        window_t window;
+
+        fill_window(p_reloc, p, reach_of(p_reloc) + 1u, &window);
+        p_rule = first_rule(p_reloc, *p_list, p, p_index, window.p_bytes, window.count);
     }
     if ((p_rule != NULL) && (((RULE_FLAGS(p_rule) & 3u) == 0u) || !inside(p_reloc, p, RULE_N(p_rule)))) {
         p_rule = NULL;
@@ -875,7 +931,7 @@ static bool move_at(const tinydelta_reloc_t *p_reloc, const uint8_t *p_rule, uin
 
 void tinydelta_reloc_span(const tinydelta_reloc_t *p_reloc, uint32_t offset, uint8_t *p_out, uint32_t length) {
     span_t span  = {offset, length, p_out};
-    sync_t sync  = {0}; /* in step from 0, all before it */
+    sync_t sync  = {0}; /* in step from 0, all before it; no data run or gap found yet (an empty range) */
     uint32_t end = offset + length;
 
     for (uint32_t p = (offset >= reach_of(p_reloc)) ? (offset - reach_of(p_reloc)) : 0u; p < end; p++) {

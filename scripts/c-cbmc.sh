@@ -43,7 +43,7 @@ IO="-DDICT_MAX=2 -DPATCH_MAX=4 -DOUT_MAX=4 --unwind 6 cbmc/io.c tinydelta_io.c t
 # tables: bit loops by the widest slice (16 bits); the generated matcher
 # is asked again only after a require rule turns its match down (at most
 # one such rule per list here: two passes).
-RELOC="-DTINYDELTA_CODER=1 --unwind 2 --unwindset main.0:17,main.1:13,main.2:9,main.3:17,main.4:9,entry_shift.0:2,in_data.0:2,load_le32.0:5,first_rule.0:17,first_rule.1:3,rule_addr.0:5,rule_addr.1:3,join.0:17,join.1:7,join.2:5,split.0:17,split.1:7,split.2:3,starts.0:17,starts.1:17,starts.2:17,excluded.0:5,excluded.1:3,move_at.0:3 cbmc/reloc_position.c"
+RELOC="-DTINYDELTA_CODER=1 --unwind 2 --unwindset main.0:17,main.1:13,main.2:9,main.3:17,main.4:9,records_before.0:2,load_le32.0:5,first_rule.0:3,rule_addr.0:5,rule_addr.1:3,join.0:7,join.1:5,split.0:17,split.1:7,split.2:3,starts.0:17,starts.1:17,starts.2:17,excluded.0:5,excluded.1:3,move_at.0:3 cbmc/reloc_position.c"
 runs="$(cat <<EOF
 memory decoder (dictionary <= 4, patch <= 8, output <= 8)|$MEMORY
 coder, one byte from any state|-DTINYDELTA_CODER=1 --unwind 10 --unwindset main.0:1290,coder_bit.0:4 cbmc/coder.c tinydelta_coder.c

@@ -24,23 +24,29 @@
  *   byte 3-6  the image's base address, little-endian
  *   byte 7    map: bits 0-2 entries (0-7), 3-4 data runs (0-3), 5-7 RAM ranges (0-7)
  *   byte 8    chunks: bits 0-3 chunk size - 1, bits 4-5 order
- *   then      the map's records as the decoder stores them (entries and RAM
- *             ranges 12 bytes: start, length, shift; data runs 8 bytes: start,
- *             length in 256-byte blocks; each value 4 bytes little-endian),
- *             zero-filled if the input is short; then the table, then the image
- */
+ *   then      the map's records as the patch header gives them (entries and
+ *             RAM ranges: gap, length, zigzag shift; data runs: gap, length
+ *             in 256-byte blocks; each value 4 bytes little-endian here, a
+ *             varint in a patch), zero-filled if the input is short; then the
+ *             table, then the image
+ *
+ * The map goes through tinydelta_reloc_read_header, as in a decoder, which
+ * keeps its records in order and within 32 bits (an input it refuses is
+ * skipped); the engine relies on that order. */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "tinydelta_internal.h" /* the features byte's fields */
 #include "tinydelta_reloc.h"
-#if !TINYDELTA_RELOC_SHIPPED
+#if TINYDELTA_RELOC_SHIPPED
+#define TINYDELTA_RELOC_RULES_INTERPRET 1 /* as the engine has it */
+#endif
 #if TINYDELTA_RELOC == TINYDELTA_RELOC_THUMB
 #include "tinydelta_rules_thumb.h"
 #else
 #include "tinydelta_rules_msp430x.h"
-#endif
 #endif
 
 #define FUZZ_HEADER_SIZE 9u
@@ -57,12 +63,40 @@ typedef struct {
     uint32_t len;
 } raw_source;
 
-static uint8_t raw_read(void *ctx, uint32_t index) {
+static const uint8_t *raw_read(void *ctx, uint32_t index, uint32_t length) {
     const raw_source *s = ctx;
-    if (index >= s->len) {
-        FAIL("raw read of byte %u of a %u-byte image", index, s->len);
+    if (length < 1 || length > TINYDELTA_RELOC_RAW_MAX || index >= s->len || length > s->len - index) {
+        FAIL("raw read of %u bytes at %u of a %u-byte image", length, index, s->len);
     }
-    return s->image[index];
+    return &s->image[index];
+}
+
+/* The header as tinydelta_reloc_read_header reads it: the built-in table's
+ * CRC, then base, each list's count and its records' values. */
+typedef struct {
+    uint32_t values[4u + 7u * 3u + 3u * 2u + 7u * 3u]; /* base, three counts, their records' values */
+    uint32_t count, next;
+    uint16_t crc;
+    uint32_t crc_bytes;
+} header_source;
+
+static tinydelta_result_t header_fetch(void *ctx, uint8_t *p_byte) {
+    header_source *h = ctx;
+    *p_byte          = (uint8_t)(h->crc >> (8u * h->crc_bytes++));
+    return TINYDELTA_OK;
+}
+
+static tinydelta_result_t header_varint(void *ctx, uint32_t *p_value) {
+    header_source *h = ctx;
+    if (h->next >= h->count) {
+        FAIL("the header read %u values, more than its %u", h->next + 1u, h->count);
+    }
+    *p_value = h->values[h->next++];
+    return TINYDELTA_OK;
+}
+
+static uint32_t le32_at(const uint8_t *b) {
+    return (uint32_t)b[0] | ((uint32_t)b[1] << 8) | ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24);
 }
 
 /* A copy of n bytes from *p (fewer if the input runs out: zeros), in a
@@ -91,9 +125,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     const uint8_t *p = data + FUZZ_HEADER_SIZE;
     size_t left      = size - FUZZ_HEADER_SIZE;
 
-    uint8_t *p_entries = take(&p, &left, entries * TINYDELTA_RELOC_ENTRY_SIZE);
-    uint8_t *p_runs    = take(&p, &left, runs * 8u);
-    uint8_t *p_ranges  = take(&p, &left, ranges * TINYDELTA_RELOC_ENTRY_SIZE);
+    uint8_t *records = take(&p, &left, (entries * 3u + runs * 2u + ranges * 3u) * 4u);
     if (table_len > left) {
         table_len = left;
     }
@@ -105,24 +137,40 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
     tinydelta_reloc_t reloc;
     memset(&reloc, 0, sizeof reloc);
+    /* The map through the decoder's header reader, into storage of exactly its size. */
+    header_source h            = {{0}, 0, 0, 0, 0};
+    const uint32_t lists[3][2] = {{entries, 3u}, {runs, 2u}, {ranges, 3u}};
+    uint32_t at                = 0;
+    h.values[h.count++]        = base;
+    for (uint32_t l = 0; l < 3u; l++) {
+        h.values[h.count++] = lists[l][0];
+        for (uint32_t i = 0; i < lists[l][0] * lists[l][1]; i++, at += 4u) {
+            h.values[h.count++] = le32_at(records + at);
+        }
+    }
+    h.crc                 = TINYDELTA_RELOC_RULES_CRC; /* the built-in table's (a shipped build's table is set below) */
+    uint32_t storage_size = (entries + ranges) * TINYDELTA_RELOC_ENTRY_SIZE + runs * 8u;
+    uint8_t *storage      = malloc(storage_size > 0u ? storage_size : 1u);
+    if (storage == NULL) {
+        abort();
+    }
+    tinydelta_result_t header = tinydelta_reloc_read_header(&reloc, TINYDELTA_CODED_RELOC_BUILTIN << TINYDELTA_CODED_RELOC_SHIFT, header_fetch, header_varint,
+                                                            &h, storage, storage_size);
+    (void)tinydelta_reloc_rules; /* the engine's own copy is the one in use */
 #if TINYDELTA_RELOC_SHIPPED
-    reloc.p_rules   = table;
+    reloc.p_rules   = table; /* untrusted: the checker's */
     reloc.rules_len = (uint32_t)table_len;
-#else
-    reloc.p_rules   = tinydelta_reloc_rules; /* the device build: the table built in */
-    reloc.rules_len = TINYDELTA_RELOC_RULES_SIZE;
 #endif
-    reloc.b_shipped     = false; /* the table is here already, not in a coded stream */
-    reloc.base          = base;
-    reloc.p_entries     = p_entries;
-    reloc.count         = entries;
-    reloc.p_runs        = p_runs;
-    reloc.run_count     = runs;
-    reloc.p_outside     = p_ranges;
-    reloc.outside_count = ranges;
-    reloc.dict_len      = (uint32_t)image_len;
+    reloc.b_shipped = false; /* the table is here already, not in a coded stream */
+    reloc.dict_len  = (uint32_t)image_len;
 
-    if (image_len > 0 && tinydelta_reloc_start(&reloc, NULL) == TINYDELTA_OK) {
+    if ((header != TINYDELTA_OK) && (header != TINYDELTA_ERR_MALFORMED)) {
+        FAIL("the header reader gave %d for a map that fits", header);
+    }
+    if (header == TINYDELTA_OK && h.next != h.count) {
+        FAIL("the header reader read %u of the map's %u values", h.next, h.count);
+    }
+    if (header == TINYDELTA_OK && image_len > 0 && tinydelta_reloc_start(&reloc, NULL) == TINYDELTA_OK) {
         uint8_t *whole = take(&(const uint8_t *){image}, &(size_t){image_len}, image_len);
         uint8_t *parts = calloc(image_len, 1);
         uint32_t n     = (uint32_t)image_len;
@@ -169,9 +217,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         free(whole);
         free(parts);
     }
-    free(p_entries);
-    free(p_runs);
-    free(p_ranges);
+    free(records);
+    free(storage);
     free(table);
     free(image);
     return 0;

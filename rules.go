@@ -7,6 +7,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -299,9 +300,18 @@ func (r *Rules) cMatcher(b *strings.Builder) {
 				terms = append(terms, fmt.Sprintf("((at & %du) == 0u)", ru.align-1))
 			}
 			never := false
-			for _, c := range ru.conds {
+			// The likeliest to fail first: word 0 (the opcode) before others,
+			// a word's most significant byte before its others, negations last.
+			conds := append([]ruleCond{}, ru.conds...)
+			sort.SliceStable(conds, func(i, j int) bool {
+				if conds[i].neg != conds[j].neg {
+					return !conds[i].neg
+				}
+				return conds[i].word < conds[j].word
+			})
+			for _, c := range conds {
 				var bytesEq []string
-				for k := 0; k < r.wordBytes; k++ {
+				for k := r.wordBytes - 1; k >= 0; k-- {
 					m, v := byte(c.mask>>(8*k)), byte(c.value>>(8*k))
 					if m == 0 {
 						continue

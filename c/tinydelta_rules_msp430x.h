@@ -114,39 +114,39 @@ static uint8_t tinydelta_reloc_match(uint8_t list, uint8_t from, const uint8_t *
         }
         break;
     case 1u:
-        if ((count >= 2u) && ((p_bytes[0] & 0xE0u) == 0x20u) && ((p_bytes[1] & 0xF0u) == 0x00u)) {
+        if ((count >= 2u) && ((p_bytes[1] & 0xF0u) == 0x00u) && ((p_bytes[0] & 0xE0u) == 0x20u)) {
             index = 0u; /*  */
-        } else if ((count >= 2u) && ((p_bytes[0] & 0xE0u) == 0x60u) && ((p_bytes[1] & 0xF0u) == 0x00u)) {
+        } else if ((count >= 2u) && ((p_bytes[1] & 0xF0u) == 0x00u) && ((p_bytes[0] & 0xE0u) == 0x60u)) {
             index = 1u; /*  */
-        } else if ((count >= 2u) && ((p_bytes[0] & 0xC0u) == 0x80u) && ((p_bytes[1] & 0xF0u) == 0x00u)) {
+        } else if ((count >= 2u) && ((p_bytes[1] & 0xF0u) == 0x00u) && ((p_bytes[0] & 0xC0u) == 0x80u)) {
             index = 2u; /*  */
-        } else if ((count >= 2u) && ((p_bytes[0] & 0xF0u) == 0x50u) && (p_bytes[1] == 0x13u)) {
+        } else if ((count >= 2u) && (p_bytes[1] == 0x13u) && ((p_bytes[0] & 0xF0u) == 0x50u)) {
             index = 3u; /*  */
-        } else if ((count >= 2u) && ((p_bytes[0] & 0xE0u) == 0x80u) && (p_bytes[1] == 0x13u)) {
+        } else if ((count >= 2u) && (p_bytes[1] == 0x13u) && ((p_bytes[0] & 0xE0u) == 0x80u)) {
             index = 4u; /*  */
-        } else if ((count >= 2u) && ((p_bytes[0] & 0xF0u) == 0xB0u) && (p_bytes[1] == 0x13u)) {
+        } else if ((count >= 2u) && (p_bytes[1] == 0x13u) && ((p_bytes[0] & 0xF0u) == 0xB0u)) {
             index = 5u; /*  */
         } else if ((count >= 2u) && (p_bytes[1] == 0x13u)) {
             index = 6u; /*  */
-        } else if ((count >= 2u) && ((p_bytes[0] & 0x3Fu) == 0x13u) && ((p_bytes[1] & 0xFCu) == 0x10u)) {
+        } else if ((count >= 2u) && ((p_bytes[1] & 0xFCu) == 0x10u) && ((p_bytes[0] & 0x3Fu) == 0x13u)) {
             index = 7u; /*  */
-        } else if ((count >= 2u) && ((p_bytes[0] & 0x30u) == 0x10u) && ((p_bytes[1] & 0xFCu) == 0x10u)) {
+        } else if ((count >= 2u) && ((p_bytes[1] & 0xFCu) == 0x10u) && ((p_bytes[0] & 0x30u) == 0x10u)) {
             index = 8u; /*  */
-        } else if ((count >= 2u) && ((p_bytes[0] & 0x3Fu) == 0x30u) && ((p_bytes[1] & 0xFCu) == 0x10u)) {
+        } else if ((count >= 2u) && ((p_bytes[1] & 0xFCu) == 0x10u) && ((p_bytes[0] & 0x3Fu) == 0x30u)) {
             index = 9u; /*  */
         } else if ((count >= 2u) && ((p_bytes[1] & 0xC0u) == 0x00u)) {
             index = 10u; /*  */
-        } else if ((count >= 2u) && ((p_bytes[0] & 0xB0u) == 0x90u) && ((p_bytes[1] & 0x0Fu) == 0x03u)) {
+        } else if ((count >= 2u) && ((p_bytes[1] & 0x0Fu) == 0x03u) && ((p_bytes[0] & 0xB0u) == 0x90u)) {
             index = 11u; /*  */
-        } else if ((count >= 2u) && ((p_bytes[0] & 0x30u) == 0x10u) && ((p_bytes[1] & 0x0Fu) == 0x03u)) {
+        } else if ((count >= 2u) && ((p_bytes[1] & 0x0Fu) == 0x03u) && ((p_bytes[0] & 0x30u) == 0x10u)) {
             index = 12u; /*  */
         } else if ((count >= 2u) && ((p_bytes[0] & 0xB0u) == 0x90u)) {
             index = 13u; /*  */
         } else if ((count >= 2u) && ((p_bytes[0] & 0x30u) == 0x10u)) {
             index = 14u; /*  */
-        } else if ((count >= 2u) && ((p_bytes[0] & 0xB0u) == 0xB0u) && ((p_bytes[1] & 0x0Fu) == 0x00u)) {
+        } else if ((count >= 2u) && ((p_bytes[1] & 0x0Fu) == 0x00u) && ((p_bytes[0] & 0xB0u) == 0xB0u)) {
             index = 15u; /*  */
-        } else if ((count >= 2u) && ((p_bytes[0] & 0x30u) == 0x30u) && ((p_bytes[1] & 0x0Fu) == 0x00u)) {
+        } else if ((count >= 2u) && ((p_bytes[1] & 0x0Fu) == 0x00u) && ((p_bytes[0] & 0x30u) == 0x30u)) {
             index = 16u; /*  */
         } else if ((count >= 2u) && ((p_bytes[0] & 0x80u) == 0x80u)) {
             index = 17u; /*  */
@@ -155,29 +155,29 @@ static uint8_t tinydelta_reloc_match(uint8_t list, uint8_t from, const uint8_t *
         }
         break;
     case 2u:
-        if ((count >= 2u) && ((p_bytes[0] & 0xF0u) == 0xB0u) && (p_bytes[1] == 0x13u)) {
+        if ((count >= 2u) && (p_bytes[1] == 0x13u) && ((p_bytes[0] & 0xF0u) == 0xB0u)) {
             index = 0u; /* CALLA #imm20 */
-        } else if ((count >= 2u) && ((p_bytes[0] & 0xF0u) == 0x80u) && (p_bytes[1] == 0x13u)) {
+        } else if ((count >= 2u) && (p_bytes[1] == 0x13u) && ((p_bytes[0] & 0xF0u) == 0x80u)) {
             index = 1u; /* CALLA &abs20 */
-        } else if ((count >= 2u) && ((p_bytes[0] & 0xC0u) == 0x80u) && ((p_bytes[1] & 0xF0u) == 0x00u)) {
+        } else if ((count >= 2u) && ((p_bytes[1] & 0xF0u) == 0x00u) && ((p_bytes[0] & 0xC0u) == 0x80u)) {
             index = 2u; /* MOVA, CMPA, ADDA, SUBA #imm20,Rd */
-        } else if ((count >= 2u) && ((p_bytes[0] & 0xF0u) == 0x20u) && ((p_bytes[1] & 0xF0u) == 0x00u)) {
+        } else if ((count >= 2u) && ((p_bytes[1] & 0xF0u) == 0x00u) && ((p_bytes[0] & 0xF0u) == 0x20u)) {
             index = 3u; /* MOVA &abs20,Rd */
-        } else if ((count >= 2u) && ((p_bytes[0] & 0xF0u) == 0x60u) && ((p_bytes[1] & 0xF0u) == 0x00u)) {
+        } else if ((count >= 2u) && ((p_bytes[1] & 0xF0u) == 0x00u) && ((p_bytes[0] & 0xF0u) == 0x60u)) {
             index = 4u; /* MOVA Rs,&abs20 */
         } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[3] & 0xC0u) == 0x00u)) {
             index = 5u; /* extension word before a non-two-operand instruction */
-        } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[2] & 0xBFu) == 0x90u) && ((p_bytes[3] & 0x0Fu) == 0x03u)) {
+        } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[3] & 0x0Fu) == 0x03u) && ((p_bytes[2] & 0xBFu) == 0x90u)) {
             index = 6u; /* source the constant 1 (As 1 on R3), destination PC-relative */
-        } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[2] & 0xB0u) == 0x90u) && ((p_bytes[3] & 0x0Fu) == 0x03u)) {
+        } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[3] & 0x0Fu) == 0x03u) && ((p_bytes[2] & 0xB0u) == 0x90u)) {
             index = 7u; /* source the constant 1, destination x(Rd) or &abs */
-        } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[2] & 0x30u) == 0x10u) && ((p_bytes[3] & 0x0Fu) == 0x03u)) {
+        } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[3] & 0x0Fu) == 0x03u) && ((p_bytes[2] & 0x30u) == 0x10u)) {
             index = 8u; /* source the constant 1 */
-        } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[2] & 0xBFu) == 0x90u) && ((p_bytes[3] & 0x0Fu) == 0x00u)) {
+        } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[3] & 0x0Fu) == 0x00u) && ((p_bytes[2] & 0xBFu) == 0x90u)) {
             index = 9u; /* source PC-relative, destination PC-relative */
-        } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[2] & 0xB0u) == 0x90u) && ((p_bytes[3] & 0x0Fu) == 0x00u)) {
+        } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[3] & 0x0Fu) == 0x00u) && ((p_bytes[2] & 0xB0u) == 0x90u)) {
             index = 10u; /* source PC-relative, destination x(Rd) or &abs */
-        } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[2] & 0x30u) == 0x10u) && ((p_bytes[3] & 0x0Fu) == 0x00u)) {
+        } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[3] & 0x0Fu) == 0x00u) && ((p_bytes[2] & 0x30u) == 0x10u)) {
             index = 11u; /* source PC-relative */
         } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[2] & 0xBFu) == 0x90u)) {
             index = 12u; /* source x(Rs) or &abs, destination PC-relative */
@@ -185,50 +185,50 @@ static uint8_t tinydelta_reloc_match(uint8_t list, uint8_t from, const uint8_t *
             index = 13u; /* source x(Rs) or &abs, destination x(Rd) or &abs */
         } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[2] & 0x30u) == 0x10u)) {
             index = 14u; /* source x(Rs) or &abs */
-        } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[2] & 0xBFu) == 0xB0u) && ((p_bytes[3] & 0x0Fu) == 0x00u)) {
+        } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[3] & 0x0Fu) == 0x00u) && ((p_bytes[2] & 0xBFu) == 0xB0u)) {
             index = 15u; /* source #imm, destination PC-relative */
-        } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[2] & 0xB0u) == 0xB0u) && ((p_bytes[3] & 0x0Fu) == 0x00u)) {
+        } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[3] & 0x0Fu) == 0x00u) && ((p_bytes[2] & 0xB0u) == 0xB0u)) {
             index = 16u; /* source #imm, destination x(Rd) or &abs */
-        } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[2] & 0x30u) == 0x30u) && ((p_bytes[3] & 0x0Fu) == 0x00u)) {
+        } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[3] & 0x0Fu) == 0x00u) && ((p_bytes[2] & 0x30u) == 0x30u)) {
             index = 17u; /* source #imm */
         } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[2] & 0x8Fu) == 0x80u)) {
             index = 18u; /* no source word, destination PC-relative */
         } else if ((count >= 4u) && ((p_bytes[1] & 0xF8u) == 0x18u) && ((p_bytes[2] & 0x80u) == 0x80u)) {
             index = 19u; /* no source word, destination x(Rd) or &abs */
-        } else if ((count >= 2u) && !(((p_bytes[1] & 0xC0u) == 0x00u)) && ((p_bytes[0] & 0x30u) == 0x30u) && ((p_bytes[1] & 0x0Fu) == 0x00u) && ((p_bytes[0] & 0x8Eu) == 0x80u)) {
+        } else if ((count >= 2u) && ((p_bytes[1] & 0x0Fu) == 0x00u) && ((p_bytes[0] & 0x30u) == 0x30u) && ((p_bytes[0] & 0x8Eu) == 0x80u) && !(((p_bytes[1] & 0xC0u) == 0x00u))) {
             index = 20u; /* two operands: #imm, destination x(SP) or PC-relative */
-        } else if ((count >= 2u) && !(((p_bytes[1] & 0xC0u) == 0x00u)) && ((p_bytes[0] & 0x30u) == 0x30u) && ((p_bytes[1] & 0x0Fu) == 0x00u) && ((p_bytes[0] & 0x80u) == 0x80u)) {
+        } else if ((count >= 2u) && ((p_bytes[1] & 0x0Fu) == 0x00u) && ((p_bytes[0] & 0x30u) == 0x30u) && ((p_bytes[0] & 0x80u) == 0x80u) && !(((p_bytes[1] & 0xC0u) == 0x00u))) {
             index = 21u; /* two operands: #imm, destination &abs or x(Rd) */
-        } else if ((count >= 2u) && !(((p_bytes[1] & 0xC0u) == 0x00u)) && ((p_bytes[0] & 0x30u) == 0x30u) && ((p_bytes[1] & 0x0Fu) == 0x00u)) {
+        } else if ((count >= 2u) && ((p_bytes[1] & 0x0Fu) == 0x00u) && ((p_bytes[0] & 0x30u) == 0x30u) && !(((p_bytes[1] & 0xC0u) == 0x00u))) {
             index = 22u; /* two operands: #imm */
-        } else if ((count >= 2u) && !(((p_bytes[1] & 0xC0u) == 0x00u)) && ((p_bytes[0] & 0x30u) == 0x10u) && ((p_bytes[1] & 0x0Eu) == 0x00u) && ((p_bytes[0] & 0x8Eu) == 0x80u)) {
+        } else if ((count >= 2u) && ((p_bytes[1] & 0x0Eu) == 0x00u) && ((p_bytes[0] & 0x30u) == 0x10u) && ((p_bytes[0] & 0x8Eu) == 0x80u) && !(((p_bytes[1] & 0xC0u) == 0x00u))) {
             index = 23u; /* two operands: source x(SP) or PC-relative, destination x(SP) or PC-relative */
-        } else if ((count >= 2u) && !(((p_bytes[1] & 0xC0u) == 0x00u)) && ((p_bytes[0] & 0x30u) == 0x10u) && ((p_bytes[1] & 0x0Eu) == 0x00u) && ((p_bytes[0] & 0x80u) == 0x80u)) {
+        } else if ((count >= 2u) && ((p_bytes[1] & 0x0Eu) == 0x00u) && ((p_bytes[0] & 0x30u) == 0x10u) && ((p_bytes[0] & 0x80u) == 0x80u) && !(((p_bytes[1] & 0xC0u) == 0x00u))) {
             index = 24u; /* two operands: source x(SP) or PC-relative, destination &abs or x(Rd) */
-        } else if ((count >= 2u) && !(((p_bytes[1] & 0xC0u) == 0x00u)) && ((p_bytes[0] & 0x30u) == 0x10u) && ((p_bytes[1] & 0x0Eu) == 0x00u)) {
+        } else if ((count >= 2u) && ((p_bytes[1] & 0x0Eu) == 0x00u) && ((p_bytes[0] & 0x30u) == 0x10u) && !(((p_bytes[1] & 0xC0u) == 0x00u))) {
             index = 25u; /* two operands: source x(SP) or PC-relative */
-        } else if ((count >= 2u) && !(((p_bytes[1] & 0xC0u) == 0x00u)) && ((p_bytes[0] & 0x30u) == 0x10u) && !(((p_bytes[1] & 0x0Fu) == 0x03u)) && ((p_bytes[0] & 0x8Eu) == 0x80u)) {
+        } else if ((count >= 2u) && ((p_bytes[0] & 0x30u) == 0x10u) && ((p_bytes[0] & 0x8Eu) == 0x80u) && !(((p_bytes[1] & 0xC0u) == 0x00u)) && !(((p_bytes[1] & 0x0Fu) == 0x03u))) {
             index = 26u; /* two operands: source &abs or x(Rs), destination x(SP) or PC-relative */
-        } else if ((count >= 2u) && !(((p_bytes[1] & 0xC0u) == 0x00u)) && ((p_bytes[0] & 0x30u) == 0x10u) && !(((p_bytes[1] & 0x0Fu) == 0x03u)) && ((p_bytes[0] & 0x80u) == 0x80u)) {
+        } else if ((count >= 2u) && ((p_bytes[0] & 0x30u) == 0x10u) && ((p_bytes[0] & 0x80u) == 0x80u) && !(((p_bytes[1] & 0xC0u) == 0x00u)) && !(((p_bytes[1] & 0x0Fu) == 0x03u))) {
             index = 27u; /* two operands: source &abs or x(Rs), destination &abs or x(Rd) */
-        } else if ((count >= 2u) && !(((p_bytes[1] & 0xC0u) == 0x00u)) && ((p_bytes[0] & 0x30u) == 0x10u) && !(((p_bytes[1] & 0x0Fu) == 0x03u))) {
+        } else if ((count >= 2u) && ((p_bytes[0] & 0x30u) == 0x10u) && !(((p_bytes[1] & 0xC0u) == 0x00u)) && !(((p_bytes[1] & 0x0Fu) == 0x03u))) {
             index = 28u; /* two operands: source &abs or x(Rs) */
-        } else if ((count >= 2u) && !(((p_bytes[1] & 0xC0u) == 0x00u)) && ((p_bytes[0] & 0x8Eu) == 0x80u)) {
+        } else if ((count >= 2u) && ((p_bytes[0] & 0x8Eu) == 0x80u) && !(((p_bytes[1] & 0xC0u) == 0x00u))) {
             index = 29u; /* two operands: no source word, destination x(SP) or PC-relative */
-        } else if ((count >= 2u) && !(((p_bytes[1] & 0xC0u) == 0x00u)) && ((p_bytes[0] & 0x80u) == 0x80u)) {
+        } else if ((count >= 2u) && ((p_bytes[0] & 0x80u) == 0x80u) && !(((p_bytes[1] & 0xC0u) == 0x00u))) {
             index = 30u; /* two operands: no source word, destination &abs or x(Rd) */
-        } else if ((count >= 2u) && ((p_bytes[1] & 0xFCu) == 0x10u) && !((p_bytes[1] == 0x13u)) && ((p_bytes[0] & 0x3Fu) == 0x30u)) {
+        } else if ((count >= 2u) && ((p_bytes[1] & 0xFCu) == 0x10u) && ((p_bytes[0] & 0x3Fu) == 0x30u) && !((p_bytes[1] == 0x13u))) {
             index = 31u; /* one operand: #imm */
-        } else if ((count >= 2u) && ((p_bytes[1] & 0xFCu) == 0x10u) && !((p_bytes[1] == 0x13u)) && ((p_bytes[0] & 0x3Eu) == 0x10u)) {
+        } else if ((count >= 2u) && ((p_bytes[1] & 0xFCu) == 0x10u) && ((p_bytes[0] & 0x3Eu) == 0x10u) && !((p_bytes[1] == 0x13u))) {
             index = 32u; /* one operand: x(SP) or PC-relative */
-        } else if ((count >= 2u) && ((p_bytes[1] & 0xFCu) == 0x10u) && !((p_bytes[1] == 0x13u)) && ((p_bytes[0] & 0x30u) == 0x10u) && !(((p_bytes[0] & 0x0Fu) == 0x03u))) {
+        } else if ((count >= 2u) && ((p_bytes[1] & 0xFCu) == 0x10u) && ((p_bytes[0] & 0x30u) == 0x10u) && !((p_bytes[1] == 0x13u)) && !(((p_bytes[0] & 0x0Fu) == 0x03u))) {
             index = 33u; /* one operand: &abs or x(Rn) (not the constant 1, R3) */
         } else {
             /* no rule */
         }
         break;
     case 3u:
-        if ((count >= 4u) && ((p_bytes[2] & 0xF0u) == 0x00u) && (p_bytes[3] == 0x00u) && !(((p_bytes[2] & 0x0Fu) == 0x00u))) {
+        if ((count >= 4u) && (p_bytes[3] == 0x00u) && ((p_bytes[2] & 0xF0u) == 0x00u) && !(((p_bytes[2] & 0x0Fu) == 0x00u))) {
             index = 0u; /* 20-bit pointer into the image, 32 bits little-endian */
         } else {
             /* no rule */

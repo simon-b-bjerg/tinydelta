@@ -16,10 +16,14 @@
 #include "tinydelta.h"
 #include "tinydelta_coder.h"
 
-/* Gets the raw old-image byte at index (always within the image). On a
- * read failure it returns anything and records the failure for its
- * decoder to report after tinydelta_reloc_span. */
-typedef uint8_t (*tinydelta_raw_fn_t)(void *p_ctx, uint32_t index);
+/* The most raw old-image bytes the engine asks for at once. */
+#define TINYDELTA_RELOC_RAW_MAX 20u
+
+/* Points to length raw old-image bytes from index (all within the image;
+ * length 1 to TINYDELTA_RELOC_RAW_MAX), valid until the next call. On a read
+ * failure it points to any bytes and records the failure for its decoder to
+ * report after tinydelta_reloc_span. */
+typedef const uint8_t *(*tinydelta_raw_fn_t)(void *p_ctx, uint32_t index, uint32_t length);
 
 /* Reads the next varint of the patch header. */
 typedef tinydelta_result_t (*tinydelta_varint_fn_t)(void *p_ctx, uint32_t *p_value);
@@ -36,7 +40,7 @@ typedef tinydelta_result_t (*tinydelta_varint_fn_t)(void *p_ctx, uint32_t *p_val
 typedef struct {
     const uint8_t *p_entries; /* count entries of TINYDELTA_RELOC_ENTRY_SIZE bytes, by image offset */
     uint32_t count;
-    const uint8_t *p_runs; /* run_count data runs, 8 bytes each: start and length in 256-byte blocks */
+    const uint8_t *p_runs; /* run_count data runs, 8 bytes each: start and length in bytes (256-byte blocks in the patch) */
     uint32_t run_count;
     const uint8_t *p_outside; /* outside_count RAM ranges, as entries, by address */
     uint32_t outside_count;

@@ -174,9 +174,9 @@ in patch size for a step up in code.
 | decoder | code (Cortex-M0, `-Os`) | RAM besides stack | stack |
 |---|---:|---:|---:|
 | **tinydelta**, memory decoder | **500 B** | **0** | ~110 B |
-| **tinydelta**, callback decoder | **876 B** | **256 B** buffer\* | ~185 B |
-| **tinydelta**, callback decoder + coder | **1,708 B** | **256 B** buffer\* + 777 B tables‡ | ~305 B |
-| **tinydelta**, callback decoder + coder + Thumb relocation | **3,857 B** | **256 B** buffer\* + 1,545 B tables and map‡ | – |
+| **tinydelta**, callback decoder | **876 B** | **256 B** buffer\* | ~180 B |
+| **tinydelta**, callback decoder + coder | **1,720 B** | **256 B** buffer\* + 777 B tables‡ | ~280 B |
+| **tinydelta**, callback decoder + coder + Thumb relocation | **4,131 B** | **256 B** buffer\* + 1,545 B tables and map‡ | ~600 B |
 | HPatchLite + tinyuz | ~2.2 KB | 4–32 KB dictionary | – |
 | detools + heatshrink | 1,948 B | 640 B state† | ~0.5 KB |
 | tiny-vcdiff (open-vcdiff's format) | 3,881 B | 3,221 B | ~150 B |
@@ -195,7 +195,7 @@ What you give up:
 
 - **Each step costs code.** The coder adds about 0.9 KB of code on
   Cortex-M0 and short-lived tables ([Coded patches](#coded-patches));
-  relocation about 2 KB more, for firmware whose instruction set has
+  relocation 2.3 KB more with Thumb's rules, for firmware whose instruction set has
   rules ([Relocation](#relocation)). Without the coder, two passes give
   smaller firmware patches for no code, with room for the intermediate
   patch ([Two-pass patches](#two-pass-patches)).
@@ -657,12 +657,14 @@ even on Cortex-M0). Reproduce with [`scripts/c-size.sh`](scripts/c-size.sh).
 
 | part | Cortex-M0 | Cortex-M3 | Cortex-M4 | stack (Cortex-M0) |
 |---|---:|---:|---:|---:|
-| memory decoder | 500 B | 470 B | 470 B | ~110 B |
-| callback decoder | 876 B | 836 B | 836 B | ~185 B\* |
+| memory decoder | 500 B | 472 B | 472 B | ~110 B |
+| callback decoder | 876 B | 836 B | 836 B | ~180 B\* |
 | memory decoder + coder | 1,416 B | 1,340 B | 1,340 B | ~290 B |
-| callback decoder + coder | 1,716 B | 1,700 B | 1,700 B | ~305 B\* |
-| memory decoder + coder + Thumb relocation | 3,465 B | 3,325 B | 3,341 B | – |
-| callback decoder + coder + Thumb relocation | 3,857 B | 3,737 B | 3,753 B | – |
+| callback decoder + coder | 1,720 B | 1,700 B | 1,700 B | ~280 B\* |
+| memory decoder + coder + Thumb relocation | 3,711 B | 3,551 B | 3,575 B | ~540 B |
+| callback decoder + coder + Thumb relocation | 4,131 B | 3,975 B | 3,999 B | ~600 B\* |
+| memory decoder + coder + MSP430X relocation | 5,070 B | 4,862 B | 4,870 B | ~585 B |
+| callback decoder + coder + MSP430X relocation | 5,490 B | 5,286 B | 5,294 B | ~650 B\* |
 
 \* Deepest path, excluding your buffer and your callbacks' own stack
 use. With the coder (`TINYDELTA_CODER = 1`), each decoder grows by

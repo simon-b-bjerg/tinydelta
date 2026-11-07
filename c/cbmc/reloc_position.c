@@ -66,6 +66,12 @@ int main(void) {
         sync.units[i] = nondet_u8();
         __CPROVER_assume(sync.units[i] <= MAX_SKIP + MAX_LENGTH);
     }
+    /* The data-run cache as the engine starts it: empty, so in_data looks the
+     * run up. Any later state is a run or gap of the map, and a hit on it
+     * reads nothing; any other state would make in_data's answer arbitrary. */
+    sync.data_low  = 0u;
+    sync.data_high = 0u;
+    sync.b_data    = false;
 
     reloc.p_rules       = tinydelta_reloc_rules;
     reloc.rules_len     = TINYDELTA_RELOC_RULES_SIZE;
@@ -84,7 +90,7 @@ int main(void) {
     reloc.run_count = 0u;
 #elif DATA_RUNS == 1
     for (uint32_t i = 0; i < 8u; i++) {
-        runs[i] = (i == 4u) ? 1u : 0u; /* one run: start 0, one block */
+        runs[i] = (i == 5u) ? 1u : 0u; /* one run: start 0, one block (256 bytes, as stored) */
     }
     reloc.run_count = 1u;
 #else
@@ -98,7 +104,7 @@ int main(void) {
 #if LENGTH_AT
     /* An instruction length at any position (the step's proof may replace
      * length_at by any value: --remove-function-body length_at). */
-    (void)length_at(&reloc, p);
+    (void)length_at(&reloc, &sync, p);
     (void)sync;
     (void)span;
     (void)list;
