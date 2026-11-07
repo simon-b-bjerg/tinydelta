@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -120,47 +121,85 @@ func TestVectors(t *testing.T) {
 
 // TestCVectors checks the C memory decoder and the C callback decoder at
 // several buffer and page sizes against every conformance vector.
-func TestCVectors(t *testing.T) {
-	vectors := readVectors(t)
-	memory := buildCDriver(t, cCoderSources...)
-	callback := buildCIODriver(t)
-	dir := t.TempDir()
+// cVectorBuilds are the C decoder builds TestCVectors checks: without
+// relocation, with the Thumb or MSP430X rules built in (matched by the
+// code generated with them), and with the MSP430X rules built in and
+// shipped tables accepted (tables interpreted).
+var cVectorBuilds = []struct {
+	name string
+	defs []string // nil: no relocation
+}{
+	{"no relocation", nil},
+	{"Thumb", []string{"-DTINYDELTA_RELOC=1"}},
+	{"MSP430X", []string{"-DTINYDELTA_RELOC=2"}},
+	{"MSP430X, shipped tables", []string{"-DTINYDELTA_RELOC=2", "-DTINYDELTA_RELOC_SHIPPED=1"}},
+}
 
-	check := func(v vector, decoder string, out []byte, code string, ok bool) {
-		t.Helper()
-		got := "OK"
-		if !ok {
-			got = code
-		}
-		want := v.result
-		if code := vectorCodes[v.result]; code != "" {
-			want = code
-		}
-		if got != want || (ok && !bytes.Equal(out, v.target)) {
-			t.Errorf("%s (%s): got %s (%d B), want %s (%d B)", v.name, decoder, got, len(out), want, len(v.target))
+// vectorWant is what a C build must give for v: a relocated patch's
+// result only from a build with the rules it needs (the vector's name
+// says which: reloc-thumb-*, reloc-msp430x-*, reloc-shipped-*), else
+// VERSION; reloc-any-* and every other vector alike in every build.
+func vectorWant(v vector, build string) string {
+	want := v.result
+	needs := map[string][]string{"reloc-thumb-": {"Thumb"}, "reloc-msp430x-": {"MSP430X", "MSP430X, shipped tables"}, "reloc-shipped-": {"MSP430X, shipped tables"}}
+	for prefix, builds := range needs {
+		if strings.HasPrefix(v.name, prefix) && !slices.Contains(builds, build) {
+			want = "VERSION"
 		}
 	}
-	for _, v := range vectors {
-		d, p, o := filepath.Join(dir, "d"), filepath.Join(dir, "p"), filepath.Join(dir, "o")
-		os.WriteFile(d, v.dict, 0o644)
-		os.WriteFile(p, v.patch, 0o644)
-		os.Remove(o)
-		stdout, err := cCommand(memory, d, p, o, fmt.Sprint(v.capacity)).Output()
-		var exit *exec.ExitError
-		switch {
-		case err == nil:
-			out, _ := os.ReadFile(o)
-			check(v, "memory decoder", out, "", true)
-		case errors.As(err, &exit) && exit.ExitCode() == 1:
-			check(v, "memory decoder", nil, string(bytes.TrimSpace(stdout)), false)
-		default:
-			t.Fatalf("%s: C memory decoder: %v: %s", v.name, err, stdout)
-		}
+	if code := vectorCodes[want]; code != "" {
+		return code
+	}
+	return want
+}
 
-		for _, c := range ioConfigs {
-			c := withTables(c, v.patch)
-			out, code, ok := runCIO(t, callback, c, true, v.dict, v.patch, v.capacity)
-			check(v, fmt.Sprintf("callback decoder, buffer %d, page %d", c.buffer, c.page), out, code, ok)
+func TestCVectors(t *testing.T) {
+	vectors := readVectors(t)
+	dir := t.TempDir()
+	for _, b := range cVectorBuilds {
+		memory, callback := buildCDriver(t, cCoderSources...), buildCIODriver(t)
+		if b.defs != nil {
+			memory, callback = buildCRelocDrivers(t, b.defs...)
+		}
+		check := func(v vector, decoder string, out []byte, code string, ok bool) {
+			t.Helper()
+			got := "OK"
+			if !ok {
+				got = code
+			}
+			want := vectorWant(v, b.name)
+			if got != want || (ok && !bytes.Equal(out, v.target)) {
+				t.Errorf("%s (%s, %s): got %s (%d B), want %s (%d B)", v.name, b.name, decoder, got, len(out), want, len(v.target))
+			}
+		}
+		for _, v := range vectors {
+			if b.defs != nil && !strings.HasPrefix(v.name, "reloc-") && !strings.HasPrefix(v.name, "coded") {
+				continue // plain patches: the build without relocation has them
+			}
+			d, p, o := filepath.Join(dir, "d"), filepath.Join(dir, "p"), filepath.Join(dir, "o")
+			os.WriteFile(d, v.dict, 0o644)
+			os.WriteFile(p, v.patch, 0o644)
+			os.Remove(o)
+			stdout, err := cCommand(memory, d, p, o, fmt.Sprint(v.capacity)).Output()
+			var exit *exec.ExitError
+			switch {
+			case err == nil:
+				out, _ := os.ReadFile(o)
+				check(v, "memory decoder", out, "", true)
+			case errors.As(err, &exit) && exit.ExitCode() == 1:
+				check(v, "memory decoder", nil, string(bytes.TrimSpace(stdout)), false)
+			default:
+				t.Fatalf("%s: C memory decoder: %v: %s", v.name, err, stdout)
+			}
+
+			for _, c := range ioConfigs {
+				c := withTables(c, v.patch)
+				if strings.HasPrefix(v.name, "reloc-") {
+					c.tables += 1024 + 16*relocEntrySize // a shipped table and the map
+				}
+				out, code, ok := runCIO(t, callback, c, true, v.dict, v.patch, v.capacity)
+				check(v, fmt.Sprintf("callback decoder, buffer %d, page %d", c.buffer, c.page), out, code, ok)
+			}
 		}
 	}
 }

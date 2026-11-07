@@ -73,7 +73,8 @@ class Patch(bytes):
 
 
 def encode(dictionary: _BytesLike, target: _BytesLike, *, greedy: bool = False, max_instruction_len: int = 0,
-           coder_tables: int = 0, window: int = 0, two_pass: bool = False) -> Patch:
+           coder_tables: int = 0, window: int = 0, two_pass: bool = False, relocation: Optional[str] = None,
+           image_base: int = 0, rules: Optional[str] = None, ship_rules: bool = False) -> Patch:
     """Returns the smallest Patch that turns dictionary into target (both
     bytes-like) and that the device's decoder, described by the options,
     can decode.
@@ -85,6 +86,14 @@ def encode(dictionary: _BytesLike, target: _BytesLike, *, greedy: bool = False, 
     within that many bytes, so the decoder reads them from its RAM buffer
     only (buffer_size in C, with target_read NULL).
     two_pass allows a patch the device decodes twice (Patch.passes).
+    relocation, for firmware images, is the instruction set whose addresses
+    the decoder relocates ("thumb" or "msp430x", TINYDELTA_RELOC in C),
+    with image_base the address the image starts at on the device; it
+    needs coder_tables, with 12 bytes more per map entry.
+    rules, instead of relocation, is the path of a relocation rule file
+    (YAML, docs/relocation-rules.md); the patch names its table by CRC, so
+    decode needs the same rules=, unless ship_rules puts the table in the
+    patch.
 
     greedy uses the fast greedy encoder instead of the optimal one (patches
     are typically a few percent larger). max_instruction_len, if above 0,
@@ -96,6 +105,10 @@ def encode(dictionary: _BytesLike, target: _BytesLike, *, greedy: bool = False, 
         raise ValueError("window must be 0 (no limit) or more")
     if coder_tables < 0:
         raise ValueError("coder_tables must be 0 (no coder) or more")
+    if relocation not in (None, "thumb", "msp430x"):
+        raise ValueError('relocation must be None, "thumb" or "msp430x"')
+    if relocation and rules:
+        raise ValueError("give relocation or rules, not both")
     with tempfile.TemporaryDirectory(prefix="tinydelta-") as work:
         dict_file = _write(work, "dictionary", dictionary)
         target_file = _write(work, "target", target)
@@ -105,6 +118,12 @@ def encode(dictionary: _BytesLike, target: _BytesLike, *, greedy: bool = False, 
             args.append("-greedy")
         if two_pass:
             args.append("-two-pass")
+        if relocation:
+            args += ["-reloc", relocation, "-base", str(image_base)]
+        if rules:
+            args += ["-rules", os.fspath(rules), "-base", str(image_base)]
+        if ship_rules:
+            args.append("-ship-rules")
         result = _run(args + [dict_file, target_file])
         passes = 1
         for line in result.stderr.decode("utf-8", "replace").splitlines():
@@ -113,7 +132,8 @@ def encode(dictionary: _BytesLike, target: _BytesLike, *, greedy: bool = False, 
         return Patch(result.stdout, passes)
 
 
-def decode(dictionary: _BytesLike, patch: _BytesLike, *, max_size: Optional[int] = None, passes: Optional[int] = None) -> bytes:
+def decode(dictionary: _BytesLike, patch: _BytesLike, *, max_size: Optional[int] = None, passes: Optional[int] = None,
+           rules: Optional[str] = None) -> bytes:
     """Applies patch to dictionary (both bytes-like) and returns the target.
 
     passes is how many times the patch is decoded, 1 or 2 (a two-pass
@@ -123,6 +143,9 @@ def decode(dictionary: _BytesLike, patch: _BytesLike, *, max_size: Optional[int]
     that would produce more raises TooLargeError before producing it. Set it
     whenever the expected size is known: a short patch can describe a huge
     target. A malformed patch raises Error.
+
+    rules is the relocation rule file a patch made with encode(rules=...)
+    names (not needed if it ships its table).
     """
     if passes is None:
         passes = getattr(patch, "passes", 1)
@@ -135,6 +158,8 @@ def decode(dictionary: _BytesLike, patch: _BytesLike, *, max_size: Optional[int]
         if max_size < 1:
             raise ValueError("max_size must be at least 1, or None for no limit")
         args += ["-max-size", str(min(max_size, MAX_SIZE))]
+    if rules:
+        args += ["-rules", os.fspath(rules)]
     with tempfile.TemporaryDirectory(prefix="tinydelta-") as work:
         dict_file = _write(work, "dictionary", dictionary)
         return _run(args + [dict_file, "-"], stdin=bytes(patch)).stdout

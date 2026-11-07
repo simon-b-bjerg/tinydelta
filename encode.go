@@ -4,8 +4,10 @@
 package tinydelta
 
 import (
+	"bytes"
 	"compress/flate"
 	"fmt"
+	"slices"
 )
 
 // Encode produces the smallest patch it can find that reconstructs target
@@ -63,6 +65,30 @@ type EncodeOptions struct {
 	// it. 0 means no limit beyond MaxSize. The patch format and the
 	// decoders are unchanged.
 	MaxInstructionLen int
+
+	// Relocation, for firmware images: the rule by which the decoder
+	// finds addresses in the old image (RelocationThumb,
+	// RelocationMSP430X). The encoder then also tries coded patches that
+	// carry a map of how code moved, against which the decoder relocates
+	// every address it finds before patching (reloc.go). Needs
+	// CoderTables: the map takes 12 bytes of that RAM per entry, and the
+	// decoder has to be built with the same rule (TINYDELTA_RELOC).
+	Relocation Relocation
+
+	// ImageBase is the address the old image's first byte is at on the
+	// device, for Relocation: 0x10000 or wherever the firmware is linked.
+	ImageBase uint32
+
+	// Rules, instead of Relocation: a relocation rule table
+	// (docs/relocation-rules.md; ParseRules, BuiltinRules). The patch
+	// names it by CRC, so the decoder must have the same table built in
+	// (decode such patches in Go with DecodeRules), unless ShipRules.
+	Rules *Rules
+
+	// ShipRules puts the rule table in the patch: any
+	// decoder that accepts shipped tables can then use it. It costs the
+	// table's size in the patch and in the decoder's tables buffer.
+	ShipRules bool
 }
 
 // Patch is EncodeWith's result.
@@ -93,6 +119,16 @@ func EncodeWith(dict, target []byte, opts EncodeOptions) (Patch, error) {
 		return Patch{}, fmt.Errorf("tinydelta: negative Window %d", opts.Window)
 	case opts.CoderTables < 0:
 		return Patch{}, fmt.Errorf("tinydelta: negative CoderTables %d", opts.CoderTables)
+	case opts.Relocation < RelocationNone || opts.Relocation > RelocationMSP430X:
+		return Patch{}, fmt.Errorf("tinydelta: unknown Relocation %d", int(opts.Relocation))
+	case opts.Rules != nil && opts.Relocation != RelocationNone:
+		return Patch{}, fmt.Errorf("tinydelta: Rules and Relocation both set")
+	case opts.ShipRules && opts.Rules == nil && opts.Relocation == RelocationNone:
+		return Patch{}, fmt.Errorf("tinydelta: ShipRules without Rules or Relocation")
+	}
+	rules := opts.Rules
+	if rules == nil {
+		rules = rulesFor(opts.Relocation)
 	}
 	window := MaxSize
 	if opts.Window > 0 && opts.Window < MaxSize {
@@ -116,11 +152,82 @@ func EncodeWith(dict, target []byte, opts EncodeOptions) (Patch, error) {
 			best = Patch{Bytes: patch, Passes: passes}
 		}
 	}
+	// Relocated patches compete separately: the smallest is decoded before
+	// it is kept, so a fault in building the map can't reach a device.
+	var relocated []byte
 	if len(layouts) > 0 {
 		for _, candidate := range [][]byte{best.Bytes, withVersion(FormatVersion2, encodeCovers(dict, target, maxLen))} {
 			for _, layout := range layouts {
 				consider(encodeCoded(candidate, layout), 1)
 			}
+		}
+	}
+	if rules != nil && len(layouts) > 0 {
+		// With and without entries for the gaps between covers (code that
+		// changed but moved), as either may give the smaller patch.
+		covered := relocMapFrom(dict, target, rules, opts.ImageBase)
+		fulls := []*relocMap{covered}
+		if gaps := covered.withGaps(dict, target); gaps != covered {
+			fulls = append(fulls, gaps)
+		}
+		type variant struct {
+			full    *relocMap
+			outside *relocMap
+			smooth  int
+		}
+		var variants []variant
+		for _, full := range fulls {
+			full.ship = opts.ShipRules
+			plainOutside := full.withOutside(dict, target)
+			variants = append(variants, variant{full, plainOutside, 0})
+			// Smoothed RAM ranges (fewer, a few fields wrong), if different.
+			if smoothed := full.withOutsideSmoothed(dict, target, outsideSmooth); !slices.Equal(smoothed.outside, plainOutside.outside) {
+				variants = append(variants, variant{full, smoothed, outsideSmooth})
+			}
+		}
+		for _, v := range variants {
+			full, withOutside := v.full, v.outside
+			for _, layout := range layouts {
+				// The map gets the tables buffer after the coder's tables (and a
+				// shipped rule table).
+				ram := opts.CoderTables - CodedTablesSize(layout)
+				if opts.ShipRules {
+					ram -= len(rules.table)
+				}
+				// With the addresses outside the image that moved if they fit.
+				m := withOutside.limitTo(ram)
+				if m == nil || len(m.entries) == 0 {
+					m = full.limitTo(ram)
+				}
+				if m == nil || len(m.entries) == 0 {
+					continue
+				}
+				// With and without data runs, as either may be smaller.
+				maps := []*relocMap{m}
+				// Data runs are picked with the RAM ranges in place; the ranges are
+				// then voted again, as data rules vote too.
+				if md := m.withDataRuns(dict, target).withOutsideSmoothed(dict, target, v.smooth).limitTo(ram); md != nil && len(md.data) > 0 {
+					maps = append(maps, md)
+				}
+				for _, m := range maps {
+					rd := m.relocate(dict)
+					for _, candidate := range [][]byte{plain(rd, target), withVersion(FormatVersion2, encodeCovers(rd, target, maxLen))} {
+						if p := encodeCodedReloc(candidate, layout, m); relocated == nil || len(p) < len(relocated) {
+							relocated = p
+						}
+					}
+				}
+			}
+		}
+		if relocated != nil && len(relocated) < len(best.Bytes) {
+			if testRelocFault != nil {
+				testRelocFault(relocated)
+			}
+			got, err := DecodeRules(dict, bytes.NewReader(relocated), len(target), opts.Rules)
+			if err != nil || !bytes.Equal(got, target) {
+				return Patch{}, fmt.Errorf("tinydelta: internal error: a relocated patch doesn't decode to the target (%v); please report it", err)
+			}
+			best = Patch{Bytes: relocated, Passes: 1}
 		}
 	}
 	if opts.TwoPass {
@@ -337,3 +444,7 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 	*c += countingWriter(len(p))
 	return len(p), nil
 }
+
+// testRelocFault, set by tests only, damages the relocated patch EncodeWith
+// is about to check.
+var testRelocFault func(patch []byte)

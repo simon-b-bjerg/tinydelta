@@ -89,7 +89,9 @@ A patch carries no checksum, so before shipping, read
 ## Contents
 
 - [Benchmark](#benchmark)
+- [Plain patches](#plain-patches)
 - [Coded patches](#coded-patches)
+- [Relocation](#relocation)
 - [Two-pass patches](#two-pass-patches)
 - [Why another delta format?](#why-another-delta-format)
 - [Installation](#installation)
@@ -114,6 +116,7 @@ A patch carries no checksum, so before shipping, read
   - [Rules](#rules)
   - [Example](#example)
   - [Coded form](#coded-form)
+  - [Relocation map](#relocation-map)
   - [Stability](#stability)
   - [Conformance vectors](#conformance-vectors)
 - [How the encoder works](#how-the-encoder-works)
@@ -124,58 +127,56 @@ A patch carries no checksum, so before shipping, read
 
 ## Benchmark
 
-492 real version pairs, one and five commits apart, against six other
-delta tools: firmware (MicroPython builds for four Cortex-M boards,
-185–364 KB) and configuration (Linux kernel configuration files and
-microcontroller device trees, 3–20 KB). Every patch was decoded again
-and checked against the target.
-For each update, tinydelta's figure is its [coded patch](#coded-patches)
-for a decoder with 777 B of coder tables (or the plain patch, when that
-is smaller), the one an update server would send. The trade-off graph
-also shows tinydelta without the coder: the smaller of its plain and
-[two-pass](#two-pass-patches) patch.
+520 real version pairs, one and five commits apart, against six other
+delta tools: firmware (MicroPython builds for four Cortex-M boards, and
+Mbed TLS for MSP430X, 112–364 KB) and configuration (Linux kernel
+configuration files and microcontroller device trees, 3–20 KB). Every
+patch was decoded again and checked against the target. tinydelta's
+patch is its [coded patch](#coded-patches) for a decoder with 777 B of
+coder tables (or the plain one, when that is smaller), the one an update
+server would send; for the firmware with [relocation](#relocation) rules
+(160 pairs) also its relocated patch.
 
-![Every pair: tinydelta against open-vcdiff, HPatchLite, detools, bsdiff and zstd](docs/benchmark/pairs.svg)
+![Every pair: tinydelta plain, coded and coded and relocated, against open-vcdiff, HPatchLite, detools and bsdiff](docs/benchmark/pairs.svg)
 
-Typical ratio of tinydelta's patch to the other tool's (geometric mean;
-below 1, tinydelta's is smaller) and how often tinydelta's is smaller:
+Each panel is one tinydelta variant (rows) against one tool (columns),
+every pair a dot; below the diagonal tinydelta's patch is smaller, and
+the bold figure is how often. Typical ratio of tinydelta's patch to the
+other tool's (geometric mean; below 1, tinydelta's is smaller):
 
-| compared with | configuration, 3–20 KB (316 pairs) | firmware, 185–364 KB (176 pairs) |
-|---|---|---|
-| open-vcdiff | **0.36**, smaller in 100% | **0.12**, smaller in 100% |
-| xdelta3 | 0.33, smaller in 100% | 0.21, smaller in 100% |
-| HPatchLite, 4 KB dictionary | **0.62**, smaller in 97% | **0.72**, smaller in 100% |
-| detools (heatshrink) | 0.25, smaller in 100% | 0.41, smaller in 100% |
-| bsdiff | **0.20**, smaller in 100% | 0.85, smaller in 67% |
-| zstd `--patch-from` | 0.63, smaller in 90% | 0.51, smaller in 100% |
+| compared with | configuration, 3–20 KB (316 pairs) | firmware, coded, 112–364 KB (204 pairs) | firmware, relocated (160 pairs) |
+|---|---|---|---|
+| open-vcdiff | 0.36, smaller in 100% | 0.12, smaller in 100% | 0.02, smaller in 100% |
+| xdelta3 | 0.33, smaller in 100% | 0.22, smaller in 100% | 0.04, smaller in 100% |
+| HPatchLite, 4 KB dictionary | 0.62, smaller in 97% | 0.72, smaller in 100% | 0.13, smaller in 100% |
+| detools (heatshrink) | 0.25, smaller in 100% | 0.40, smaller in 100% | 0.07, smaller in 100% |
+| bsdiff | 0.20, smaller in 100% | 0.83, smaller in 68% | 0.15, smaller in 100% |
+| zstd `--patch-from` | 0.63, smaller in 90% | 0.52, smaller in 100% | 0.10, smaller in 100% |
 
-tinydelta's patch is smaller than the VCDIFF tools', detools' and
-zstd's in every firmware pair, and than HPatchLite's in every firmware
-pair and 97% of configuration pairs. Against bsdiff it depends on the
-size of the change: when tinydelta's patch is under 1 KB (333 pairs,
-nearly all configuration updates), it is the smaller one in every pair,
-typically 0.20× bsdiff's; at 1 KB and above (159 pairs, nearly all
-firmware), the two are about even: tinydelta's is the smaller in 64%,
-typically 0.97× bsdiff's, whose decoder needs megabytes of RAM. The
-median configuration update is about 55 bytes; the median firmware
-update about 6 KB, 2.7% of the image.
+The median configuration update is about 56 bytes; the median firmware
+update 5.3 KB coded (2.6% of the image), and with relocation
+816 B (0.41%). bsdiff comes closest on large firmware
+changes, with a decoder that needs megabytes of RAM.
 
 Larger configuration files (arm64 device trees, 47–107 KB, 38 pairs)
 are left out of the graphs above: tinydelta's lead narrows as the files
-grow (0.72× HPatchLite's and 0.51× bsdiff's; five commits apart, 0.84×
-and 0.85×). Their numbers and
+grow (0.65× HPatchLite's and 0.38× bsdiff's; five commits apart,
+0.84× and 0.85×). Their numbers and
 [graph](docs/benchmark/ratio_ecdf_large_configuration.svg) are with the
 [summary](docs/benchmark/summary.md).
 
-What that compression costs on the device:
+What that compression costs on the device, for firmware: each of
+tinydelta's decoders, from plain to coded to relocating, is a step down
+in patch size for a step up in code.
 
-![Patch size against decoder footprint](docs/benchmark/tradeoff.svg)
+![Firmware: patch size against decoder footprint, tinydelta's decoders as a staircase](docs/benchmark/tradeoff.svg)
 
 | decoder | code (Cortex-M0, `-Os`) | RAM besides stack | stack |
 |---|---:|---:|---:|
 | **tinydelta**, memory decoder | **500 B** | **0** | ~110 B |
-| **tinydelta**, callback decoder | **876 B** | **256 B** buffer\* | ~185 B |
-| **tinydelta**, callback decoder + coder | **1,708 B** | **256 B** buffer\* + 777 B tables‡ | ~305 B |
+| **tinydelta**, callback decoder | **876 B** | **256 B** buffer\* | ~180 B |
+| **tinydelta**, callback decoder + coder | **1,720 B** | **256 B** buffer\* + 777 B tables‡ | ~280 B |
+| **tinydelta**, callback decoder + coder + Thumb relocation | **4,131 B** | **256 B** buffer\* + 1,545 B tables and map‡ | ~600 B |
 | HPatchLite + tinyuz | ~2.2 KB | 4–32 KB dictionary | – |
 | detools + heatshrink | 1,948 B | 640 B state† | ~0.5 KB |
 | tiny-vcdiff (open-vcdiff's format) | 3,881 B | 3,221 B | ~150 B |
@@ -192,16 +193,12 @@ array is fine ([Coded patches](#coded-patches)).
 
 What you give up:
 
-- **The coder, or two passes, for large changes.** Without either, on
-  firmware updates of 1 KB and up, tinydelta's patch is typically 17%
-  larger than HPatchLite's and 53% larger than bsdiff's. With the coder
-  it is about even with bsdiff, whose decoder needs thousands of times
-  more RAM (see the graph above).
-- **The coder costs code and RAM.** The smallest firmware patches need
-  the optional coder, about 0.9 KB more code on Cortex-M0 and its tables
-  ([Coded patches](#coded-patches)); without it, two passes come
-  closest, with room for the intermediate patch
-  ([Two-pass patches](#two-pass-patches)).
+- **Each step costs code.** The coder adds about 0.9 KB of code on
+  Cortex-M0 and short-lived tables ([Coded patches](#coded-patches));
+  relocation 2.3 KB more with Thumb's rules, for firmware whose instruction set has
+  rules ([Relocation](#relocation)). Without the coder, two passes give
+  smaller firmware patches for no code, with room for the intermediate
+  patch ([Two-pass patches](#two-pass-patches)).
 - **Speed was not compared.** The goal is a small decoder, not a fast one.
 - **Small patch reads.** The callback decoder reads instruction headers
   a few bytes at a time; on slow flash, wrap `patch_read` in a small
@@ -216,7 +213,9 @@ What you give up:
 Pairs are builds of consecutive commits, so every one is a real change,
 and a build equal to any earlier one is skipped: MicroPython's stm32
 port (NUCLEO_F091RC, PYBV11) and samd port (ADAFRUIT_TRINKET_M0,
-SEEED_XIAO_SAMD21) between `v1.25.0` and `v1.26.0`; six Linux
+SEEED_XIAO_SAMD21) between `v1.25.0` and `v1.26.0`; Mbed TLS between
+`v2.28.0` and `v2.28.10`, linked into a fixed program for MSP430X with
+the large code model ([`bench/mbedtls/`](bench/mbedtls/)); six Linux
 `arch/arm/configs` files between `v5.0` and `v7.3`; five
 microcontroller boards' device trees (STM32F7, STM32H7, LPC4357) between
 `v6.5-dts` and `v7.3-dts`; and three arm64 boards' device trees
@@ -225,9 +224,10 @@ microcontroller boards' device trees (STM32F7, STM32H7, LPC4357) between
 library's default encoding, as users get it: optimal, but greedy above
 roughly 100 KB, so greedy for the firmware. Each pair is encoded with
 `encode -coder-tables 777`, which returns the coded patch or the plain
-one, whichever is smaller; that one counts. For tinydelta without the
-coder, in the trade-off graph, each pair is encoded both plain and as
-a two-pass patch (`encode -two-pass`) and the smaller counts. Every
+one, whichever is smaller; that one counts. Firmware with relocation
+rules (all but PYBV11, whose image is two flash regions joined) is also
+encoded with `-coder-tables 1545 -reloc thumb` or `msp430x` and its
+image's base address. Every
 variant is listed on its own in the summary. The other tools run at their
 smallest settings: open-vcdiff with `-target_matches`, xdelta3 `-9 -S
 none`, HPatchLite `hdiffi -c-tuz-4k` (and `-32k`), detools with
@@ -268,24 +268,31 @@ holds the old and new file in memory. Every figure and its source is in
 
 </details>
 
+## Plain patches
+
+A patch is a stream of instructions that builds the new file from the
+old one: `SKIP` reuses the old bytes where nothing changed, `ADD`
+carries new bytes, and `COPY` reuses bytes from elsewhere in the old
+file. The decoder reads it once, front to back: 500 B of code on
+Cortex-M0, and with callbacks for flash, 876 B and one page buffer.
+
+![A plain patch: its SKIP instructions reuse the old file, its ADD instructions carry the new bytes](docs/plain-patch.svg)
+
+Every other kind of patch below is this same stream, made smaller on
+the way. The format is under [Wire format](#wire-format).
+
 ## Coded patches
 
-A coded patch is a plain patch whose instruction stream is range-coded:
-every bit is coded with an adaptive probability chosen by what the bit
-belongs to (an instruction byte after a given previous instruction, an
-`ADD_DIFF` byte, a literal, ...). In firmware patches those are very
-regular: `SKIP` and `ADD_DIFF` alternate, and the same few difference
-values recur, so they cost a fraction of a bit each. The device decodes
-it in **one pass**, with no intermediate patch to store, and the
-instructions and their meaning are exactly those of a plain patch.
+A coded patch is the plain stream, range-coded: each bit is coded with
+an adaptive probability chosen by what it belongs to (an opcode, a
+length, a new byte). Firmware updates are very regular, so most bits
+cost a fraction of a bit. The device still decodes in **one pass**,
+with nothing stored in between.
 
 ![The layers of a coded patch: the range coder turns the coded bytes into the plain instruction stream, whose SKIP and ADD instructions build the new file from the old one](docs/patch-layers.svg)
 
-The price is on the device, so it is optional twice over: the C
-decoders only read coded patches when built with `TINYDELTA_CODER = 1`,
-and the encoder only makes one when told the size of the decoder's
-buffer for the coder's probability tables, needed for as long as it
-decodes (a local array is fine):
+It costs about 900 B more code and a short-lived tables buffer; the
+encoder picks a table layout that fits the buffer you give it:
 
 | table layout | RAM | firmware, 176 updates | configuration, 316 updates |
 |---|---:|---:|---:|
@@ -294,19 +301,22 @@ decodes (a local array is fine):
 | B: `ADD_DIFF` bytes, and one for the rest | 777 B | 1,149,923 B (−35%) | 45,900 B (−10%) |
 | A: one table per kind of byte | 1,287 B | 1,145,110 B (−35%) | 44,582 B (−13%) |
 
-All patches of the [benchmark](#benchmark), added up; coded patches
-decode in one pass, against two for most of the plain row's firmware
-patches. With the coder, firmware patches are smaller than HPatchLite's
-(4 KB dictionary) in every update. On small configuration updates the
-plain patch is often smaller: a few bytes of coder setup outweigh the
-gain on a 20-byte patch, and the encoder then returns the plain one (in
-about two thirds of them).
+All [benchmark](#benchmark) patches, added up. On tiny configuration
+updates the plain patch is often smaller, and the encoder then returns
+that.
 
 ```sh
-tinydelta encode -coder-tables 777 old.bin new.bin update.td   # coded if smaller, with tables that fit 777 bytes
+tinydelta encode -coder-tables 777 old.bin new.bin update.td   # coded if smaller, tables within 777 B
 ```
 
-On the device (`TINYDELTA_CODER = 1`, plus `tinydelta_coder.c`):
+On the device, build with `TINYDELTA_CODER = 1`, add `tinydelta_coder.c`,
+and pass the tables buffer (`p_tables`, `tables_size`: the same number
+as `-coder-tables`). A patch whose tables don't fit, or a decoder built
+without the coder, is rejected with `TINYDELTA_ERR_VERSION` before
+anything is written.
+
+<details>
+<summary>Decoding a coded patch</summary>
 
 ```c
 uint8_t tables[TINYDELTA_CODED_TABLES_B];   /* memory decoder: 777 B, short-lived */
@@ -319,53 +329,104 @@ io.p_tables = tables; io.tables_size = sizeof tables;
 result = tinydelta_decode_io(&io, &target_len);
 ```
 
-`-coder-tables` is the size of the device's tables buffer
-(`tables_size`): one number links the two. A patch whose tables need
-more than the buffer, or a build without the coder, is rejected with
-`TINYDELTA_ERR_VERSION` before anything is written. The code it costs is under
-[Code size and stack](#code-size-and-stack); the format is under
-[Wire format](#coded-form).
+The code it costs is under [Code size and stack](#code-size-and-stack);
+the format under [Coded form](#coded-form).
+
+</details>
+
+## Relocation
+
+When firmware gains or loses code, every call and pointer into the code
+after it changes, though nothing about them changed in the source; a
+coded patch spends most of its bytes on them. With relocation, the patch
+header carries a small **map** of how parts of the old image moved, and
+the decoder updates those addresses in the old image itself while it
+reads it. The patch then carries only what really changed: the idea of
+Google's Courgette, without a disassembler.
+
+![A new function moves foo: the map in the patch header updates the addresses in the old image while decoding, so the patch only carries the new function](docs/relocation.svg)
+
+| firmware, consecutive builds | coded | coded and relocated |
+|---|---:|---:|
+| MicroPython, NUCLEO_F091RC (Thumb), 24 updates | 98,726 B | **6,701 B (−93%)** |
+| MicroPython, SAMD21 (Thumb), 24 updates | 89,338 B | **15,198 B (−83%)** |
+| Mbed TLS 2.28, MSP430X `-mlarge`, 16 updates | 26,839 B | **5,294 B (−80%)** |
+
+From the [benchmark](#benchmark), map included; every patch is decoded
+again and compared.
+
+```sh
+tinydelta encode -coder-tables 1545 -reloc thumb -base 0x08000000 old.bin new.bin update.td
+```
+
+`-base` is the image's link address; the map takes 12 bytes per entry
+of the tables buffer, and updates here needed only a few entries. A
+wrong base doesn't fail, it only gains little: `tinydelta relocstats`
+checks it, and shows what relocation leaves to the patch (`-v`: every
+address it left wrong, as numbers only, shareable where the images
+aren't).
+
+On the device, build with `TINYDELTA_RELOC = TINYDELTA_RELOC_THUMB` (or
+`_MSP430X`) as well as the coder, and add `tinydelta_reloc.c`: about
+2.3 KB more code on Cortex-M0 with the `thumb` rules, 6 KB on MSP430X
+(`-mlarge`) with the `msp430x` rules. Nothing else changes; the tables
+buffer holds the map too. It costs time: the decoder checks the rules at
+every position of the old image it reads, about 1,700 cycles per byte
+on MSP430 with the `msp430x` rules for the memory decoder, a third more
+for the callback decoder in small chunks (a 256 KB image at 16 MHz:
+about 30 to 40 seconds); on Cortex-M0 with the `thumb` rules, about 210
+instructions per byte, 300 for the callback decoder.
+[`scripts/c-time.py`](scripts/c-time.py) measures both.
+
+<details>
+<summary>Which addresses move, and your own rules</summary>
+
+| rules | addresses they move |
+|---|---|
+| `thumb` (ARM Cortex-M) | `BL` calls and, on Thumb-2 cores (M3/M4/M7/M33), `B.W` tail calls into the image; 4-byte-aligned 32-bit pointers into it (vector table, literal pools, function tables) |
+| `msp430x` (large code model) | the 20-bit addresses of `CALLA`, `MOVA`/`ADDA`/`CMPA`/`SUBA`, and of extension-word instructions; the 16-bit `&abs`, `x(Rn)` and `#imm` operands of classic instructions (not stack offsets or PC-relative ones); 4-byte pointers in data blocks the encoder picks; addresses into RAM by a second list of ranges, when variables move |
+
+Which bytes form an address is decided from a few bytes of the old
+image around each position, so the decoder relocates whatever part it
+reads, in any order. A wrong guess (data that looks like an
+instruction) costs a few bytes of patch, never correctness: the encoder
+makes the same guess.
+
+The rules are data, not code: [`rules/thumb.yaml`](rules/thumb.yaml)
+and [`rules/msp430x.yaml`](rules/msp430x.yaml), described in
+[docs/relocation-rules.md](docs/relocation-rules.md). To try your own,
+pass a rule file with `-rules` instead of `-reloc` (`tinydelta rules
+check` validates it); the patch names its table by CRC, so the decoder
+needs that table built in (`tinydelta rules compile -c`), or the patch
+carries it with `-ship-rules` for a decoder built with
+`TINYDELTA_RELOC_SHIPPED`.
+
+</details>
 
 ## Two-pass patches
 
-For updates that change a lot, `encode -two-pass` (`EncodeOptions.TwoPass`)
-may return a patch the device decodes twice. Its first pass, made for
-compression, stores where the new file still lines up with the old one
-but a few bytes changed (moved addresses, branch offsets) as the
-*difference* from the old bytes (format version 2), so the same shift
-gives the same byte everywhere. tinydelta then compresses that patch: the
-second pass encodes it against an empty dictionary, and its repeats
-become short copies.
+Two passes are for a decoder **without** the coder: smaller firmware
+patches for no extra code, paid for in decoding time and flash for an
+intermediate patch. `encode -two-pass` returns a patch the device
+decodes twice when that is smaller: the inner patch stores small changes
+(moved addresses) as differences from the old bytes, so the same move
+gives the same bytes everywhere, and the outer patch compresses those
+repeats into short copies.
 
 ![A two-pass patch: an outer instruction stream expands to the inner one, which builds the new file from the old one](docs/two-pass-layers.svg)
 
-The figure shows the mechanism on the small example from the
-[wire format](#example), which is too small to gain from it: there, one
-pass wins. The saving comes on firmware, where the same differences
-recur across thousands of addresses.
-
-```text
-update server:  old + new ──v2──▶ inner ──v1──▶ outer     (sent)
-device:         outer ──v1──▶ inner ──v2──▶ new
-```
-
-The encoder returns whichever is smaller, plain or two-pass, and says
-which: the CLI prints `passes 1` or `passes 2`, Go's `Patch.Passes` and
-Python's `Patch.passes` carry it. Send it with the patch; it is not part
-of it. In the benchmark, two passes win on 96% of firmware updates and
-about halve them (2.2× smaller on patches of 1 KB and up); on small
-configuration updates the plain patch is the smaller in 84% of them,
-typically by a few bytes. The [benchmark](#benchmark)'s trade-off graph
-shows the smaller of the two, for a decoder without the coder.
-
-Two passes cost no decoder code, only time and room for the inner patch
-between the passes. Where the decoder can afford the coder,
-[coded patches](#coded-patches) are smaller still, in one pass.
+In the benchmark, two passes about halve firmware patches against one;
+coded patches are smaller still, in one pass, and relocation smaller
+again. On small configuration updates one pass usually wins.
 
 ```sh
 tinydelta encode -two-pass old.bin new.bin update.td    # prints "passes 1" or "passes 2"
 tinydelta decode -two-pass old.bin update.td new.bin    # for "passes 2"
 ```
+
+The number of passes is not part of the patch: the CLI prints it, Go's
+`Patch.Passes` and Python's `Patch.passes` carry it, and you send it
+along.
 
 <details>
 <summary>Decoding twice on the device</summary>
@@ -474,8 +535,9 @@ patch = tinydelta.encode(old, new)
 assert tinydelta.decode(old, patch, max_size=len(new)) == new
 ```
 
-`encode` also takes `coder_tables`, `window` and `two_pass`, which
-describe the device's decoder (see [Command-line usage](#command-line-usage)). The wheels (Linux and Windows,
+`encode` also takes `coder_tables`, `window`, `two_pass`, and for
+firmware `relocation` with `image_base` (or `rules` and `ship_rules`),
+which describe the device's decoder (see [Command-line usage](#command-line-usage)). The wheels (Linux and Windows,
 x86-64 and ARM64, Python 3.9 and later) bundle the command-line tool,
 which the package runs; they also install the `tinydelta` command. See
 [`python/README.md`](python/README.md).
@@ -489,8 +551,10 @@ from a release.
 ## Command-line usage
 
 ```text
-tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-max-len N] [-v] <dictionary> <target> [<patch>]
-tinydelta decode [-two-pass] [-max-size N] [-v] <dictionary> <patch> [<target>]
+tinydelta encode [-greedy] [-coder-tables N] [-window N] [-two-pass] [-reloc thumb|msp430x | -rules FILE [-ship-rules] -base ADDR] [-max-len N] [-v] <dictionary> <target> [<patch>]
+tinydelta decode [-two-pass] [-max-size N] [-rules FILE] [-v] <dictionary> <patch> [<target>]
+tinydelta relocstats [-reloc thumb|msp430x | -rules FILE] -base ADDR [-v] <old image> <new image>
+tinydelta rules check|compile [-o table.bin] [-c rules.h] <rules.yaml>
 tinydelta version
 ```
 
@@ -514,6 +578,11 @@ encoder returns the smallest patch it can decode:
 | `-coder-tables N` | has the coder, with an N-byte tables buffer (`tables_size`): allows [coded patches](#coded-patches) | 0: no coder |
 | `-window N` | reads its own output only from its N-byte RAM buffer (`buffer_size`, `target_read` `NULL`), never from flash | 0: no limit |
 | `-two-pass` | can decode twice ([Two-pass patches](#two-pass-patches)); prints `passes 1` or `passes 2` | one pass |
+| `-reloc R -base ADDR` | relocates addresses for instruction set R (`TINYDELTA_RELOC`) in an image at ADDR: allows [relocated patches](#relocation) | no relocation |
+| `-rules FILE [-ship-rules]` | instead of `-reloc`: has the rule table compiled from FILE built in, or with `-ship-rules` accepts tables shipped in patches (`TINYDELTA_RELOC_SHIPPED`), which then carry it ([your own rules](docs/relocation-rules.md)); `decode -rules FILE` decodes such patches | |
+
+`relocstats` and `rules` are for [relocation](#relocation): how much of
+an update relocation explains, and checking or compiling a rule file.
 
 `decode -max-size` rejects patches whose output would exceed
 the given size, which must be at least 1; with `-two-pass` it also caps the first pass, at 8 times
@@ -532,6 +601,7 @@ p, err := tinydelta.EncodeWith(oldFile, newFile, tinydelta.EncodeOptions{
 	CoderTables: 777, // the decoder's coder tables buffer (coded patches)
 	Window:      256, // it reads its output only from a 256-byte RAM buffer
 	TwoPass:     true, // it can decode twice
+	// Firmware: Relocation: tinydelta.RelocationMSP430X, ImageBase: 0x10000
 })
 // p.Bytes is the patch, p.Passes 1 or 2
 
@@ -545,7 +615,7 @@ newFile, err := tinydelta.DecodeReaderLimit(oldFile, r, maxSize) // from an io.R
 |---|---|
 | `Encode` | Optimizing parse; roughly 100–300 ms for a few KB. Never larger than `EncodeGreedy`'s patch; falls back to greedy above roughly 100 KB to bound memory. |
 | `EncodeGreedy` | One pass with one byte of lookahead; well under a millisecond for a few KB, patches typically a few percent larger. |
-| `EncodeWith` | The smallest patch the decoder described by `EncodeOptions` can decode (`CoderTables`, `Window`, `TwoPass`, `MaxInstructionLen`, `Greedy`), as a `Patch`: the bytes and the number of passes. |
+| `EncodeWith` | The smallest patch the decoder described by `EncodeOptions` can decode (`CoderTables`, `Window`, `TwoPass`, `Relocation` and `ImageBase`, `MaxInstructionLen`, `Greedy`), as a `Patch`: the bytes and the number of passes. |
 | `Decode`, `DecodeReader` | Apply a patch from a byte slice or an `io.Reader`. |
 | `DecodeReaderLimit` | As `DecodeReader`, but fails with `ErrTooLarge` before the target would exceed a size you choose, of at least 1. |
 
@@ -580,6 +650,7 @@ beyond `memcpy`.
 | **memory decoder** | `tinydelta.h`, `tinydelta_internal.h`, `tinydelta_decode.c` | dictionary, patch and output buffer are all in RAM |
 | **callback decoder** | `tinydelta.h`, `tinydelta_internal.h`, `tinydelta_io.h`, `tinydelta_io.c` | the data is elsewhere, e.g. external flash, reached through your own read/write functions; one buffer of yours caches flash pages and the recent output |
 | **coder** (optional) | `tinydelta_coder.h`, `tinydelta_coder.c`, and `TINYDELTA_CODER=1` for all files | either decoder should read [coded patches](#coded-patches) |
+| **relocation** (optional, with the coder) | `tinydelta_reloc.h`, `tinydelta_reloc.c`, the built-in rule table's header (`tinydelta_rules_thumb.h` or `tinydelta_rules_msp430x.h`), and `TINYDELTA_RELOC=TINYDELTA_RELOC_THUMB` or `_MSP430X` for all files | either decoder should read [relocated patches](#relocation) (firmware) |
 
 ### Code size and stack
 
@@ -589,10 +660,14 @@ even on Cortex-M0). Reproduce with [`scripts/c-size.sh`](scripts/c-size.sh).
 
 | part | Cortex-M0 | Cortex-M3 | Cortex-M4 | stack (Cortex-M0) |
 |---|---:|---:|---:|---:|
-| memory decoder | 500 B | 470 B | 470 B | ~110 B |
-| callback decoder | 876 B | 836 B | 836 B | ~185 B\* |
-| memory decoder + coder | 1,404 B | 1,332 B | 1,332 B | ~290 B |
-| callback decoder + coder | 1,708 B | 1,692 B | 1,696 B | ~305 B\* |
+| memory decoder | 500 B | 472 B | 472 B | ~110 B |
+| callback decoder | 876 B | 836 B | 836 B | ~180 B\* |
+| memory decoder + coder | 1,416 B | 1,340 B | 1,340 B | ~290 B |
+| callback decoder + coder | 1,720 B | 1,700 B | 1,700 B | ~280 B\* |
+| memory decoder + coder + Thumb relocation | 3,711 B | 3,551 B | 3,575 B | ~540 B |
+| callback decoder + coder + Thumb relocation | 4,131 B | 3,975 B | 3,999 B | ~600 B\* |
+| memory decoder + coder + MSP430X relocation | 5,070 B | 4,862 B | 4,870 B | ~585 B |
+| callback decoder + coder + MSP430X relocation | 5,490 B | 5,286 B | 5,294 B | ~650 B\* |
 
 \* Deepest path, excluding your buffer and your callbacks' own stack
 use. With the coder (`TINYDELTA_CODER = 1`), each decoder grows by
@@ -608,9 +683,11 @@ every 32-bit operation takes several 16-bit instructions.
 | part | MSP430 | MSP430X | MSP430X, `-mlarge` | stack (`-mlarge`) |
 |---|---:|---:|---:|---:|
 | memory decoder | 1,104 B | 1,080 B | 1,202 B | ~145 B |
-| callback decoder | 2,350 B | 2,298 B | 2,458 B | ~230 B\* |
-| memory decoder + coder | 2,610 B | 2,544 B | 2,812 B | ~290 B |
-| callback decoder + coder | 3,354 B | 3,260 B | 3,554 B | ~335 B\* |
+| callback decoder | 2,350 B | 2,298 B | 2,458 B | ~220 B\* |
+| memory decoder + coder | 2,608 B | 2,544 B | 2,810 B | ~290 B |
+| callback decoder + coder | 3,362 B | 3,268 B | 3,564 B | ~320 B\* |
+| memory decoder + coder + MSP430X relocation | 8,608 B | 8,320 B | 8,812 B | ~505 B |
+| callback decoder + coder + MSP430X relocation | 9,644 B | 9,306 B | 9,870 B | ~605 B\* |
 
 ### Results
 
@@ -851,7 +928,8 @@ deviations, listed with their reasons in
 | 10.8 composite expression cast | required | the masked two-bit opcode is cast to `tinydelta_opcode`, so `-Wswitch-enum` proves every opcode has a case |
 | 11.8 const cast away | required | cppcheck false positive: a callback's `void *p_ctx` is copied out of the `const tinydelta_io_t`; no qualifier is removed |
 | 11.5 `void *` to object pointer | advisory | the coder's byte source gets its decoder through `void *`, like the callbacks' contexts |
-| 2.5 unused macro | advisory | in builds without `TINYDELTA_CODER` only: the coder's macros go unused |
+| 2.5 unused macro | advisory | in builds without `TINYDELTA_CODER` only: the coder's macros go unused; `TINYDELTA_RELOC_RULES`, an option for the library's users; and a generated rule header's parameters in builds that read them from shipped tables |
+| 8.9 object at block scope | advisory | a relocation rule table made by `tinydelta rules compile -c` is a file-scope array in its header |
 
 ## Wire format
 
@@ -954,13 +1032,15 @@ range-coded ([Coded patches](#coded-patches)):
 
 ```text
 coded patch = 0x80 | version (0x81 or 0x82)
-            + features (1 byte: bits 0-1 the table layout, 1-3; bits 2-7 are 0)
+            + features (1 byte: bits 0-1 the table layout, 1-3; bits 2-3
+                        relocation, 0 for none; bits 4-7 are 0)
+            + [relocation map, with relocation]
             + n (varint: the length of the instruction stream, uncoded)
             + the coded stream
 ```
 
-A features byte with layout 0 or any of bits 2-7 set is unsupported,
-like an unknown version. Decoding yields the instruction stream's bytes
+A features byte with layout 0, relocation 3 or any of bits 4-7 set is
+unsupported, like an unknown version. Decoding yields the instruction stream's bytes
 one at a time, `n` of them, and the instructions are decoded from them
 exactly as from a plain patch's.
 
@@ -1013,6 +1093,44 @@ state at `base + node − 1`. A decoder that needs a coded byte past the
 end of the patch, or finds the stream's bytes run out mid-instruction,
 has a malformed patch.
 
+### Relocation map
+
+With features bits 2-3 set, the coded header carries a map of how parts
+of the old image moved, and the decoder relocates the old image through
+it before the instructions read it ([Relocation](#relocation)). Which
+bytes of the old image are addresses is set by a rule table: with 1 the
+decoder's built-in table, named by its CRC; with 2 a table shipped in the
+patch. The table's format, and what the engine does with it bit for bit,
+are in [docs/relocation-rules.md](docs/relocation-rules.md) ("Binary
+table", "What the engine does").
+
+```text
+relocation = 1: the rule table's CRC-16/CCITT-FALSE (2 bytes, little-endian)
+             2: the shipped table's length (varint, 1-4096)
+           + base (varint: the old image's address on the device)
+           + entries:    count (varint) + count × ( gap + length + shift )   old-image offsets that moved
+           + data runs:  count (varint) + count × ( gap + length )           in 256-byte blocks
+           + RAM ranges: count (varint) + count × ( gap + length + shift )   addresses outside the image that moved
+```
+
+All fields are varints, `shift` zigzag-encoded. Each `gap` counts from
+the previous record's end in its list (from 0 for the first), so the
+records are in order and don't overlap; a record ending past 2^32 − 1 is
+malformed. An old-image offset `o` moves by the `shift` of the entry
+holding it, by 0 outside every entry; an address outside the image moves
+by the RAM range holding it. With 2, the coded stream starts with the
+table's bytes, bits 7 down to 0 through one bit tree of 255 states of
+its own, all starting at 0; the instructions' states then start at 0
+as usual.
+
+A table CRC that isn't the decoder's built-in table's, a shipped table
+the decoder doesn't accept (`TINYDELTA_RELOC_SHIPPED`) or that fails the
+[limits](docs/relocation-rules.md#limits-and-validation), and a map or
+table that doesn't fit the decoder's tables buffer (after the coder's
+tables: the shipped table's length, 12 bytes per entry and RAM range, 8
+per data run) give `VERSION`, `VERSION`, `MALFORMED` and `VERSION`; a
+decoder built without relocation gives `VERSION` for any relocated patch.
+
 ### Stability
 
 Format versions 1 and 2, and their coded form, are fixed: a patch from any encoder decodes
@@ -1021,6 +1139,14 @@ instruction set gets a new version byte, and decoders reject versions
 they don't implement. Encoders may still produce different, usually
 smaller, patches for the same input in later releases; they stay valid
 patches of the same version.
+
+Relocation is stable in the same way: the map, the rule-table format and
+the built-in Thumb and MSP430X tables (named in the patch by CRC) are fixed,
+and new rules come as new tables. It has been tested on few platforms so far:
+Cortex-M0 (STM32F091), Cortex-M0+ (SAMD21), Cortex-M4 (STM32L476) and MSP430X
+(IAR and GCC builds). Rules that miss or misread a field on another core or
+compiler cost patch size, never correctness, as encoder and decoder relocate
+the old image the same way; `tinydelta relocstats -v` shows what they miss.
 
 The Go API follows [semantic versioning](https://semver.org) from
 v1.1.0. v1.0.0 predates the version byte: patches made with it don't
@@ -1041,7 +1167,11 @@ dictionary or one byte past it, `COPY_TARGET` overlapping its own
 output or pointing at or past the write position, truncated operands,
 and capacities exactly reached and one byte short. Coded patches
 (`coded-*`) cover each table layout, both instruction sets, and the
-headers to reject. A few more are real encoder output (`gen-*`).
+headers to reject. Relocated patches (`reloc-*`) cover the Thumb and
+MSP430X tables built in and a shipped one, all three lists of the map,
+and the headers and tables to reject; `TestCVectors` checks them against
+C builds with each table, without relocation, and without shipped
+tables. A few more are real encoder output (`gen-*`).
 
 They also settle one thing this section leaves open: an instruction is
 checked against the capacity as soon as its length is known, before its
@@ -1109,11 +1239,18 @@ What is tested, and how:
 | `TestCHeadersFromCPlusPlus` | C++ code can include the headers and link against the decoders |
 | `TestTwoPass`, `TestCTwoPass` | [two-pass patches](#two-pass-patches) end to end: the outer patch decoded, then the inner one, with the Go decoder and both C decoders |
 | `TestVectors`, `TestCVectors` | the Go decoder, the C memory decoder and the C callback decoder (several buffer and page sizes) against every [conformance vector](#conformance-vectors) |
-| C fuzzing ([`c/fuzz/fuzz_decode.c`](c/fuzz/fuzz_decode.c)) | libFuzzer with AddressSanitizer and UndefinedBehaviorSanitizer: every input through an independent reference decoder and all C decoder configurations, which must agree exactly; any memory error, undefined behaviour or breach of the callback contract fails; injected callback failures must give `TINYDELTA_ERR_IO` |
+| C fuzzing ([`c/fuzz/fuzz_decode.c`](c/fuzz/fuzz_decode.c)) | libFuzzer with AddressSanitizer and UndefinedBehaviorSanitizer: every input through an independent reference decoder and the memory and callback decoders, which must agree exactly, in four builds (MSP430X built in with shipped tables accepted, MSP430X only, Thumb only, no coder); any memory error, undefined behaviour or breach of the callback contract fails; injected callback failures must give `TINYDELTA_ERR_IO` |
+| `TestCRelocation`, `TestCRelocationRules` | [relocated patches](#relocation) end to end with the C decoders (Thumb and MSP430X built in, shipped tables, a table of one's own), memory and callback decoder at several buffer and page sizes, and corrupted or cut patches accepted or rejected exactly as Go does; on 32-bit ARM and MSP430 too |
+| `TestRelocationVerified` | the encoder decodes the relocated patch it picks before returning it, and returns an error, never the patch, if that doesn't give the target |
+| `TestMSP430X16BitAddresses` | hand-assembled MSP430 instructions with 16-bit addresses: those that point into a moved RAM range move with it; stack offsets, PC-relative operands and the constant generator stay |
+| `FuzzRelocRoundTrip` (Go fuzzing) | firmware-like images with code inserted so that code moves, Thumb or MSP430X, built-in or shipped table, with data runs and moved RAM: the patch the encoder picks, and a relocated one it might not, decode back to the target |
+| `FuzzRelocGoVsC` (Go fuzzing, cgo) | the same patches, intact, damaged or with one byte too little room, through the Go decoder and the C memory and callback decoders linked in (Thumb built in, or MSP430X built in with shipped tables accepted): the same result and bytes |
+| `FuzzRulesTable`, `FuzzParseRules` (Go fuzzing) | any bytes as a binary rule table and any text as a YAML rule file: no panic; what is accepted round-trips exactly and relocates without a panic |
+| C fuzzing ([`c/fuzz/fuzz_reloc.c`](c/fuzz/fuzz_reloc.c)) | the relocation engine on its own, with any table, image and map: the table checker never reads past the table, and relocating the image in one go or in chunks of 1–16 bytes in any order gives the same bytes; in three builds (shipped tables, MSP430X only, Thumb only) |
 | `scripts/c-check.sh` | the C library builds with strict warnings as errors |
 | `scripts/c-format.sh` | the C sources match [`c/.clang-format`](c/.clang-format) |
 | `scripts/c-analyze.sh` | static analysis of the C library with GCC's analyzer, the Clang Static Analyzer, clang-tidy (bug-finding checks, see [`c/.clang-tidy`](c/.clang-tidy)) and cppcheck's MISRA C:2012 addon (see [C coding rules](#c-coding-rules)); any finding fails |
-| `scripts/c-cbmc.sh` ([`c/cbmc/`](c/cbmc/)) | bounded model checking with [CBMC](https://www.cprover.org/cbmc/): not a sample but every input up to small bounds (memory decoder: dictionary 4, patch 8, output 8 bytes; callback decoder: 2, 4 and 4 bytes, at several buffer and page sizes, with and without `target_read`). Proves, within those bounds, no out-of-bounds access and no undefined behaviour, the callback contract, the same result and bytes as the memory decoder, `TINYDELTA_ERR_IO` for any one failing callback, and rejection of bad buffer setups. The coder is checked one byte at a time, from any state a corrupt patch can reach: it stays within its tables and keeps its range normalized, which carries over to a whole patch. A decoder running the coder end to end is too much arithmetic for CBMC, so that path is covered by fuzzing |
+| `scripts/c-cbmc.sh` ([`c/cbmc/`](c/cbmc/)) | bounded model checking with [CBMC](https://www.cprover.org/cbmc/): not a sample but every input up to small bounds (memory decoder: dictionary 4, patch 8, output 8 bytes; callback decoder: 2, 4 and 4 bytes, at several buffer and page sizes, with and without `target_read`). Proves, within those bounds, no out-of-bounds access and no undefined behaviour, the callback contract, the same result and bytes as the memory decoder, `TINYDELTA_ERR_IO` for any one failing callback, and rejection of bad buffer setups. The coder is checked one byte at a time, from any state a corrupt patch can reach: it stays within its tables and keeps its range normalized, which carries over to a whole patch. A decoder running the coder end to end is too much arithmetic for CBMC, so that path is covered by fuzzing. The relocation engine with each built-in table (Thumb, MSP430X) is checked one step at a time, the body of its loop over a span's positions: at any position of any image up to 16 bytes, with any map and its instruction-length cache in any state, it reads and writes only inside the image, the span, the map and the table, with no undefined behaviour, so this holds for any span. With a shipped table, which may be any table the checker accepts, the engine is too large for CBMC; fuzzing with random and damaged tables covers it |
 | CodeQL | GitHub's code scanning, security and quality queries, over the Go code and the C library; results in the repository's Security tab |
 
 <details>
@@ -1128,7 +1265,8 @@ or a copy that ends exactly at the end of the dictionary, that
 hand-written tests tend to miss. Both fuzzers check properties that
 must hold for every input, rather than comparing with expected output.
 
-There are two, one for each side of the format:
+The main two, one for each side of the format (relocation has its own,
+in the table above):
 
 - **`FuzzEncodeRoundTrip` tests the encoders** with Go's built-in
   fuzzing. Each input is a dictionary, an edit script and an
@@ -1158,8 +1296,8 @@ There are two, one for each side of the format:
 
 | job | runs |
 |---|---|
-| Go tests (Go 1.21 and current) | `gofmt`, `go vet`, `go test ./...` (including the C decoder tests, built with gcc on x86-64); on current Go also 60 s of `FuzzEncodeRoundTrip` and 30 s of `FuzzDecode`, starting from the nightly corpus |
-| C decoders fuzzed | `scripts/c-fuzz.sh 60`, starting from the nightly corpus; crashing inputs are hex dumped in the log and uploaded as a build artifact. Then `scripts/c-coverage.sh` reports how much of the C library the corpus reaches, with the lines it never reaches, in the job summary |
+| Go tests (Go 1.21 and current) | `gofmt`, `go vet`, `go test ./...` (including the C decoder tests, built with gcc on x86-64); on current Go also 60 s of `FuzzEncodeRoundTrip`, 30 s each of `FuzzDecode`, `FuzzRelocRoundTrip` and `FuzzRelocGoVsC`, and 15 s each of `FuzzRulesTable` and `FuzzParseRules`, starting from the nightly corpus |
+| C decoders fuzzed | `scripts/c-fuzz.sh 40`: 40 s for each of the seven builds of the two C fuzzers, starting from the nightly corpus; crashing inputs are hex dumped in the log and uploaded as a build artifact. Then `scripts/c-coverage.sh` reports how much of the C library the corpus reaches, with the lines it never reaches, in the job summary |
 | Go coverage | `go test -cover` over the library and the CLI, per function in the job summary |
 | Update coverage badges | on pushes to `main` only: writes the Go and C coverage figures and the number of conformance vectors for the badges above to the `badges` branch |
 | Go tests on Windows | `go test ./...` for the library and the CLI |
@@ -1169,7 +1307,7 @@ There are two, one for each side of the format:
 | C decoders model-checked | `scripts/c-cbmc.sh` (CBMC from Ubuntu's packages), a few minutes |
 | License headers (REUSE) | `reuse lint`: every file carries an SPDX license header, or is covered by [`REUSE.toml`](REUSE.toml) |
 | CodeQL (separate workflow, also weekly) | CodeQL over the Go code and the C library |
-| Nightly fuzzing (separate workflow) | every night on `main`, an hour each of the C fuzzer and `FuzzEncodeRoundTrip`, and a quarter of that of `FuzzDecode`, continuing from the previous night's corpus, kept in the Actions cache; crashing inputs are uploaded as artifacts |
+| Nightly fuzzing (separate workflow) | every night on `main`, 10 minutes for each of the seven C fuzzer builds, an hour of `FuzzEncodeRoundTrip`, a quarter of that each of `FuzzDecode`, `FuzzRelocRoundTrip` and `FuzzRelocGoVsC`, and an eighth each of `FuzzRulesTable` and `FuzzParseRules`, continuing from the previous night's corpus, kept in the Actions cache; crashing inputs are uploaded as artifacts |
 | C library on 32-bit ARM | `scripts/c-check.sh` for x86-64 and ARM, the C decoder tests on 32-bit ARM under QEMU, and the Cortex-M code size and stack report (informational) |
 | C library on MSP430 | `scripts/c-check.sh` for 16-bit MSP430 and MSP430X (small and large memory models), the C decoder tests on MSP430X under GNU's MSP430 instruction simulator, and the MSP430 code size and stack report (informational). The toolchain is built from GNU sources by [`scripts/msp430-toolchain.sh`](scripts/msp430-toolchain.sh) and cached |
 

@@ -2,10 +2,11 @@
 # SPDX-FileCopyrightText: 2026 Simon Bjerg
 # SPDX-License-Identifier: MIT
 
-# Measures how much of the C library the fuzz harness reaches: builds
-# c/fuzz/fuzz_decode.c with coverage instrumentation, replays the seed
-# patches from the Go encoders plus any corpus dirs given (e.g. the one
-# kept by scripts/c-fuzz.sh), and prints a Markdown report of line,
+# Measures how much of the C library the fuzz harnesses reach: builds
+# c/fuzz/fuzz_decode.c and c/fuzz/fuzz_reloc.c, in the three builds of
+# scripts/c-fuzz-build.sh, with coverage instrumentation, replays the seeds
+# from the Go encoders plus any corpus dir given and the ones kept next to
+# it by scripts/c-fuzz.sh, and prints a Markdown report of line,
 # branch and function coverage per file, with the lines never reached.
 # The last line is "Total line coverage: <percent>%".
 #
@@ -16,22 +17,43 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 LLVM_PROFDATA="${LLVM_PROFDATA:-llvm-profdata}"
 LLVM_COV="${LLVM_COV:-llvm-cov}"
-FILES=(c/tinydelta_decode.c c/tinydelta_io.c c/tinydelta_coder.c)
+FILES=(c/tinydelta_decode.c c/tinydelta_io.c c/tinydelta_coder.c c/tinydelta_reloc.c)
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-scripts/c-fuzz-build.sh "$work/fuzz_cov" -O0 -fprofile-instr-generate -fcoverage-mapping
-TINYDELTA_C_FUZZ_SEEDS="$work/seeds" go test -count=1 -run '^TestWriteCFuzzSeeds$' . >/dev/null
+builds=(fuzz_decode fuzz_decode_device fuzz_decode_thumb fuzz_decode_plain fuzz_reloc fuzz_reloc_device fuzz_reloc_thumb)
+for build in "${builds[@]}"; do
+  scripts/c-fuzz-build.sh "$build" "$work/$build" -O0 -fprofile-instr-generate -fcoverage-mapping
+done
+TINYDELTA_C_FUZZ_SEEDS="$work/seeds" TINYDELTA_C_FUZZ_RELOC_SEEDS="$work/reloc-seeds" \
+  go test -count=1 -run '^TestWriteCFuzz' . >/dev/null
 
-# -runs=0: run every input once, no fuzzing.
-LLVM_PROFILE_FILE="$work/run.profraw" "$work/fuzz_cov" -runs=0 "$work/seeds" "$@" \
-  > "$work/replay.log" 2>&1 || { cat "$work/replay.log"; exit 1; }
-"$LLVM_PROFDATA" merge -sparse "$work/run.profraw" -o "$work/run.profdata"
-cov=("$work/fuzz_cov" -instr-profile="$work/run.profdata")
+# -runs=0: run every input once, no fuzzing. Each build replays the seeds
+# and every corpus kept for that harness (all its builds' corpora).
+decode_dirs=() reloc_dirs=()
+for dir in "$@"; do
+  for s in "" -device -thumb -plain; do
+    [ -d "$dir$s" ] && decode_dirs+=("$dir$s")
+    [ -d "$dir-reloc$s" ] && reloc_dirs+=("$dir-reloc$s")
+  done
+done
+profiles=() cov=()
+for build in "${builds[@]}"; do
+  case "$build" in
+    fuzz_decode*) replay=("$work/seeds" "${decode_dirs[@]}") ;;
+    *) replay=("$work/reloc-seeds" "${reloc_dirs[@]}") ;;
+  esac
+  LLVM_PROFILE_FILE="$work/$build.profraw" "$work/$build" -runs=0 "${replay[@]}" \
+    > "$work/replay.log" 2>&1 || { cat "$work/replay.log"; exit 1; }
+  profiles+=("$work/$build.profraw")
+  if [ ${#cov[@]} -eq 0 ]; then cov=("$work/$build"); else cov+=(-object "$work/$build"); fi
+done
+"$LLVM_PROFDATA" merge -sparse "${profiles[@]}" -o "$work/run.profdata"
+cov+=(-instr-profile="$work/run.profdata")
 
-inputs=$(( $(ls "$work/seeds" | wc -l) ))
-for dir in "$@"; do inputs=$(( inputs + $(ls "$dir" | wc -l) )); done
-echo "C library coverage from the fuzz harness ($inputs inputs)."
+inputs=$(( $(ls "$work/seeds" | wc -l) + $(ls "$work/reloc-seeds" | wc -l) ))
+for dir in "${decode_dirs[@]}" "${reloc_dirs[@]}"; do inputs=$(( inputs + $(ls "$dir" | wc -l) )); done
+echo "C library coverage from the fuzz harnesses ($inputs inputs)."
 echo
 echo "| file | lines | branches | functions |"
 echo "|---|---:|---:|---:|"

@@ -1,5 +1,5 @@
 {
-  "_comment": "Benchmark corpus: which versions to build and compare. Every corpus walks consecutive commits in a fixed range of a public repository, so the inputs are reproducible from this file alone. collector says how items are built (default: the corpus's name). See bench/README.md.",
+  "_comment": "Benchmark corpus: which versions to build and compare. Every corpus walks consecutive commits in a fixed range of a public repository, so the inputs are reproducible from this file alone. collector says how items are built (default: the corpus's name); relocation, for firmware, the rules and image base the relocated tinydelta variants use (an item's own, else its corpus's). See bench/README.md.",
   "micropython_samd": {
     "kind": "firmware",
     "collector": "micropython",
@@ -7,6 +7,10 @@
     "from": "v1.25.0",
     "to": "v1.26.0",
     "max_versions": 25,
+    "relocation": {
+      "rules": "thumb",
+      "base": "0x2000"
+    },
     "items": [
       {
         "name": "samd-ADAFRUIT_TRINKET_M0",
@@ -95,7 +99,11 @@
       {
         "name": "stm32-NUCLEO_F091RC",
         "port": "stm32",
-        "board": "NUCLEO_F091RC"
+        "board": "NUCLEO_F091RC",
+        "relocation": {
+          "rules": "thumb",
+          "base": "0x08000000"
+        }
       },
       {
         "name": "stm32-PYBV11",
@@ -122,6 +130,25 @@
       {
         "name": "k3-am625-sk",
         "dts": "src/arm64/ti/k3-am625-sk.dts"
+      }
+    ]
+  },
+  "mbedtls_msp430": {
+    "kind": "firmware",
+    "collector": "mbedtls",
+    "repo": "https://github.com/Mbed-TLS/mbedtls",
+    "from": "v2.28.0",
+    "to": "v2.28.10",
+    "max_versions": 25,
+    "relocation": {
+      "rules": "msp430x",
+      "base": "0x10000"
+    },
+    "items": [
+      {
+        "name": "msp430x-large",
+        "cc": "msp430-elf-gcc",
+        "cflags": ["-mcpu=msp430x", "-mlarge"]
       }
     ]
   },

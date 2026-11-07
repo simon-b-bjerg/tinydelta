@@ -95,6 +95,8 @@ TINY_VARIANTS = [
     ("tinydelta_cz_twice_1k", "tinydelta, two-pass, 1 KB window", "#8a8983"),
     ("tinydelta_coded_c", "tinydelta, coded, 522 B tables", "#8a8983"),
     ("tinydelta_coded_a", "tinydelta, coded, 1287 B tables", "#8a8983"),
+    ("tinydelta_reloc", "tinydelta, coded and relocated (firmware), 1545 B tables", "#8a8983"),
+    ("tinydelta_reloc_shipped", "tinydelta, coded and relocated, rule table in the patch", "#8a8983"),
     ("tinydelta_window_256", "tinydelta, plain, copies at most 256 B back", "#8a8983"),
     ("tinydelta_window_1k", "tinydelta, plain, copies at most 1 KB back", "#8a8983"),
     ("tinydelta_window_4k", "tinydelta, plain, copies at most 4 KB back", "#8a8983"),
@@ -270,8 +272,38 @@ def summary(rows, tools_file, out):
                 lines.append("| %s | {:,} | {:,} | {:,} |".format(
                     round(statistics.median(size)), round(percentile(size, 10)), round(percentile(size, 90))) % label)
             lines.append("")
+    lines += relocation_summary(rows)
     with open(os.path.join(out, "summary.md"), "w") as f:
         f.write("\n".join(lines))
+
+
+def relocation_summary(rows):
+    """Firmware with relocation rules (corpus.json "relocation"): per item
+    and commit step, the patches summed, coded and coded and relocated."""
+    settings = relocation_settings()
+    sel = [r for r in rows if (r["corpus"], r["item"]) in settings and "tinydelta_reloc" in r]
+    if not sel:
+        return []
+    cols = [k for k in ("tinydelta_coded_b", "tinydelta_coded_a", "tinydelta_reloc", "tinydelta_reloc_shipped") if k in sel[0]]
+    labels = {"tinydelta_coded_b": "coded, 777 B", "tinydelta_coded_a": "coded, 1287 B",
+              "tinydelta_reloc": "relocated, 1545 B", "tinydelta_reloc_shipped": "relocated, table shipped"}
+    lines = ["## Relocation", "",
+             "Firmware with relocation rules: patch sizes summed over every pair, in bytes, map and "
+             "header included. Tables are the decoder's tables buffer: the coder's tables, and for "
+             "relocation its map (12 B per entry), plus the rule table when the patch ships it. "
+             "The change is relocated against coded with 1287 B of tables.", "",
+             "| item | rules, base | step | pairs | " + " | ".join(labels[c] for c in cols) + " | change |",
+             "|---|---|---:|---:|" + "---:|" * len(cols) + "---:|"]
+    for key in sorted({(r["corpus"], r["item"], r["step"]) for r in sel}):
+        group = [r for r in sel if (r["corpus"], r["item"], r["step"]) == key]
+        sums = {c: sum(r[c] for r in group) for c in cols}
+        reloc = settings[key[:2]]
+        base = sums.get("tinydelta_coded_a") or sums.get("tinydelta_coded_b")
+        change = "%+.0f%%" % (100 * (sums["tinydelta_reloc"] - base) / base) if base else ""
+        lines.append("| %s/%s | %s, %s | %d | %d | %s | %s |" % (
+            key[0], key[1], reloc["rules"], reloc["base"], key[2], len(group),
+            " | ".join("{:,}".format(sums[c]) for c in cols), change))
+    return lines + [""]
 
 
 # The comparisons the distribution graphs show: the VCDIFF reference, the
@@ -456,70 +488,96 @@ def forest(rows, out):
     save(fig, out, "forest")
 
 
-STEP_MARKERS = ["o", "^", "s", "D"]  # by commit step: 1 apart, 5 apart, ...
-# The pair graph's tools: the VCDIFF reference, the two embedded
-# alternatives, and the strongest compressors on size.
-PAIR_TOOLS = ["openvcdiff", "hpatchlite_4k", "detools", "bsdiff", "zstd"]
+KIND_MARKERS = {"firmware": "o", "configuration": "^"}  # other kinds: "s"
+# The pair graph's tools, one panel each: VCDIFF, the standard format
+# (open-vcdiff), the two embedded alternatives, and the smallest patches of
+# all (bsdiff). zstd, whose decoder needs the whole old file in RAM, is in
+# the trade-off graph and the summary.
+PAIR_TOOLS = ["openvcdiff", "hpatchlite_4k", "detools", "bsdiff"]
+RELOC = "tinydelta_reloc"
+
+
+def relocation_settings():
+    """{(corpus, item): its relocation setting} for the items with
+    relocation rules (corpus.json "relocation": the item's own, else its
+    corpus's): the only ones whose relocated patches differ from the coded
+    ones."""
+    path = os.environ.get("BENCH_CORPUS", os.path.join(os.path.dirname(os.path.abspath(__file__)), "corpus.json"))
+    corpus = json.load(open(path)) if os.path.exists(path) else {}
+    settings = {}
+    for name, spec in corpus.items():
+        if isinstance(spec, dict):
+            for it in spec.get("items", []):
+                setting = it.get("relocation", spec.get("relocation"))
+                if setting:
+                    settings[(name, it["name"])] = setting
+    return settings
+
+
+# Where the pair graph draws dashed lines: tinydelta's patch this share of the tool's.
+PAIR_FRACTIONS = ((0.5, "½"), (0.25, "¼"), (0.125, "⅛"))
 
 
 def pair_scatter(rows, out, name):
-    """Every pair, once per tool, one panel per kind of data (rows): that
-    tool's patch size across, tinydelta's up. With coded patches measured,
-    two columns: tinydelta coded on the left, without the coder (plain or
-    two-pass) on the right, on the same axes. Colour is the tool, marker
-    the commit step."""
-    cols = [(tiny_key(rows), "tinydelta, coded" if tiny_key(rows) == CODED else "tinydelta")]
-    if tiny_key(rows) == CODED:
-        cols.append((uncoded_key(rows), "tinydelta, plain or two-pass"))
-    tools = [t for t in OTHERS if t[0] in PAIR_TOOLS and t[0] in rows[0]]
-    if not tools:
+    """Every pair, as a matrix: a row per tinydelta variant measured (plain,
+    coded with 777 B tables, coded + relocated for firmware with relocation
+    rules), a column per tool (PAIR_TOOLS); that tool's patch size across,
+    tinydelta's up, the same axes in every panel. Marker is the kind of
+    data; in each panel, the share of pairs where tinydelta is smaller, and
+    dashed lines where its patch is a half, a quarter and an eighth of the
+    tool's."""
+    relocated = relocation_settings()
+    variants = [(plain_key(rows), "plain", "#2a78d6", rows),
+                (CODED, "coded", INK, rows),
+                (RELOC, "coded + relocated", "#e8710a", [r for r in rows if (r["corpus"], r["item"]) in relocated])]
+    variants = [v for v in variants if v[3] and v[0] in v[3][0]]
+    labels = {k: label for k, label, _, _, _ in OTHERS}
+    tools = [k for k in PAIR_TOOLS if k in rows[0]]
+    if not tools or not variants:
         return
     kinds = kinds_of(rows)
-    steps = sorted({r["step"] for r in rows})
-    fig, axes = plt.subplots(len(kinds), len(cols), figsize=(5.0 * len(cols), 0.9 + 4.6 * len(kinds)), squeeze=False, facecolor=SURFACE)
-    for i, kind in enumerate(kinds):
-        sel = [r for r in rows if r["kind"] == kind]
-        sizes = [r[k] for r in sel for k in [c for c, _ in cols] + [t[0] for t in tools]]
-        lo, hi = max(1, min(sizes)) / 1.5, max(sizes) * 1.5
-        for j, (tiny, tiny_label) in enumerate(cols):
+    sizes = [r[k] for k in tools for r in rows] + [r[v[0]] for v in variants for r in v[3]]
+    lo, hi = max(1, min(sizes)) / 1.5, max(sizes) * 1.5
+    decades = [10 ** e for e in range(math.ceil(math.log10(lo)), math.floor(math.log10(hi)) + 1, 2)]
+    fig, axes = plt.subplots(len(variants), len(tools), figsize=(0.6 + 2.6 * len(tools), 1.5 + 2.6 * len(variants)),
+                             squeeze=False, sharex=True, sharey=True, facecolor=SURFACE)
+    for i, (key, label, color, sel) in enumerate(variants):
+        for j, tool in enumerate(tools):
             ax = axes[i][j]
             style(ax)
-            ax.plot([lo, hi], [lo, hi], color=MUTED, linewidth=1)
-            for key, label, color, _, _ in tools:
-                for step, marker in zip(steps, STEP_MARKERS):
-                    pick = [r for r in sel if r["step"] == step]
-                    ax.scatter([r[key] for r in pick], [r[tiny] for r in pick], s=18, marker=marker, color=color,
-                               alpha=0.7, edgecolors=SURFACE, linewidths=0.5)
+            ax.plot([lo, hi], [lo, hi], color=MUTED, linewidth=0.9)
+            for fraction, mark in PAIR_FRACTIONS:
+                ax.plot([lo, hi], [lo * fraction, hi * fraction], color=MUTED, linewidth=0.6, linestyle=(0, (3, 3)), alpha=0.6)
+                if i == 0 and j == len(tools) - 1:
+                    ax.text(hi / 1.3, hi * fraction / 1.6, mark, color=MUTED, fontsize=8, ha="right", va="top")
+            for kind in kinds:
+                pick = [r for r in sel if r["kind"] == kind]
+                ax.scatter([r[tool] for r in pick], [r[key] for r in pick], s=8, marker=KIND_MARKERS.get(kind, "s"),
+                           color=color, alpha=0.55, linewidths=0)
+            smaller = sum(r[key] < r[tool] for r in sel)
+            ax.text(0.95, 0.05, "%d%%" % round(100 * smaller / len(sel)), transform=ax.transAxes, ha="right",
+                    va="bottom", fontsize=10, color=INK, weight="bold")
             ax.set_xscale("log")
             ax.set_yscale("log")
-            for axis in (ax.xaxis, ax.yaxis):  # decades only: the range spans several
-                axis.set_major_locator(ticker.LogLocator(base=10))
-                axis.set_major_formatter(ticker.FuncFormatter(lambda x, _: "{:,.0f}".format(x)))
-                axis.set_minor_formatter(ticker.NullFormatter())
             ax.set_xlim(lo, hi)
             ax.set_ylim(lo, hi)
             ax.set_aspect("equal")
-            ax.set_title("%s: %s (%d pairs)" % (kind_label(rows, kind).split(",")[0], tiny_label, len(sel)), fontsize=10.5, color=INK, loc="left")
-            ax.set_xlabel("the other tool's patch (bytes, log scale)", fontsize=9, color=MUTED)
+            for axis in (ax.xaxis, ax.yaxis):
+                axis.set_major_locator(ticker.FixedLocator(decades))
+                axis.set_major_formatter(ticker.FuncFormatter(
+                    lambda x, _: "%gK" % (x / 1000) if x >= 1000 else "%g" % x))
+                axis.set_minor_formatter(ticker.NullFormatter())
+            ax.tick_params(labelsize=8)
+            if i == 0:
+                ax.set_title(labels.get(tool, tool), fontsize=10.5, color=INK)
             if j == 0:
-                ax.set_ylabel("tinydelta's patch (bytes, log scale)", fontsize=9, color=MUTED)
-            ax.text(0.97, 0.05, "below the line:\ntinydelta smaller", transform=ax.transAxes, ha="right",
-                    fontsize=8.5, color=MUTED)
-    # Two legends, in the first row: colour for the tool, marker for the step.
-    tool_handles = [plt.Line2D([], [], marker="o", linestyle="", markersize=6, color=color, label=label)
-                    for _, label, color, _, _ in tools]
-    step_handles = [plt.Line2D([], [], marker=marker, linestyle="", markersize=6, color=MUTED,
-                               label="%d commit%s apart" % (step, "" if step == 1 else "s"))
-                    for step, marker in zip(steps, STEP_MARKERS)]
-    first = axes[0][0].legend(handles=tool_handles, frameon=False, fontsize=8.5, loc="upper left", labelcolor=INK,
-                              title="tool", title_fontsize=8.5, alignment="left")
-    axes[0][0].add_artist(first)
-    axes[0][-1].legend(handles=step_handles, frameon=False, fontsize=8.5, loc="upper left", labelcolor=INK)
-    subtitle = "Each pair once per tool; below the line, tinydelta's patch is smaller."
-    if len(cols) > 1:
-        subtitle = ("Left: tinydelta with the coder (777 B tables). Right: without it, the smaller of plain and "
-                    "two-pass. Below the line, tinydelta's patch is smaller.")
-    titled(fig, "tinydelta against other tools, every pair", subtitle)
+                ax.set_ylabel("tinydelta %s\n(%d pairs)" % (label, len(sel)), fontsize=9.5, color=color)
+    height = fig.get_figheight()
+    titled(fig, "tinydelta against other tools, every pair",
+           "Rows: tinydelta's variants; columns: the tools. Patch sizes in bytes (log scale), below the line tinydelta's is "
+           "smaller.\nBold: the share of pairs where it is. Dashed: tinydelta's patch a half, a quarter and an eighth of the "
+           "tool's. ● firmware  ▲ configuration.")
+    fig.tight_layout(rect=(0, 0, 1, 1 - 0.95 / height))
     save(fig, out, name)
 
 
@@ -593,59 +651,91 @@ def place_labels(fig, ax, points):
         placed.append(extent)
 
 
+# The trade-off graph's footprint axis ends here; a decoder above it (bsdiff:
+# its 2 MB+ of buffers) sits at the edge, labelled with its footprint.
+TRADEOFF_XMAX = 500e3
+
+
 def tradeoff(rows, out):
-    """Typical patch size against the decoder's footprint on the device:
-    code plus the RAM buffers it needs, stack excluded (decoders.json).
-    For a decoder that holds the whole old file, the median old file of that
-    kind is added. A point whose code size is unknown, or that holds the old
-    file, is a lower bound, drawn as an arrow."""
+    """Firmware: typical patch size against the decoder's footprint on the
+    device, code plus the RAM buffers it needs, stack excluded
+    (decoders.json). tinydelta is a staircase of the decoders it can be
+    built as: plain, coded, coded and relocating; two-pass hangs below plain,
+    hollow: the same decoder, run twice, with the intermediate patch stored
+    in between. For a decoder that holds the whole old file, the median old
+    file is added. A point whose code size is unknown, or that holds the
+    old file, is a lower bound, drawn as an arrow."""
+    sel = [r for r in rows if r["kind"] == "firmware"]
+    if not sel:
+        return
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "decoders.json")
     decoders = {k: v for k, v in json.load(open(path)).items() if not k.startswith("_")}
     colors = {k: c for k, _, c, _, _ in OTHERS}
     colors["openvcdiff_interleaved"] = colors["openvcdiff"]  # tiny-vcdiff: the same format family
-    colors.update({k: c for k, _, c in TINY_VARIANTS})
-    # decoders.json's "tinydelta" is the decoder without the coder, for the
-    # smaller of plain and two-pass (plain optimal, when measured);
-    # "tinydelta_coded" the one with it, for the coded patches.
-    column = {k: {"tinydelta": uncoded_key(rows), "tinydelta_coded": CODED}.get(k, k) for k in decoders}
+    # tinydelta's decoders (decoders.json) and the patches each decodes.
+    stairs = [(k, c) for k, c in (("tinydelta", plain_key(rows)), ("tinydelta_coded", CODED), ("tinydelta_reloc", RELOC))
+              if k in decoders and c in sel[0]]
+    if not any((r["corpus"], r["item"]) in relocation_settings() for r in sel):
+        stairs = [(k, c) for k, c in stairs if c != RELOC]
     # HPatchLite's 32 KB dictionary is left out to keep the graph readable
     # (it is close to the 4 KB one); it is in the summary.
-    tools = [k for k in decoders if column[k] in rows[0] and k != "hpatchlite_32k"]
-    kinds = kinds_of(rows)
-    # One panel per row: at most ~830 px wide, the width of GitHub's README
-    # column, so it is never shrunk there.
-    fig, axes = plt.subplots(len(kinds), 1, figsize=(7.2, 0.8 + 4.2 * len(kinds)), squeeze=False, facecolor=SURFACE)
-    for ax, kind in zip(axes[:, 0], kinds):
-        sel = [r for r in rows if r["kind"] == kind]
-        old = statistics.median(r["dict_bytes"] for r in sel)
-        style(ax)
-        points = []
-        for key in tools:
-            d = decoders[key]
-            footprint = (d["code"] or 0) + d["buffers"] + (old if d["plus_old_file"] else 0)
-            lower_bound = d["code"] is None or d["plus_old_file"]
-            share = statistics.median(100 * r[column[key]] / max(r["target_bytes"], 1) for r in sel)
-            ax.plot([footprint], [share], marker=">" if lower_bound else "o", markersize=9,
-                    color=colors.get(column[key], INK), markeredgecolor=SURFACE, markeredgewidth=1.5, linestyle="")
-            points.append((footprint, share, d["label"] + (" (at least)" if lower_bound else "")))
-        ax.set_xscale("log")
-        ax.set_yscale("log")
-        ax.margins(x=0.22, y=0.22)
-        place_labels(fig, ax, points)
-        ax.xaxis.set_major_locator(ticker.LogLocator(base=10))
-        ax.xaxis.set_major_formatter(ticker.FuncFormatter(
-            lambda x, _: "%g MB" % (x / 1e6) if x >= 1e6 else "%g KB" % (x / 1e3) if x >= 1e3 else "%g B" % x))
-        ax.xaxis.set_minor_formatter(ticker.NullFormatter())
-        log_axis(ax.yaxis, "%")
-        ax.set_title(kind_label(rows, kind), fontsize=11, color=INK, loc="left")
-        ax.set_xlabel("decoder footprint: code + RAM buffers, stack excluded (log scale)", fontsize=9, color=MUTED)
-        ax.set_ylabel("median patch size, % of target (log scale)", fontsize=9, color=MUTED)
+    others = [k for k in decoders if not k.startswith("tinydelta") and k in sel[0] and k != "hpatchlite_32k"]
+    old = statistics.median(r["dict_bytes"] for r in sel)
+
+    def footprint(key):
+        d = decoders[key]
+        return (d["code"] or 0) + d["buffers"] + (old if d["plus_old_file"] else 0)
+
+    # The relocated step is the median over the firmware with relocation
+    # rules only: elsewhere its patches are the coded ones, and a median
+    # over both would land between the two groups.
+    settings = relocation_settings()
+    with_rules = [r for r in sel if (r["corpus"], r["item"]) in settings]
+
+    def share(column):
+        pick = with_rules if column == RELOC else sel
+        return statistics.median(100 * r[column] / max(r["target_bytes"], 1) for r in pick)
+
+    # One panel, at most ~830 px wide, the width of GitHub's README column.
+    fig, ax = plt.subplots(figsize=(7.2, 5.9), facecolor=SURFACE)
+    style(ax)
+    points = []
+    for key in others:
+        d = decoders[key]
+        lower_bound = d["code"] is None or d["plus_old_file"]
+        x, y = footprint(key), share(key)
+        label = d["label"] + (" (at least)" if lower_bound else "")
+        if x > TRADEOFF_XMAX:  # off the axis (bsdiff's 2 MB+): at its edge, with the footprint
+            x, label = TRADEOFF_XMAX, "%s, %s" % (label, "%.1f MB" % (footprint(key) / 1e6))
+        ax.plot([x], [y], marker=">" if lower_bound else "o", markersize=9, color=colors.get(key, MUTED),
+                markeredgecolor=SURFACE, markeredgewidth=1.5, linestyle="", clip_on=False)
+        points.append((x, y, label))
+    xs, ys = [footprint(k) for k, _ in stairs], [share(c) for _, c in stairs]
+    ax.plot(xs, ys, color=INK, linewidth=2, zorder=3)
+    ax.plot(xs, ys, marker="o", markersize=10, color=INK, markeredgecolor=SURFACE, markeredgewidth=1.5, linestyle="", zorder=4)
+    points += [(x, y, decoders[k]["label"]) for (k, _), x, y in zip(stairs, xs, ys)]
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.margins(y=0.15)
+    ax.set_xlim(min(p[0] for p in points) / 1.6, TRADEOFF_XMAX)
+    place_labels(fig, ax, points)
+    log_axis(ax.xaxis)
+    ax.xaxis.set_major_formatter(ticker.FuncFormatter(
+        lambda x, _: "%g MB" % (x / 1e6) if x >= 1e6 else "%g KB" % (x / 1e3) if x >= 1e3 else "%g B" % x))
+    log_axis(ax.yaxis, "%")
+    ax.set_title(kind_label(rows, "firmware") + " (%d pairs)" % len(sel), fontsize=11, color=INK, loc="left")
+    ax.set_xlabel("decoder footprint: code + RAM buffers, stack excluded (log scale)", fontsize=9, color=MUTED)
+    ax.set_ylabel("median patch size, % of target (log scale)", fontsize=9, color=MUTED)
     height = fig.get_figheight()
-    fig.text(0.02, 1 - 0.15 / height, "Patch size against what the decoder costs on the device",
+    fig.text(0.02, 1 - 0.15 / height, "Firmware: patch size against what the decoder costs on the device",
              ha="left", va="top", fontsize=13, color=INK)
-    fig.text(0.02, 1 - 0.45 / height, "Lower left is better. Arrows are lower bounds: code size unknown, "
-             "or the whole old file in RAM.", ha="left", va="top", fontsize=9, color=MUTED)
-    fig.tight_layout(rect=(0, 0, 1, 1 - 0.7 / height))
+    fig.text(0.02, 1 - 0.45 / height, "Lower left is better. Black: tinydelta's decoders, each step adding to the last.\n"
+             "Arrows are lower bounds: code size unknown, or the whole old file in RAM; at the right edge, off the axis.", ha="left", va="top", fontsize=9, color=MUTED)
+    if any(c == RELOC for _, c in stairs):
+        fig.text(0.02, 0.012, "Coded + relocated: the median over the firmware with relocation rules only (%d of %d pairs)."
+                 % (len(with_rules), len(sel)), ha="left",
+                 va="bottom", fontsize=8.5, color=MUTED)
+    fig.tight_layout(rect=(0, 0.03, 1, 1 - 0.95 / height))
     save(fig, out, "tradeoff")
 
 

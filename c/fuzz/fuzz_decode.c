@@ -14,7 +14,12 @@
  *     target_read and, a second time, without.
  *
  * All of them must agree: the same result (OK, MALFORMED, TOO_LARGE or VERSION) and,
- * on success, the same target bytes. Without target_read, the callback
+ * on success, the same target bytes. Relocated coded patches (features bits
+ * 2-3 set; the harness is built with TINYDELTA_RELOC = MSP430X and
+ * TINYDELTA_RELOC_SHIPPED, see scripts/c-fuzz-build.sh) are beyond the
+ * reference decoder: for them the memory and callback decoders must agree,
+ * the callback decoder relocating the old image in chunks of other sizes
+ * (fuzz_reloc.c fuzzes the relocation engine on its own). Without target_read, the callback
  * decoder may instead reject a copy reaching back past its buffer as
  * MALFORMED. The callbacks also police the documented contract: no reads
  * outside the patch or dictionary, no reads of target bytes not yet
@@ -44,6 +49,8 @@
 
 #define FUZZ_HEADER_SIZE 5u
 #define FUZZ_MAX_TARGET  4096u
+/* The coder's largest tables, then room for a shipped rule table and a map. */
+#define FUZZ_TABLES_SIZE (TINYDELTA_CODED_TABLES_A + 2048u)
 
 #define FAIL(...)                                                                                                                                              \
     do {                                                                                                                                                       \
@@ -391,18 +398,33 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     uint64_t ref_len       = 0;
     uint32_t mem_len       = 0;
     tinydelta_result_t ref = ref_decode(dict, dict_len, patch, patch_len, ref_out, out_cap, &ref_len);
-    static uint8_t tables[TINYDELTA_CODED_TABLES_A];
+#if TINYDELTA_CODER
+    static uint8_t tables[FUZZ_TABLES_SIZE];
     tinydelta_result_t mem = tinydelta_decode_coded(dict, dict_len, patch, patch_len, mem_out, out_cap, tables, sizeof tables, &mem_len);
-    if (mem != ref) {
+    /* A relocated coded patch: features bits 2-3 (the reference knows none). */
+    int relocated = patch_len >= 2 && (patch[0] == 0x81 || patch[0] == 0x82) && (patch[1] & 0x0C) != 0 && (patch[1] & 0xF0) == 0 && (patch[1] & 3) != 0;
+#else
+    /* Without the coder (the smallest build): coded patches are refused as
+     * an unknown version, plain ones decode as the reference does. */
+    tinydelta_result_t mem = tinydelta_decode(dict, dict_len, patch, patch_len, mem_out, out_cap, &mem_len);
+    int relocated          = 0;
+    if (patch_len >= 1 && (patch[0] == 0x81 || patch[0] == 0x82)) {
+        if (mem != TINYDELTA_ERR_VERSION) {
+            FAIL("decoder without the coder returned %d for a coded patch", mem);
+        }
+        ref = TINYDELTA_ERR_VERSION;
+    }
+#endif
+    if (!relocated && mem != ref) {
         FAIL("memory decoder returned %d, reference %d", mem, ref);
     }
-    if (ref == TINYDELTA_OK && (mem_len != ref_len || memcmp(mem_out, ref_out, mem_len) != 0)) {
+    if (!relocated && ref == TINYDELTA_OK && (mem_len != ref_len || memcmp(mem_out, ref_out, mem_len) != 0)) {
         FAIL("memory decoder output differs from reference");
     }
 
     for (int with_read = 1; with_read >= 0; with_read--) {
         source patch_src = {patch, patch_len}, dict_src = {dict, dict_len};
-        static uint8_t io_tables[TINYDELTA_CODED_TABLES_A];
+        static uint8_t io_tables[FUZZ_TABLES_SIZE];
         uint8_t buffer[128];
         tinydelta_io_t io = {
             .patch_read   = source_read,

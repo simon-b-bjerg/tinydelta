@@ -45,4 +45,11 @@ tinydelta_result_t tinydelta_coder_init(tinydelta_coder_t *p_coder, uint8_t layo
 /* Decodes the next instruction-stream byte, a field of the given kind. */
 tinydelta_result_t tinydelta_coder_byte(tinydelta_coder_t *p_coder, tinydelta_field_t field, uint8_t *p_byte);
 
+#if TINYDELTA_RELOC_SHIPPED
+/* Before the instructions: decodes count bytes (a shipped relocation rule
+ * table) through a bit tree in the first 255 states, then clears all
+ * states again, so the instructions start from even odds. */
+tinydelta_result_t tinydelta_coder_tree_bytes(tinydelta_coder_t *p_coder, uint8_t *p_bytes, uint32_t count);
+#endif
+
 #endif

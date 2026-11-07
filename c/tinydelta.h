@@ -71,6 +71,36 @@ tinydelta_result_t tinydelta_decode(
 #define TINYDELTA_CODED_TABLES_B 777u
 #define TINYDELTA_CODED_TABLES_C 522u
 
+/* ---- Relocation ------------------------------------------------------------
+ * A coded patch for firmware may carry a map of how code moved; the decoder
+ * then relocates every address it finds in the old image through it (README.md,
+ * "Relocation"). Which bytes are addresses is a rule table
+ * (docs/relocation-rules.md) built into the decoder: TINYDELTA_RELOC picks it,
+ * TINYDELTA_RELOC_THUMB (ARM Cortex-M) or TINYDELTA_RELOC_MSP430X (MSP430X,
+ * large code model), or TINYDELTA_RELOC_RULES for a table of your own, made
+ * with "tinydelta rules compile -c rules.h", with TINYDELTA_RELOC_RULES_HEADER
+ * its file name in quotes; 0, the default, for no relocation. Needs
+ * TINYDELTA_CODER. The map takes TINYDELTA_RELOC_ENTRY_SIZE (12) bytes per
+ * entry of the tables buffer, after the coder's tables. A patch made with
+ * another table is rejected with TINYDELTA_ERR_VERSION.
+ *
+ * TINYDELTA_RELOC_SHIPPED = 1 also accepts patches that ship
+ * their own rule table; it takes its length of the tables buffer, before the
+ * map, and is checked before use. */
+
+#define TINYDELTA_RELOC_THUMB   1
+#define TINYDELTA_RELOC_MSP430X 2
+#define TINYDELTA_RELOC_RULES   3
+#ifndef TINYDELTA_RELOC
+#define TINYDELTA_RELOC 0
+#endif
+#if (TINYDELTA_RELOC != 0) && !TINYDELTA_CODER
+#error "TINYDELTA_RELOC needs TINYDELTA_CODER"
+#endif
+#ifndef TINYDELTA_RELOC_SHIPPED
+#define TINYDELTA_RELOC_SHIPPED 0
+#endif
+
 #if TINYDELTA_CODER
 /* tinydelta_decode for plain and coded patches: p_tables holds tables_size
  * bytes for a coded patch's tables (unused for a plain patch). A coded

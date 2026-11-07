@@ -46,6 +46,18 @@ func DecodeReader(dict []byte, r io.Reader) ([]byte, error) {
 // for no cap beyond the format's own, pass MaxSize. Above MaxSize means
 // MaxSize.
 func DecodeReaderLimit(dict []byte, r io.Reader, maxOutput int) (target []byte, err error) {
+	return decodeReaderLimit(dict, r, maxOutput, nil)
+}
+
+// DecodeRules is DecodeReaderLimit for a patch relocated by a rule table
+// it names by CRC rather than carries (EncodeOptions.Rules without
+// ShipRules): rules is that table. Patches that need no table, or carry
+// theirs, decode as with DecodeReaderLimit.
+func DecodeRules(dict []byte, r io.Reader, maxOutput int, rules *Rules) ([]byte, error) {
+	return decodeReaderLimit(dict, r, maxOutput, rules)
+}
+
+func decodeReaderLimit(dict []byte, r io.Reader, maxOutput int, rules *Rules) (target []byte, err error) {
 	if len(dict) > MaxSize {
 		return nil, fmt.Errorf("%w: dictionary is %d bytes, MaxSize is %d", ErrTooLarge, len(dict), MaxSize)
 	}
@@ -74,9 +86,12 @@ func DecodeReaderLimit(dict []byte, r io.Reader, maxOutput int) (target []byte, 
 		}
 		// The coded bytes are in memory; the plain patch they code is
 		// decoded as the instructions are read.
-		plain, err := newCodedReader(append([]byte{version}, rest...))
+		plain, err := newCodedReader(append([]byte{version}, rest...), rules)
 		if err != nil {
 			return nil, err
+		}
+		if plain.reloc != nil {
+			dict = plain.reloc.relocate(dict) // the old image as the patch was made against
 		}
 		return DecodeReaderLimit(dict, plain, maxOutput)
 	}

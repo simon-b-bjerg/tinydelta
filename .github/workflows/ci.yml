@@ -43,18 +43,28 @@ jobs:
           path: ${{ env.FUZZ_CACHE }}
           key: go-fuzz-corpus-none
           restore-keys: go-fuzz-corpus-
-      - name: Fuzz encode/decode round trips (60 s)
+      # Relocated encodes are slow, so their new inputs are minimized for at
+      # most 2 s each (the default 60 s stalls the fuzzer for minutes).
+      - name: Fuzz round trips, relocation and rule tables
         if: matrix.go == 'stable'
         run: |
           go test -run '^$' -fuzz '^FuzzEncodeRoundTrip$' -fuzztime 60s .
           go test -run '^$' -fuzz '^FuzzDecode$' -fuzztime 30s .
+          go test -run '^$' -fuzz '^FuzzRelocRoundTrip$' -fuzztime 30s -fuzzminimizetime 2s .
+          go test -run '^$' -fuzz '^FuzzRelocGoVsC$' -fuzztime 30s -fuzzminimizetime 2s .
+          go test -run '^$' -fuzz '^FuzzRulesTable$' -fuzztime 15s .
+          go test -run '^$' -fuzz '^FuzzParseRules$' -fuzztime 15s .
       - name: Hex dump failing fuzz inputs
         if: failure() && matrix.go == 'stable'
         run: |
           for f in $(git ls-files --others --exclude-standard testdata/fuzz); do
             echo "== $f"
-            TINYDELTA_FUZZ_DUMP="$f" go test -count=1 -run '^TestDumpFuzzInput$' -v . |
-              grep -v '^=== RUN\|^--- PASS\|^PASS$\|^ok '
+            case "$f" in
+              */FuzzEncodeRoundTrip/*)
+                TINYDELTA_FUZZ_DUMP="$f" go test -count=1 -run '^TestDumpFuzzInput$' -v . |
+                  grep -v '^=== RUN\|^--- PASS\|^PASS$\|^ok ' || true ;;
+              *) cat "$f" ;;
+            esac
             echo "::error title=Go fuzzer failing input ($f)::$(sed 's/%/%25/g' "$f" | awk '{ printf "%s%%0A", $0 }')"
           done
       - name: Upload failing fuzz inputs
@@ -91,13 +101,20 @@ jobs:
       - name: Restore the nightly fuzz corpus
         uses: actions/cache/restore@v4
         with:
-          path: fuzz-corpus
+          path: |
+            fuzz-corpus
+            fuzz-corpus-device
+            fuzz-corpus-thumb
+            fuzz-corpus-plain
+            fuzz-corpus-reloc
+            fuzz-corpus-reloc-device
+            fuzz-corpus-reloc-thumb
           key: c-fuzz-corpus-none
           restore-keys: c-fuzz-corpus-
-      - name: Fuzz for 60 s
+      - name: Fuzz the decoders (4 builds) and the relocation engine (3 builds), 40 s each
         env:
           CLANG: clang-18
-        run: scripts/c-fuzz.sh 60 fuzz-corpus
+        run: scripts/c-fuzz.sh 40 fuzz-corpus
       - name: Coverage of the C library by the fuzzer
         id: coverage
         env:
@@ -261,9 +278,14 @@ jobs:
           TINYDELTA_CC: arm-linux-gnueabihf-gcc -static
           TINYDELTA_C_RUNNER: qemu-arm
         run: go test -run 'TestC' -v .
-      - name: Code size (Cortex-M)
+      - name: Code size and stack (Cortex-M)
         shell: bash # pipefail, so a failing script fails the step despite tee
         run: scripts/c-size.sh | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Decode time (Cortex-M0 and M4, instructions in an emulator)
+        shell: bash
+        run: |
+          pip install --quiet unicorn
+          scripts/c-time.py arm | tee -a "$GITHUB_STEP_SUMMARY"
 
   c-msp430:
     name: C library on MSP430 (GNU simulator)
@@ -307,12 +329,18 @@ jobs:
           TINYDELTA_C_RUNNER: scripts/sim-run.sh msp430-elf-run
         run: |
           set -o pipefail
-          go test -run 'TestC' -v . 2>&1 | tee "$RUNNER_TEMP/step.log"
-      - name: Code size (MSP430)
+          go test -timeout 50m -run 'TestC' -v . 2>&1 | tee "$RUNNER_TEMP/step.log"
+      - name: Code size and stack (MSP430)
         run: |
           set -o pipefail
           scripts/c-size-msp430.sh 2>&1 | tee "$RUNNER_TEMP/step.log" | tee -a "$GITHUB_STEP_SUMMARY"
           sed 's/%/%25/g' "$RUNNER_TEMP/step.log" | awk 'BEGIN { printf "::notice title=MSP430 code size::" } { printf "%s%%0A", $0 } END { print "" }'
+      - name: Decode time (MSP430, cycles in mspdebug's simulator)
+        run: |
+          set -o pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mspdebug
+          scripts/c-time.py msp430 2>&1 | tee "$RUNNER_TEMP/step.log" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Show the failing step's output as an annotation
         if: failure()
         run: |

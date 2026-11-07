@@ -25,16 +25,18 @@ assert tinydelta.decode(old, patch, max_size=len(new)) == new
 ```
 
 - `encode(dictionary, target, *, greedy=False, max_instruction_len=0,
-  coder_tables=0, window=0, two_pass=False)` returns the smallest
+  coder_tables=0, window=0, two_pass=False, relocation=None,
+  image_base=0, rules=None, ship_rules=False)` returns the smallest
   `Patch` that turns `dictionary` into `target` and that the device's
   decoder, described by the options, can decode. A `Patch` is `bytes`,
   plus `passes`: 1, or 2 for a two-pass patch. `greedy` uses the fast
   greedy encoder instead of the optimal one; `max_instruction_len`
   limits the bytes any one instruction produces. The decoder options
   are below.
-- `decode(dictionary, patch, *, max_size=None, passes=None)` returns the
-  target, decoding a `Patch` in its number of passes (`passes` for plain
-  `bytes`).
+- `decode(dictionary, patch, *, max_size=None, passes=None, rules=None)`
+  returns the target, decoding a `Patch` in its number of passes
+  (`passes` for plain `bytes`); `rules` for a patch made with
+  `encode(rules=...)`.
   Set `max_size` when the expected size is known: a short patch can
   describe a huge target. It must be at least 1, so leave it out for an
   empty target.
@@ -68,6 +70,26 @@ patch is returned, so a tiny update that codes no smaller stays plain:
 patch = tinydelta.encode(old, new, coder_tables=777)
 assert tinydelta.decode(old, patch) == new
 ```
+
+### Relocation
+
+For firmware, `relocation="thumb"` or `"msp430x"` with `image_base`, the
+address the image is linked at, allows a coded patch whose header maps
+how code moved: the decoder (built with `TINYDELTA_RELOC`) updates the
+calls and pointers into moved code itself, so the patch only carries
+what really changed, often a fraction of the coded patch. The map takes
+12 bytes per entry of the tables buffer, so give `coder_tables` room for
+it (1545 is plenty for most updates):
+
+```python
+patch = tinydelta.encode(old, new, coder_tables=1545, relocation="thumb", image_base=0x08000000)
+assert tinydelta.decode(old, patch) == new
+```
+
+`rules=` (a path) uses a rule file of your own instead, and
+`ship_rules=True` puts its table in the patch for a decoder that accepts
+shipped tables; see the
+[main README](https://github.com/simon-b-bjerg/tinydelta#relocation).
 
 Arguments may be any bytes-like objects. The wheel also installs the
 `tinydelta` command (`tinydelta encode old new patch`); `python -m

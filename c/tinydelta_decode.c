@@ -7,6 +7,7 @@
 #include "tinydelta.h"
 #include "tinydelta_coder.h"
 #include "tinydelta_internal.h"
+#include "tinydelta_reloc.h"
 
 /* The memory decoder's state while it runs. */
 typedef struct {
@@ -22,6 +23,10 @@ typedef struct {
     bool b_coded;            /* instruction-stream bytes come from the coder */
     uint32_t stream_left;    /* coded: instruction-stream bytes still to come */
     tinydelta_coder_t coder; /* coded: the range decoder, reading patch bytes */
+#endif
+#if TINYDELTA_RELOC != 0
+    bool b_reloc;            /* the patch carries a relocation map */
+    tinydelta_reloc_t reloc; /* its map, reading the dictionary */
 #endif
 } memory_decoder_t;
 
@@ -83,6 +88,20 @@ static tinydelta_result_t memory_read_varint(memory_decoder_t *p_decoder, tinyde
     return TINYDELTA_ERR_MALFORMED; /* unreachable: a 5th byte with more to come exceeds 0x0F */
 }
 
+/* Relocates the length dictionary bytes from address just placed at the
+ * target position (nothing without a relocation map). */
+static void memory_relocate(memory_decoder_t *p_decoder, uint32_t address, uint32_t length) {
+#if TINYDELTA_RELOC != 0
+    if (p_decoder->b_reloc) {
+        tinydelta_reloc_span(&p_decoder->reloc, address, p_decoder->p_target + p_decoder->target_pos, length);
+    }
+#else
+    (void)p_decoder;
+    (void)address;
+    (void)length;
+#endif
+}
+
 /* Each instruction below checks its length against its source before
  * copying, so the length also fits in size_t (16 bits on some targets,
  * e.g. MSP430) when it reaches memcpy. */
@@ -103,6 +122,7 @@ static tinydelta_result_t memory_decode_copy(memory_decoder_t *p_decoder, uint32
     /* Cast: length is within the dictionary, so it fits in size_t. */
     (void)memcpy(p_decoder->p_target + p_decoder->target_pos, p_decoder->p_dict + address, (size_t)length);
     p_decoder->cursor = address;
+    memory_relocate(p_decoder, address, length);
     return TINYDELTA_OK;
 }
 
@@ -125,6 +145,7 @@ static tinydelta_result_t memory_decode_skip(memory_decoder_t *p_decoder, uint32
     }
     /* Cast: length is within the dictionary, so it fits in size_t. */
     (void)memcpy(p_decoder->p_target + p_decoder->target_pos, p_decoder->p_dict + p_decoder->cursor, (size_t)length);
+    memory_relocate(p_decoder, p_decoder->cursor, length);
     return TINYDELTA_OK;
 }
 
@@ -152,9 +173,21 @@ static tinydelta_result_t memory_decode_copy_target(memory_decoder_t *p_decoder,
 /* ADD_DIFF (version 2): dictionary bytes at the cursor, each plus the
  * next patch byte. */
 static tinydelta_result_t memory_decode_add_diff(memory_decoder_t *p_decoder, uint32_t length) {
+    const uint8_t *p_old;
+
     if (!range_within(p_decoder->cursor, length, p_decoder->dict_len)) {
         return TINYDELTA_ERR_MALFORMED;
     }
+    p_old = p_decoder->p_dict + p_decoder->cursor;
+#if TINYDELTA_RELOC != 0
+    if (p_decoder->b_reloc) {
+        /* The relocated dictionary bytes first, in place; then the sums.
+         * Cast: length is within the dictionary, so it fits in size_t. */
+        (void)memcpy(p_decoder->p_target + p_decoder->target_pos, p_old, (size_t)length);
+        memory_relocate(p_decoder, p_decoder->cursor, length);
+        p_old = p_decoder->p_target + p_decoder->target_pos;
+    }
+#endif
     for (uint32_t offset = 0u; offset < length; offset++) {
         uint8_t diff;
         tinydelta_result_t result = memory_byte(p_decoder, TINYDELTA_FIELD_DIFF, &diff);
@@ -163,10 +196,17 @@ static tinydelta_result_t memory_decode_add_diff(memory_decoder_t *p_decoder, ui
             return result;
         }
         /* Cast: the sum wraps modulo 256, as the format defines. */
-        p_decoder->p_target[p_decoder->target_pos + offset] = (uint8_t)(p_decoder->p_dict[p_decoder->cursor + offset] + diff);
+        p_decoder->p_target[p_decoder->target_pos + offset] = (uint8_t)(p_old[offset] + diff);
     }
     return TINYDELTA_OK;
 }
+
+#if TINYDELTA_RELOC != 0
+/* The relocation map's header varints. */
+static tinydelta_result_t memory_header_varint(void *p_ctx, uint32_t *p_value) {
+    return memory_read_varint((memory_decoder_t *)p_ctx, TINYDELTA_FIELD_CONTINUED, p_value); /* Cast: the context is always the decoder. */
+}
+#endif
 
 #if TINYDELTA_CODER
 /* Reads a coded patch's header (the first byte's flag already seen) and
@@ -182,8 +222,22 @@ static tinydelta_result_t memory_start_coded(memory_decoder_t *p_decoder, uint8_
     }
     layout = features & TINYDELTA_CODED_LAYOUT_MASK;
     needed = tinydelta_coder_tables_size(layout);
-    if (((features & ~TINYDELTA_CODED_LAYOUT_MASK) != 0u) || (needed == 0u) || (p_tables == NULL) || (tables_size < needed)) {
+    if (((features & ~(TINYDELTA_CODED_LAYOUT_MASK | TINYDELTA_CODED_RELOC_MASK)) != 0u) || (needed == 0u) || (p_tables == NULL) || (tables_size < needed)) {
         return TINYDELTA_ERR_VERSION; /* a feature this build or buffer lacks */
+    }
+    if ((features & TINYDELTA_CODED_RELOC_MASK) != 0u) {
+#if TINYDELTA_RELOC != 0
+        p_decoder->reloc.p_dict   = p_decoder->p_dict;
+        p_decoder->reloc.dict_len = p_decoder->dict_len;
+        p_decoder->b_reloc        = true;
+        result =
+            tinydelta_reloc_read_header(&p_decoder->reloc, features, memory_raw_byte, memory_header_varint, p_decoder, p_tables + needed, tables_size - needed);
+        if (result != TINYDELTA_OK) {
+            return result;
+        }
+#else
+        return TINYDELTA_ERR_VERSION; /* built without relocation */
+#endif
     }
     result = memory_read_varint(p_decoder, TINYDELTA_FIELD_CONTINUED, &p_decoder->stream_left); /* stored as is: not coded yet */
     if (result != TINYDELTA_OK) {
@@ -191,7 +245,13 @@ static tinydelta_result_t memory_start_coded(memory_decoder_t *p_decoder, uint8_
     }
     p_decoder->b_coded = true;
     *p_version &= (uint8_t)~TINYDELTA_CODED_FLAG; /* Cast: the flag fits a byte. */
-    return tinydelta_coder_init(&p_decoder->coder, layout, p_tables, memory_raw_byte, p_decoder);
+    result = tinydelta_coder_init(&p_decoder->coder, layout, p_tables, memory_raw_byte, p_decoder);
+#if TINYDELTA_RELOC != 0
+    if ((result == TINYDELTA_OK) && p_decoder->b_reloc) {
+        result = tinydelta_reloc_start(&p_decoder->reloc, &p_decoder->coder); /* a shipped table, and checking the table */
+    }
+#endif
+    return result;
 }
 #endif
 
@@ -238,6 +298,9 @@ static tinydelta_result_t memory_decode(const uint8_t *p_dict,
     decoder.target_pos = 0u;
     decoder.cursor     = 0u;
     version            = p_patch[0];
+#if TINYDELTA_RELOC != 0
+    decoder.b_reloc = false;
+#endif
 #if TINYDELTA_CODER
     decoder.b_coded = false;
     if ((version == (TINYDELTA_CODED_FLAG | TINYDELTA_FORMAT_VERSION)) || (version == (TINYDELTA_CODED_FLAG | TINYDELTA_FORMAT_VERSION_2))) {

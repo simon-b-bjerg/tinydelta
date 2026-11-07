@@ -11,6 +11,7 @@ path = [
     "testdata/**",
     "go.mod",
     "python/src/tinydelta/py.typed",
+    "c/tinydelta_rules_*.h",
 ]
 SPDX-FileCopyrightText = "2026 Simon Bjerg"
 SPDX-License-Identifier = "MIT"
