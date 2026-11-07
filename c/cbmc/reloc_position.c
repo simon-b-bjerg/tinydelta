@@ -50,12 +50,16 @@ int main(void) {
 #ifdef POSITION
     __CPROVER_assume(p == POSITION); /* one run per position: everything it decides is then concrete */
 #endif
-    for (uint32_t i = 0; i < IMAGE_MAX; i++) image_area[i] = nondet_u8();
+    for (uint32_t i = 0; i < IMAGE_MAX; i++) {
+        image_area[i] = nondet_u8();
+    }
     for (uint32_t i = 0; i < TINYDELTA_RELOC_ENTRY_SIZE; i++) {
         entries[i] = nondet_u8();
         outside[i] = nondet_u8();
     }
-    for (uint32_t i = 0; i < 8u; i++) runs[i] = nondet_u8();
+    for (uint32_t i = 0; i < 8u; i++) {
+        runs[i] = nondet_u8();
+    }
     /* Any cache state: lengths as length_at gives them (at most MAX_SKIP + MAX_LENGTH bytes). */
     sync.next = nondet_u32();
     for (uint32_t i = 0; i < SYNC_SLOTS; i++) {
@@ -79,7 +83,9 @@ int main(void) {
 #if DATA_RUNS == 0
     reloc.run_count = 0u;
 #elif DATA_RUNS == 1
-    for (uint32_t i = 0; i < 8u; i++) runs[i] = (i == 4u) ? 1u : 0u; /* one run: start 0, one block */
+    for (uint32_t i = 0; i < 8u; i++) {
+        runs[i] = (i == 4u) ? 1u : 0u; /* one run: start 0, one block */
+    }
     reloc.run_count = 1u;
 #else
     reloc.run_count = nondet_u32() & 1u;
@@ -101,8 +107,8 @@ int main(void) {
 #else
     /* The body of tinydelta_reloc_span's loop. */
     p_rule = applies(&reloc, &sync, p, &list, &index);
-    if ((p_rule != NULL) && !excluded(&reloc, &sync, p_rule, list, p)) {
-        move_at(&reloc, p_rule, p, &span);
+    if ((p_rule != NULL) && move_at(&reloc, p_rule, p, NULL) && !excluded(&reloc, &sync, p_rule, list, p)) {
+        (void)move_at(&reloc, p_rule, p, &span);
     }
 #endif
     return 0;

@@ -278,9 +278,14 @@ jobs:
           TINYDELTA_CC: arm-linux-gnueabihf-gcc -static
           TINYDELTA_C_RUNNER: qemu-arm
         run: go test -run 'TestC' -v .
-      - name: Code size (Cortex-M)
+      - name: Code size and stack (Cortex-M)
         shell: bash # pipefail, so a failing script fails the step despite tee
         run: scripts/c-size.sh | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Decode time (Cortex-M0 and M4, instructions in an emulator)
+        shell: bash
+        run: |
+          pip install --quiet unicorn
+          scripts/c-time.py arm | tee -a "$GITHUB_STEP_SUMMARY"
 
   c-msp430:
     name: C library on MSP430 (GNU simulator)
@@ -325,11 +330,17 @@ jobs:
         run: |
           set -o pipefail
           go test -timeout 50m -run 'TestC' -v . 2>&1 | tee "$RUNNER_TEMP/step.log"
-      - name: Code size (MSP430)
+      - name: Code size and stack (MSP430)
         run: |
           set -o pipefail
           scripts/c-size-msp430.sh 2>&1 | tee "$RUNNER_TEMP/step.log" | tee -a "$GITHUB_STEP_SUMMARY"
           sed 's/%/%25/g' "$RUNNER_TEMP/step.log" | awk 'BEGIN { printf "::notice title=MSP430 code size::" } { printf "%s%%0A", $0 } END { print "" }'
+      - name: Decode time (MSP430, cycles in mspdebug's simulator)
+        run: |
+          set -o pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mspdebug
+          scripts/c-time.py msp430 2>&1 | tee "$RUNNER_TEMP/step.log" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Show the failing step's output as an annotation
         if: failure()
         run: |

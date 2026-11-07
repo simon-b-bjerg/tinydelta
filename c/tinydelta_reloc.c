@@ -324,7 +324,7 @@ static bool check_rule(const tinydelta_reloc_t *p_reloc, small_t pos, small_t en
     if (list < LIST_CODE) {
         b_ok = b_ok && (addrs == 0u) && ((flags & (FLAG_RELATIVE | FLAG_REQUIRE | FLAG_UNLESS)) == 0u) && ((attr & 3u) == 0u) && (n >= 1u);
         if (list == LIST_PREFIXES) {
-            b_ok = b_ok && (n <= MAX_SKIP) && ((n % p_reloc->unit) == 0u);
+            b_ok = b_ok && (n <= MAX_SKIP) && ((n & (p_reloc->unit - 1u)) == 0u);
         } else {
             b_ok = b_ok && (n <= MAX_LENGTH);
         }
@@ -383,8 +383,8 @@ static bool check_rule(const tinydelta_reloc_t *p_reloc, small_t pos, small_t en
             for (small_t index = 0u; b_ok && (index < offsets); index++) {
                 small_t byte = tb(p_reloc, at);
 
-                /* -16 to 16, a multiple of the unit (two's complement keeps a negative one's remainder) */
-                b_ok = ((byte <= MAX_UNLESS_OFFSET) || (byte >= (256u - MAX_UNLESS_OFFSET))) && ((byte % p_reloc->unit) == 0u);
+                /* -16 to 16, a multiple of the unit (a power of two: two's complement keeps a negative one's low bits) */
+                b_ok = ((byte <= MAX_UNLESS_OFFSET) || (byte >= (256u - MAX_UNLESS_OFFSET))) && ((byte & (p_reloc->unit - 1u)) == 0u);
                 at++;
             }
         }
@@ -714,8 +714,8 @@ static bool starts(const tinydelta_reloc_t *p_reloc, sync_t *p_sync, uint32_t p)
         for (small_t i = sync_of(p_reloc) - 1u; i > 0u; i--) {
             p_sync->units[i] = p_sync->units[i - 1u];
         }
-        /* Cast: at most MAX_SKIP + MAX_LENGTH. 0 before the image's start (wrapped past p): skipped. */
-        p_sync->units[0] = (p_sync->next < p) ? (uint8_t)(length_at(p_reloc, p_sync->next) / unit_of(p_reloc)) : 0u;
+        /* In units (1, 2 or 4 bytes: unit >> 1 is its log2). Cast: at most MAX_SKIP + MAX_LENGTH. 0 before the image's start (wrapped past p): skipped. */
+        p_sync->units[0] = (p_sync->next < p) ? (uint8_t)(length_at(p_reloc, p_sync->next) >> (unit_of(p_reloc) >> 1u)) : 0u;
     }
     for (small_t i = sync_of(p_reloc); i > 0u; i--) {
         if (((covered & 1u) == 0u) && (p_sync->units[i - 1u] > 0u)) {
@@ -780,8 +780,10 @@ static bool no_wrap(uint32_t a, uint32_t shift) {
     return ((shift & 0x80000000u) != 0u) ? ((a + shift) < a) : ((a + shift) >= a);
 }
 
-/* Rewrites a rule's addresses at p in the span. */
-static void move_at(const tinydelta_reloc_t *p_reloc, const uint8_t *p_rule, uint32_t p, const span_t *p_span) {
+/* Rewrites a rule's addresses at p in the span (p_span NULL: only
+ * whether any would change). */
+static bool move_at(const tinydelta_reloc_t *p_reloc, const uint8_t *p_rule, uint32_t p, const span_t *p_span) {
+    bool b_moves  = false;
     small_t space = RULE_ATTR(p_rule) & 3u;
     small_t bits;
 
@@ -798,7 +800,10 @@ static void move_at(const tinydelta_reloc_t *p_reloc, const uint8_t *p_rule, uin
         /* Only a target inside the image (data that looks like a call aims far
          * outside it), within sign_extend bits (as two's complement), and changed. */
         if (no_wrap(site, delta) && in_image(p_reloc, site + delta) && (next != offset) && ((next + sign) < (sign << 1))) {
-            split(p_reloc, p_span, p_addr, p, next & low_mask(bits));
+            b_moves = true;
+            if (p_span != NULL) {
+                split(p_reloc, p_span, p_addr, p, next & low_mask(bits));
+            }
         }
     } else {
         const uint8_t *p_addr = rule_addr(p_reloc, p_rule, 0u);
@@ -809,11 +814,15 @@ static void move_at(const tinydelta_reloc_t *p_reloc, const uint8_t *p_rule, uin
 
             /* Not negative nor past 32 bits, and within the slices' bits. */
             if ((shift != 0u) && no_wrap(address, shift) && ((bits >= 32u) || (((address + shift) >> bits) == 0u))) {
-                split(p_reloc, p_span, p_addr, p, address + shift);
+                b_moves = true;
+                if (p_span != NULL) {
+                    split(p_reloc, p_span, p_addr, p, address + shift);
+                }
             }
             p_addr = &p_addr[1u + (small_t)*p_addr + (small_t)*p_addr]; /* Cast: widens. The next address. */
         }
     }
+    return b_moves;
 }
 
 void tinydelta_reloc_span(const tinydelta_reloc_t *p_reloc, uint32_t offset, uint8_t *p_out, uint32_t length) {
@@ -826,8 +835,11 @@ void tinydelta_reloc_span(const tinydelta_reloc_t *p_reloc, uint32_t offset, uin
         small_t index;
         const uint8_t *p_rule = applies(p_reloc, &sync, p, &list, &index);
 
-        if ((p_rule != NULL) && !excluded(p_reloc, &sync, p_rule, list, p)) {
-            move_at(p_reloc, p_rule, p, &span);
+        /* unless only matters where an address would change, and costs
+         * other rules' lookups: most matches (a pointer rule's, say) move
+         * nothing. */
+        if ((p_rule != NULL) && move_at(p_reloc, p_rule, p, NULL) && !excluded(p_reloc, &sync, p_rule, list, p)) {
+            (void)move_at(p_reloc, p_rule, p, &span);
         }
     }
 }
