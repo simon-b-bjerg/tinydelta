@@ -312,6 +312,12 @@ func TestRelocationStats(t *testing.T) {
 			t.Errorf("RelocationStats lacks %q:\n%s", want, s)
 		}
 	}
+	v := RelocationStatsVerbose(old, new, builtinMSP430X, 0x10000)
+	for _, want := range []string{s, "map entries (old address, length, shift):", "data runs (address, length):", "RAM ranges (address, length, shift):", "address fields left wrong"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("RelocationStatsVerbose lacks %q", want)
+		}
+	}
 }
 
 // TestRelocationVerified: EncodeWith decodes the relocated patch it picks,
