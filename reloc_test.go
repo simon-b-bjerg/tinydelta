@@ -313,3 +313,20 @@ func TestRelocationStats(t *testing.T) {
 		}
 	}
 }
+
+// TestRelocationVerified: EncodeWith decodes the relocated patch it picks,
+// and refuses to return one that doesn't give the target.
+func TestRelocationVerified(t *testing.T) {
+	r := rand.New(rand.NewSource(5))
+	old, new := fakeFirmware(r, RelocationThumb, 0x2000, 20)
+	opts := EncodeOptions{CoderTables: 1545, Relocation: RelocationThumb, ImageBase: 0x2000}
+	testRelocFault = func(p []byte) { p[len(p)/2] ^= 0x40 }
+	defer func() { testRelocFault = nil }()
+	if _, err := EncodeWith(old, new, opts); err == nil || !strings.Contains(err.Error(), "internal error") {
+		t.Fatalf("a damaged relocated patch: got %v, want an internal error", err)
+	}
+	testRelocFault = nil
+	if p, err := EncodeWith(old, new, opts); err != nil || p.Bytes[1]>>2 == 0 {
+		t.Fatalf("undamaged: %v, features %x", err, p.Bytes[1])
+	}
+}

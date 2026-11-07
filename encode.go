@@ -4,6 +4,7 @@
 package tinydelta
 
 import (
+	"bytes"
 	"compress/flate"
 	"fmt"
 	"slices"
@@ -151,6 +152,9 @@ func EncodeWith(dict, target []byte, opts EncodeOptions) (Patch, error) {
 			best = Patch{Bytes: patch, Passes: passes}
 		}
 	}
+	// Relocated patches compete separately: the smallest is decoded before
+	// it is kept, so a fault in building the map can't reach a device.
+	var relocated []byte
 	if len(layouts) > 0 {
 		for _, candidate := range [][]byte{best.Bytes, withVersion(FormatVersion2, encodeCovers(dict, target, maxLen))} {
 			for _, layout := range layouts {
@@ -208,10 +212,22 @@ func EncodeWith(dict, target []byte, opts EncodeOptions) (Patch, error) {
 				for _, m := range maps {
 					rd := m.relocate(dict)
 					for _, candidate := range [][]byte{plain(rd, target), withVersion(FormatVersion2, encodeCovers(rd, target, maxLen))} {
-						consider(encodeCodedReloc(candidate, layout, m), 1)
+						if p := encodeCodedReloc(candidate, layout, m); relocated == nil || len(p) < len(relocated) {
+							relocated = p
+						}
 					}
 				}
 			}
+		}
+		if relocated != nil && len(relocated) < len(best.Bytes) {
+			if testRelocFault != nil {
+				testRelocFault(relocated)
+			}
+			got, err := DecodeRules(dict, bytes.NewReader(relocated), len(target), opts.Rules)
+			if err != nil || !bytes.Equal(got, target) {
+				return Patch{}, fmt.Errorf("tinydelta: internal error: a relocated patch doesn't decode to the target (%v); please report it", err)
+			}
+			best = Patch{Bytes: relocated, Passes: 1}
 		}
 	}
 	if opts.TwoPass {
@@ -428,3 +444,7 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 	*c += countingWriter(len(p))
 	return len(p), nil
 }
+
+// testRelocFault, set by tests only, damages the relocated patch EncodeWith
+// is about to check.
+var testRelocFault func(patch []byte)
