@@ -12,9 +12,15 @@
 #include <stddef.h>
 
 #include "tinydelta_reloc.h"
+#if !TINYDELTA_RELOC_SHIPPED
+#include "tinydelta_reloc.c" /* its built-in table is static */
+#endif
 
 #ifndef TABLE_MAX
 #define TABLE_MAX 16
+#endif
+#ifndef DATA_RUNS
+#define DATA_RUNS 2 /* 0: none, 1: one over the image, 2: any (slow: both lists on merged paths) */
 #endif
 #ifndef IMAGE_MAX
 #define IMAGE_MAX 6
@@ -40,8 +46,14 @@ int main(void) {
     for (uint32_t i = 0; i < 8u; i++) runs[i] = nondet_u8();
 
     /* Each array ends where its contents end, so a byte past them leaves it. */
-    reloc.p_rules       = table_area + (TABLE_MAX - table_len);
-    reloc.rules_len     = table_len;
+#if TINYDELTA_RELOC_SHIPPED
+    reloc.p_rules   = table_area + (TABLE_MAX - table_len); /* any table: the checker must catch what the engine can't take */
+    reloc.rules_len = table_len;
+#else
+    (void)table_len;
+    reloc.p_rules   = tinydelta_reloc_rules; /* the built-in table */
+    reloc.rules_len = TINYDELTA_RELOC_RULES_SIZE;
+#endif
     reloc.b_shipped     = false;
     reloc.p_dict        = image_area + (IMAGE_MAX - image_len);
     reloc.dict_len      = image_len;
@@ -51,7 +63,14 @@ int main(void) {
     reloc.p_entries     = entries;
     reloc.count         = nondet_u32() & 1u;
     reloc.p_runs        = runs;
-    reloc.run_count     = nondet_u32() & 1u;
+#if DATA_RUNS == 0
+    reloc.run_count = 0u; /* code everywhere */
+#elif DATA_RUNS == 1
+    for (uint32_t i = 0; i < 8u; i++) runs[i] = (i == 4u) ? 1u : 0u; /* data everywhere: one run (start 0, length 1 block) */
+    reloc.run_count = 1u;
+#else
+    reloc.run_count = nondet_u32() & 1u; /* either, anywhere */
+#endif
     reloc.p_outside     = outside;
     reloc.outside_count = nondet_u32() & 1u;
 
