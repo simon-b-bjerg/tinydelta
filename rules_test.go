@@ -356,14 +356,7 @@ func TestCRelocationRules(t *testing.T) {
 	dir := t.TempDir()
 	header := filepath.Join(dir, "custom_rules.h")
 	os.WriteFile(header, []byte(custom.CHeader("custom.yaml")), 0o644)
-	build := func(defs ...string) (memory, callback string) {
-		memory = buildCDriver(t, append(append(append([]string{}, cCoderSources...), defs...), "c/tinydelta_reloc.c")...)
-		d := t.TempDir()
-		os.WriteFile(filepath.Join(d, "driver.c"), []byte(cIODriver), 0o644)
-		callback = filepath.Join(d, "decode_io")
-		cCompile(t, callback, append(append(append([]string{}, cCoderSources...), defs...), "c/tinydelta_reloc.c", "c/tinydelta_io.c", filepath.Join(d, "driver.c"))...)
-		return memory, callback
-	}
+	build := func(defs ...string) (memory, callback string) { return buildCRelocDrivers(t, defs...) }
 	decode := func(bin string, dict, patch []byte) ([]byte, string, bool) {
 		d := t.TempDir()
 		dp, pp, op := filepath.Join(d, "d"), filepath.Join(d, "p"), filepath.Join(d, "o")
@@ -442,4 +435,17 @@ func TestCRelocationRules(t *testing.T) {
 			t.Fatalf("corruption %d: callback decoder ok=%v (%s), Go err=%v", k, ok, code, werr)
 		}
 	}
+}
+
+// buildCRelocDrivers builds the C memory and callback decoder drivers with
+// the coder, relocation and the given defines (which rules, shipped
+// tables).
+func buildCRelocDrivers(t *testing.T, defs ...string) (memory, callback string) {
+	t.Helper()
+	memory = buildCDriver(t, append(append(append([]string{}, cCoderSources...), defs...), "c/tinydelta_reloc.c")...)
+	d := t.TempDir()
+	os.WriteFile(filepath.Join(d, "driver.c"), []byte(cIODriver), 0o644)
+	callback = filepath.Join(d, "decode_io")
+	cCompile(t, callback, append(append(append([]string{}, cCoderSources...), defs...), "c/tinydelta_reloc.c", "c/tinydelta_io.c", filepath.Join(d, "driver.c"))...)
+	return memory, callback
 }

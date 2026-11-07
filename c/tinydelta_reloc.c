@@ -574,7 +574,10 @@ static bool matches(const tinydelta_reloc_t *p_reloc, const uint8_t *p_rule, uin
 
             b_equal = (p_window->bytes[at] & p_cond[1u + word_bytes_of(p_reloc) + byte]) == p_cond[1u + byte];
         }
-        b_ok = b_ok && (b_equal != ((*p_cond & 0x80u) != 0u));
+        if ((*p_cond & 0x80u) != 0u) { /* negated */
+            b_equal = !b_equal;
+        }
+        b_ok = b_ok && b_equal;
         p_cond += cond_bytes(p_reloc);
     }
     return b_ok;
@@ -815,7 +818,7 @@ static void move_at(const tinydelta_reloc_t *p_reloc, const uint8_t *p_rule, uin
 
 void tinydelta_reloc_span(const tinydelta_reloc_t *p_reloc, uint32_t offset, uint8_t *p_out, uint32_t length) {
     span_t span  = {offset, length, p_out};
-    sync_t sync  = {0u, {0u}}; /* in step from 0, all before it */
+    sync_t sync  = {0}; /* in step from 0, all before it */
     uint32_t end = offset + length;
 
     for (uint32_t p = (offset >= reach_of(p_reloc)) ? (offset - reach_of(p_reloc)) : 0u; p < end; p++) {

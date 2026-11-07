@@ -1027,14 +1027,14 @@ range-coded ([Coded patches](#coded-patches)):
 
 ```text
 coded patch = 0x80 | version (0x81 or 0x82)
-            + features (1 byte: bits 0-1 the table layout, 1-3; bits 2-3 the
-                        relocation rule, 0 for none; bits 4-7 are 0)
-            + [relocation map, with a rule]
+            + features (1 byte: bits 0-1 the table layout, 1-3; bits 2-3
+                        relocation, 0 for none; bits 4-7 are 0)
+            + [relocation map, with relocation]
             + n (varint: the length of the instruction stream, uncoded)
             + the coded stream
 ```
 
-A features byte with layout 0, rule 3 or any of bits 4-7 set is
+A features byte with layout 0, relocation 3 or any of bits 4-7 set is
 unsupported, like an unknown version. Decoding yields the instruction stream's bytes
 one at a time, `n` of them, and the instructions are decoded from them
 exactly as from a plain patch's.
@@ -1090,65 +1090,41 @@ has a malformed patch.
 
 ### Relocation map
 
-With a relocation rule (features bits 2-3: 1 Thumb, 2 MSP430X), the
-coded header carries the map before `n`:
+With features bits 2-3 set, the coded header carries a map of how parts
+of the old image moved, and the decoder relocates the old image through
+it before the instructions read it ([Relocation](#relocation)). Which
+bytes of the old image are addresses is set by a rule table: with 1 the
+decoder's built-in table, named by its CRC; with 2 a table shipped in the
+patch. The table's format, and what the engine does with it bit for bit,
+are in [docs/relocation-rules.md](docs/relocation-rules.md) ("Binary
+table", "What the engine does").
 
 ```text
-map = base (varint: the old image's address on the device)
-    + count (varint)
-    + count × ( gap (varint: start − the previous entry's end, 0 at first)
-              + length (varint)
-              + shift (varint, zigzag) )
-    + MSP430X only: runs (varint)
-    + runs × ( gap (varint) + length (varint) )     data runs, in 256-byte blocks
-    + MSP430X only: outside (varint)
-    + outside × ( gap + length + shift, as entries )  address ranges outside the image
+relocation = 1: the rule table's CRC-16/CCITT-FALSE (2 bytes, little-endian)
+             2: the shipped table's length (varint, 1-4096)
+           + base (varint: the old image's address on the device)
+           + entries:    count (varint) + count × ( gap + length + shift )   old-image offsets that moved
+           + data runs:  count (varint) + count × ( gap + length )           in 256-byte blocks
+           + RAM ranges: count (varint) + count × ( gap + length + shift )   addresses outside the image that moved
 ```
 
-Entries are in order and don't overlap; an old-image offset `o` moves
-by the `shift` of the entry with `start ≤ o < start + length`, by 0
-outside every entry. The instructions then apply to the relocated old
-image: the raw old image with every address the rule finds replaced.
-An address `a` points into the image if `base ≤ a < base + length of
-the old image`; it becomes `a + shift(a − base)`. Other addresses
-(MSP430X) move by the outside range holding `a` itself, if any.
+All fields are varints, `shift` zigzag-encoded. Each `gap` counts from
+the previous record's end in its list (from 0 for the first), so the
+records are in order and don't overlap; a record ending past 2^32 − 1 is
+malformed. An old-image offset `o` moves by the `shift` of the entry
+holding it, by 0 outside every entry; an address outside the image moves
+by the RAM range holding it. With 2, the coded stream starts with the
+table's bytes, bits 7 down to 0 through one bit tree of 255 states of
+its own, all starting at 0; the instructions' states then start at 0
+as usual.
 
-**Thumb.** At each even address `h` where the halfword is
-`0xF000`–`0xF7FF` and the next `0xF800`–`0xFFFF` (a `BL`): its 22-bit
-field `f` (the low 11 bits of each halfword, first one high) gives the
-offset `2f`, sign-extended from 23 bits; the callee is at `h + 4 +
-offset`. The new offset is `offset + shift(callee) − shift(h)` (the
-callee's shift counts only if it is in the image), stored back if it
-differs, is even and fits 23 bits. Then each 4-byte-aligned 32-bit
-little-endian word that no `BL` overlaps is moved if it points into the
-image.
-
-**MSP430X.** At each even `h`, a candidate instruction and its 20-bit
-address fields, each the low 16 bits from a word and the high 4 bits
-from the first word:
-
-| first word | length | fields: low word at, high bits at |
-|---|---:|---|
-| `0x13B?`, `0x138?` (`CALLA #imm`/`&abs`), `0x0?6?` (`MOVA Rs,&abs`) | 4 | `h+2`, bits 3-0 |
-| `0x0?8?`–`0x0?B?` (`MOVA`/`CMPA`/`ADDA`/`SUBA #imm`), `0x0?2?` (`MOVA &abs`) | 4 | `h+2`, bits 11-8 |
-| `0x18??`–`0x1F??` then a word ≥ `0x4000` (extension word, two-operand instruction) | 4 + 2 per operand word | source word (As 1 except R0 and R3, or As 3 with R0), bits 10-7; then destination word (Ad 1 except R0), bits 3-0 |
-
-PC-relative operands (R0 with As or Ad 1) take a word but aren't moved.
-A candidate counts if it is where an instruction starts: decoding
-instruction lengths from 8 words before it (any MSP430/MSP430X
-instruction: its extension word, operand words, the address
-instructions' second word) reaches it as an instruction and not as an
-operand word. Small operands such as `#0x0084` look like `MOVA #imm`,
-so looking only at candidates before would drop the instruction after
-them. A field's address moves if it points into
-the image and stays below `2^20`.
-
-Inside a data run (an offset `h` with `h / 256` in a run), there are no
-instructions: at each even `h`, a 32-bit little-endian value whose high
-half is 1–15 and which points into the image is a data pointer, unless
-the value at `h − 2` is one too; it moves like a field's address. The
-encoder picks the runs: the 256-byte blocks where data pointers make
-more of the old image match the new.
+A table CRC that isn't the decoder's built-in table's, a shipped table
+the decoder doesn't accept (`TINYDELTA_RELOC_SHIPPED`) or that fails the
+[limits](docs/relocation-rules.md#limits-and-validation), and a map or
+table that doesn't fit the decoder's tables buffer (after the coder's
+tables: the shipped table's length, 12 bytes per entry and RAM range, 8
+per data run) give `VERSION`, `VERSION`, `MALFORMED` and `VERSION`; a
+decoder built without relocation gives `VERSION` for any relocated patch.
 
 ### Stability
 
@@ -1186,7 +1162,11 @@ dictionary or one byte past it, `COPY_TARGET` overlapping its own
 output or pointing at or past the write position, truncated operands,
 and capacities exactly reached and one byte short. Coded patches
 (`coded-*`) cover each table layout, both instruction sets, and the
-headers to reject. A few more are real encoder output (`gen-*`).
+headers to reject. Relocated patches (`reloc-*`) cover the Thumb and
+MSP430X tables built in and a shipped one, all three lists of the map,
+and the headers and tables to reject; `TestCVectors` checks them against
+C builds with each table, without relocation, and without shipped
+tables. A few more are real encoder output (`gen-*`).
 
 They also settle one thing this section leaves open: an instruction is
 checked against the capacity as soon as its length is known, before its
