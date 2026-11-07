@@ -41,7 +41,6 @@ Goals:
 - [Tools](#tools)
 - [Covering other MCUs](#covering-other-mcus)
 - [Testing](#testing)
-- [Open questions](#open-questions)
 
 ## The idea in one example
 
@@ -288,8 +287,9 @@ model to learn (coding the maps of 17 MSP430X updates gave 575 B for
 
 In the decoder's tables buffer: the coder's tables (522, 777 or 1287 B),
 then a shipped table (its length), then the map (12 B per entry and per
-RAM range, 8 B per data run). A shipped table is only for experiments: a
-table worth keeping becomes the built-in one.
+RAM range, 8 B per data run). Shipping a table costs patch bytes every
+time, and a decoder that accepts them carries the table checker: a
+table used for every update belongs built in.
 
 ## Limits and validation
 
@@ -380,24 +380,8 @@ the patch as differences.
 
 ## Testing
 
-1. Go engine against the hand-written Go rules, on the synthetic images of
-   `reloc_test.go`, the MSP430X mbedtls builds (consecutive and 4-5
-   builds apart), the Thumb MicroPython builds, and random images with
-   random maps (differential fuzzing): identical relocated images.
-2. Patch sizes unchanged on those corpora but for the header (the CRC,
-   and the empty lists Thumb now carries).
-3. C engine against Go, as the existing relocation tests do; corrupted
-   and random shipped tables accepted or rejected as Go does; CBMC on
-   the engine with small symbolic tables and images.
-4. Decode time and code size on MSP430X `-mlarge` (GNU simulator) against
-   the hand-written rule.
-
-## Open questions
-
-1. **Shipped table size.** About 600 B for MSP430X, mostly the length and
-   extension-word combinations. Fine for experiments? It could later be
-   range-coded with the patch, or the lengths list could get a denser
-   form.
-2. **`address2`.** Two keys, or one `addresses:` list of slice lists?
-3. **Build options.** `TINYDELTA_RELOC_SHIPPED` separate, so a product
-   that never accepts shipped tables doesn't carry the validator?
+What checks the engine and the tables, and how, is in the README's
+[Tests](../README.md#tests) section: the C engine against the Go one
+(differential fuzzing, the C builds with each table), random and
+damaged tables, rule files and maps, conformance vectors, and CBMC on
+the C engine with each built-in table.
