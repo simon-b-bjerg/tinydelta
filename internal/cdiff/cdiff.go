@@ -12,12 +12,17 @@ package cdiff
 #include "tinydelta.h"
 #include "tinydelta_io.h"
 
-// The second build, Thumb built in (thumb.h).
+// The second build, Thumb built in (thumb.h), and the third, MSP430X built
+// in without shipped tables (msp430x.h).
 tinydelta_result_t thumb_tinydelta_decode_coded(const uint8_t *, uint32_t, const uint8_t *, uint32_t, uint8_t *, uint32_t, uint8_t *, uint32_t, uint32_t *);
 tinydelta_result_t thumb_tinydelta_decode_io(const tinydelta_io_t *, uint32_t *);
+tinydelta_result_t msp430x_tinydelta_decode_coded(const uint8_t *, uint32_t, const uint8_t *, uint32_t, uint8_t *, uint32_t, uint8_t *, uint32_t, uint32_t *);
+tinydelta_result_t msp430x_tinydelta_decode_io(const tinydelta_io_t *, uint32_t *);
 
-static tinydelta_result_t cdiff_decode(int thumb, const uint8_t *d, uint32_t dn, const uint8_t *p, uint32_t pn, uint8_t *o, uint32_t cap, uint8_t *t, uint32_t tn, uint32_t *on) {
-	return thumb ? thumb_tinydelta_decode_coded(d, dn, p, pn, o, cap, t, tn, on) : tinydelta_decode_coded(d, dn, p, pn, o, cap, t, tn, on);
+static tinydelta_result_t cdiff_decode(int build, const uint8_t *d, uint32_t dn, const uint8_t *p, uint32_t pn, uint8_t *o, uint32_t cap, uint8_t *t, uint32_t tn, uint32_t *on) {
+	return build == 1 ? thumb_tinydelta_decode_coded(d, dn, p, pn, o, cap, t, tn, on)
+	     : build == 2 ? msp430x_tinydelta_decode_coded(d, dn, p, pn, o, cap, t, tn, on)
+	                  : tinydelta_decode_coded(d, dn, p, pn, o, cap, t, tn, on);
 }
 
 // The callback decoder's side: the patch and dictionary in memory, the
@@ -71,7 +76,7 @@ static int cdiff_target_write(void *c, uint32_t off, const uint8_t *b, uint32_t 
 	return 0;
 }
 
-static int cdiff_decode_io(int thumb, cdiff_io *s, uint8_t *buffer, uint32_t buffer_size, uint8_t *tables, uint32_t tables_size, uint32_t *out_len) {
+static int cdiff_decode_io(int build, cdiff_io *s, uint8_t *buffer, uint32_t buffer_size, uint8_t *tables, uint32_t tables_size, uint32_t *out_len) {
 	tinydelta_io_t io;
 	memset(&io, 0, sizeof io);
 	io.patch_read = cdiff_patch_read; io.p_patch_ctx = s; io.patch_len = s->patch_len;
@@ -80,7 +85,7 @@ static int cdiff_decode_io(int thumb, cdiff_io *s, uint8_t *buffer, uint32_t buf
 	io.target_cap = s->cap;
 	io.p_buffer = buffer; io.buffer_size = buffer_size; io.page_size = s->page;
 	io.p_tables = tables; io.tables_size = tables_size;
-	return (int)(thumb ? thumb_tinydelta_decode_io(&io, out_len) : tinydelta_decode_io(&io, out_len));
+	return (int)(build == 1 ? thumb_tinydelta_decode_io(&io, out_len) : build == 2 ? msp430x_tinydelta_decode_io(&io, out_len) : tinydelta_decode_io(&io, out_len));
 }
 */
 import "C"

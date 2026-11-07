@@ -11,6 +11,9 @@ const (
 	MSP430X Build = 0
 	// Thumb: the Thumb rules built in, no shipped tables (thumb.h).
 	Thumb Build = 1
+	// MSP430XOnly: the MSP430X rules built in, no shipped tables
+	// (msp430x.h), so matched by the code generated with them.
+	MSP430XOnly Build = 2
 )
 
 // IOConfig sets up the callback decoder (tinydelta_decode_io): its RAM

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -121,14 +122,16 @@ func TestVectors(t *testing.T) {
 // TestCVectors checks the C memory decoder and the C callback decoder at
 // several buffer and page sizes against every conformance vector.
 // cVectorBuilds are the C decoder builds TestCVectors checks: without
-// relocation, with the Thumb rules built in, and with the MSP430X rules
-// built in and shipped tables accepted.
+// relocation, with the Thumb or MSP430X rules built in (matched by the
+// code generated with them), and with the MSP430X rules built in and
+// shipped tables accepted (tables interpreted).
 var cVectorBuilds = []struct {
 	name string
 	defs []string // nil: no relocation
 }{
 	{"no relocation", nil},
 	{"Thumb", []string{"-DTINYDELTA_RELOC=1"}},
+	{"MSP430X", []string{"-DTINYDELTA_RELOC=2"}},
 	{"MSP430X, shipped tables", []string{"-DTINYDELTA_RELOC=2", "-DTINYDELTA_RELOC_SHIPPED=1"}},
 }
 
@@ -138,9 +141,9 @@ var cVectorBuilds = []struct {
 // VERSION; reloc-any-* and every other vector alike in every build.
 func vectorWant(v vector, build string) string {
 	want := v.result
-	needs := map[string]string{"reloc-thumb-": "Thumb", "reloc-msp430x-": "MSP430X, shipped tables", "reloc-shipped-": "MSP430X, shipped tables"}
-	for prefix, b := range needs {
-		if strings.HasPrefix(v.name, prefix) && b != build {
+	needs := map[string][]string{"reloc-thumb-": {"Thumb"}, "reloc-msp430x-": {"MSP430X", "MSP430X, shipped tables"}, "reloc-shipped-": {"MSP430X, shipped tables"}}
+	for prefix, builds := range needs {
+		if strings.HasPrefix(v.name, prefix) && !slices.Contains(builds, build) {
 			want = "VERSION"
 		}
 	}

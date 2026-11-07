@@ -317,17 +317,16 @@ Within these limits the work per position is bounded: at most 64
 condition checks per list, two `unless` evaluations of one rule each,
 and one instruction length decode, as the C engine keeps the last `sync`
 lengths while it scans a span, and checks the code rules only where an
-instruction starts. On MSP430, relocating costs about 6,000 cycles per
-byte of the old image with the `msp430x` rules (measured with clang
-`-Os` on a test image), most of it checking the 34 code rules and 18
-length rules; Thumb's three rules cost far less.
+instruction starts. An `unless` is only evaluated where a rule would
+move an address. Measured times per target are in the README's
+[C library](../README.md#c-library) section (`scripts/c-time.py`).
 
 ## Tools
 
 ```sh
 tinydelta rules check  rules/msp430x.yaml
 tinydelta rules compile rules/msp430x.yaml -o msp430x.bin        # the binary table
-tinydelta rules compile rules/msp430x.yaml -c msp430x_rules.h    # a const C array and its CRC, for the decoder build
+tinydelta rules compile rules/msp430x.yaml -c msp430x_rules.h    # a C header for the decoder build (below)
 
 tinydelta encode   -rules rules/msp430x.yaml -base 0x10000 [-ship-rules] old.bin new.bin update.td
 tinydelta relocstats -rules rules/msp430x.yaml -base 0x10000 old.bin new.bin
@@ -346,6 +345,15 @@ or `TINYDELTA_RELOC_MSP430X` (the built-in tables,
 compile -c` for a table of your own. `TINYDELTA_RELOC_SHIPPED = 1` adds
 accepting tables shipped in patches, and the checker they need; without
 it the table is trusted (it is part of the firmware) and not checked.
+
+The header from `rules compile -c` holds the table two ways. A decoder
+that accepts shipped tables interprets tables, the built-in one too, and
+gets it as it is. One with the built-in table only gets the rules'
+conditions compiled to C (`tinydelta_reloc_match`: byte compares on the
+image bytes at a position, rule by rule in table order) and the table
+without them: faster, and smaller, as the conditions are most of the
+table (MSP430X: 348 of its 833 bytes remain). Either way the patch names
+the whole table by its CRC.
 
 ## Covering other MCUs
 

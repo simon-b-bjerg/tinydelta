@@ -43,9 +43,12 @@ func FuzzRelocGoVsC(f *testing.F) {
 		}
 		const base = 0x10000
 		rules, relocation, ship, layout, dataRuns, moveRAM := relocFuzzOptions(flags)
-		build, buildRules := cdiff.MSP430X, builtinMSP430X
-		if relocation == RelocationThumb && !ship {
-			build, buildRules = cdiff.Thumb, builtinThumb
+		builds, buildRules := []cdiff.Build{cdiff.MSP430X}, builtinMSP430X
+		switch {
+		case relocation == RelocationThumb && !ship:
+			builds, buildRules = []cdiff.Build{cdiff.Thumb}, builtinThumb
+		case !ship:
+			builds = append(builds, cdiff.MSP430XOnly) // the interpreter, and the code generated for the table
 		}
 		target := relocFuzzCase(img, script, rules, base, int(at), int(gap), moveRAM)
 		patch := forcedRelocPatch(img, target, rules, base, ship, layout, dataRuns)
@@ -70,27 +73,29 @@ func FuzzRelocGoVsC(f *testing.F) {
 		cfg := cdiff.IOConfig{BufferSize: buffer, PageSize: buffer >> (2 * (io >> 3 & 1))}
 
 		want, goErr := DecodeRules(img, bytes.NewReader(patch), max(capacity, 1), builtinMSP430X)
-		mem, memRC := cdiff.Decode(build, img, patch, max(capacity, 1), tablesSize)
-		cb, cbRC, violation := cdiff.DecodeIO(build, img, patch, max(capacity, 1), tablesSize, cfg)
-		if violation != "" {
-			t.Fatalf("callback decoder (%+v): %s", cfg, violation)
-		}
-		// A coded patch's features: bits 2-3 1 for a built-in table named by
-		// CRC (next two bytes), 2 for a shipped one.
-		coded := len(patch) >= 2 && (patch[0] == 0x81 || patch[0] == 0x82) && patch[1]&0xF0 == 0 && patch[1]&3 != 0
-		otherTable := coded && patch[1]>>2&3 == 1 && len(patch) >= 4 && uint16(patch[2])|uint16(patch[3])<<8 != buildRules.crc
-		shipped := coded && patch[1]>>2&3 == 2 && build == cdiff.Thumb
-		if otherTable || shipped {
-			if memRC == cdiff.OK || cbRC == cdiff.OK {
-				t.Fatalf("a patch with a table the C build doesn't take was accepted: memory %d, callback %d", memRC, cbRC)
+		for _, build := range builds {
+			mem, memRC := cdiff.Decode(build, img, patch, max(capacity, 1), tablesSize)
+			cb, cbRC, violation := cdiff.DecodeIO(build, img, patch, max(capacity, 1), tablesSize, cfg)
+			if violation != "" {
+				t.Fatalf("callback decoder (%+v): %s", cfg, violation)
 			}
-			return
-		}
-		if (goErr == nil) != (memRC == cdiff.OK) || (goErr == nil && !bytes.Equal(want, mem)) {
-			t.Fatalf("memory decoder: result %d, Go: %v (outputs equal: %v)", memRC, goErr, bytes.Equal(want, mem))
-		}
-		if (goErr == nil) != (cbRC == cdiff.OK) || (goErr == nil && !bytes.Equal(want, cb)) {
-			t.Fatalf("callback decoder (%+v): result %d, Go: %v (outputs equal: %v)", cfg, cbRC, goErr, bytes.Equal(want, cb))
+			// A coded patch's features: bits 2-3 1 for a built-in table named by
+			// CRC (next two bytes), 2 for a shipped one.
+			coded := len(patch) >= 2 && (patch[0] == 0x81 || patch[0] == 0x82) && patch[1]&0xF0 == 0 && patch[1]&3 != 0
+			otherTable := coded && patch[1]>>2&3 == 1 && len(patch) >= 4 && uint16(patch[2])|uint16(patch[3])<<8 != buildRules.crc
+			shipped := coded && patch[1]>>2&3 == 2 && build != cdiff.MSP430X
+			if otherTable || shipped {
+				if memRC == cdiff.OK || cbRC == cdiff.OK {
+					t.Fatalf("a patch with a table the C build doesn't take was accepted: memory %d, callback %d", memRC, cbRC)
+				}
+				continue
+			}
+			if (goErr == nil) != (memRC == cdiff.OK) || (goErr == nil && !bytes.Equal(want, mem)) {
+				t.Fatalf("memory decoder (C build %d): result %d, Go: %v (outputs equal: %v)", build, memRC, goErr, bytes.Equal(want, mem))
+			}
+			if (goErr == nil) != (cbRC == cdiff.OK) || (goErr == nil && !bytes.Equal(want, cb)) {
+				t.Fatalf("callback decoder (C build %d, %+v): result %d, Go: %v (outputs equal: %v)", build, cfg, cbRC, goErr, bytes.Equal(want, cb))
+			}
 		}
 		intact := len(damage) < 2 && capacity == len(target)
 		if intact && (goErr != nil || !bytes.Equal(want, target)) {

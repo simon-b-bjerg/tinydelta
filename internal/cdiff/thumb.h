@@ -4,7 +4,7 @@
 
 /* A second build of the C library in this package, as a Cortex-M device
  * would have it: the Thumb rules built in, no shipped tables. Its public
- * names get a thumb_ prefix so the two builds link side by side. */
+ * names get a thumb_ prefix so the builds link side by side. */
 #undef TINYDELTA_RELOC
 #undef TINYDELTA_RELOC_SHIPPED
 #define TINYDELTA_RELOC 1

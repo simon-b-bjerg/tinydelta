@@ -22,7 +22,8 @@
 #
 # Usage: scripts/c-cbmc.sh   (needs cbmc, goto-cc and goto-instrument, e.g.
 # apt install cbmc)
-# JOBS sets how many runs go in parallel (default: the number of CPUs).
+# JOBS sets how many runs go in parallel (default: the number of CPUs);
+# ONLY=text runs only the checks whose description contains text.
 set -euo pipefail
 cd "$(dirname "$0")/../c"
 JOBS="${JOBS:-$(nproc)}"
@@ -39,8 +40,10 @@ CHECKS="--bounds-check --pointer-check --pointer-overflow-check --signed-overflo
 MEMORY="-DDICT_MAX=4 -DPATCH_MAX=8 -DOUT_MAX=8 --unwind 10 cbmc/memory.c tinydelta_decode.c"
 IO="-DDICT_MAX=2 -DPATCH_MAX=4 -DOUT_MAX=4 --unwind 6 cbmc/io.c tinydelta_io.c tinydelta_decode.c"
 # The relocation step (cbmc/reloc_position.c), each loop bounded by the
-# tables: bit loops by the widest slice (16 bits), lists by MAX_RULES.
-RELOC="-DTINYDELTA_CODER=1 --unwind 2 --unwindset main.0:17,main.1:13,main.2:9,main.3:17,main.4:9,entry_shift.0:2,in_data.0:2,load_le32.0:5,first_rule.0:17,first_rule.1:65,rule_addr.0:5,rule_addr.1:3,matches.0:5,matches.1:5,join.0:17,join.1:7,split.0:17,split.1:7,split.2:3,starts.0:17,starts.1:17,starts.2:17,excluded.0:5,excluded.1:3,move_at.0:3 cbmc/reloc_position.c"
+# tables: bit loops by the widest slice (16 bits); the generated matcher
+# is asked again only after a require rule turns its match down (at most
+# one such rule per list here: two passes).
+RELOC="-DTINYDELTA_CODER=1 --unwind 2 --unwindset main.0:17,main.1:13,main.2:9,main.3:17,main.4:9,entry_shift.0:2,in_data.0:2,load_le32.0:5,first_rule.0:17,first_rule.1:3,rule_addr.0:5,rule_addr.1:3,join.0:17,join.1:7,join.2:5,split.0:17,split.1:7,split.2:3,starts.0:17,starts.1:17,starts.2:17,excluded.0:5,excluded.1:3,move_at.0:3 cbmc/reloc_position.c"
 runs="$(cat <<EOF
 memory decoder (dictionary <= 4, patch <= 8, output <= 8)|$MEMORY
 coder, one byte from any state|-DTINYDELTA_CODER=1 --unwind 10 --unwindset main.0:1290,coder_bit.0:4 cbmc/coder.c tinydelta_coder.c
@@ -66,6 +69,11 @@ EOF
 for p in $(seq 0 15); do
   runs+=$'\n'"relocation, MSP430X built in: one data step at $p, image <= 16, any length_at|$RELOC -DTINYDELTA_RELOC=2 -DIMAGE_MAX=16 -DDATA_RUNS=1 -DPOSITION=$p REMOVE=length_at"
 done
+
+# ONLY=text runs just the checks whose description contains it.
+if [ -n "${ONLY:-}" ]; then
+  runs="$(echo "$runs" | grep -F -- "$ONLY")"
+fi
 
 logs="$(mktemp -d)"
 check() { # "description|arguments"

@@ -3,8 +3,9 @@
 
 // Package cdiff links the C library (c/) into Go tests through cgo, so the
 // Go fuzzers can compare the Go and C decoders in the same process. It
-// links two builds (Build): MSP430X built in with shipped tables accepted,
-// and Thumb built in only, as a Cortex-M device has it. It is
+// links three builds (Build): MSP430X built in with shipped tables accepted
+// (the table interpreted), and Thumb or MSP430X built in only, as a device
+// has it (the rules matched by code generated with the table). It is
 // built only with cgo; without it the package is empty and Available is
 // false.
 //
