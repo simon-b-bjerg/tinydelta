@@ -2,7 +2,8 @@
 ; SPDX-License-Identifier: MIT
 ;
 ; The MSP430 EABI helpers clang calls (no libgcc for clang): 16- and
-; 32-bit shifts and multiplies, a bit at a time, as small as they come.
+; 32-bit shifts, a bit at a time (MSP430 has no barrel shifter), and
+; multiplies on the hardware multiplier.
         .text
         .global __mspabi_slll
 __mspabi_slll:  ; r13:r12 <<= r14
@@ -57,42 +58,26 @@ __mspabi_srai:
         dec r13
         jnz 1b
 2:      ret
+; Multiplies on the hardware multiplier (MPY 0x130, OP2 0x138, RESLO 0x13A,
+; RESHI 0x13C), as the MSP430s with one have it and mspdebug's simulator
+; emulates (simio add hwmult).
         .global __mspabi_mpyi   ; r12 *= r13
 __mspabi_mpyi:
-        mov r12, r14
-        clr r12
-1:      tst r13
-        jz 2f
-        bit #1, r13
-        jz 3f
-        add r14, r12
-3:      rla r14
-        clrc
-        rrc r13
-        jmp 1b
-2:      ret
-        .global __mspabi_mpyl   ; r13:r12 *= r15:r14
+        mov r12, &0x0130
+        mov r13, &0x0138
+        mov &0x013A, r12
+        ret
+        .global __mspabi_mpyl   ; r13:r12 *= r15:r14, the low 32 bits
 __mspabi_mpyl:
-        push r8
-        push r10
-        mov r12, r10
-        mov r13, r11
-        clr r12
-        clr r13
-1:      mov r14, r8
-        bis r15, r8
-        tst r8
-        jz 2f
-        bit #1, r14
-        jz 3f
-        add r10, r12
-        addc r11, r13
-3:      rla r10
-        rlc r11
-        clrc
-        rrc r15
-        rrc r14
-        jmp 1b
-2:      pop r10
-        pop r8
+        mov r12, &0x0130        ; aL * bH
+        mov r15, &0x0138
+        mov &0x013A, r11
+        mov r13, &0x0130        ; + aH * bL
+        mov r14, &0x0138
+        add &0x013A, r11
+        mov r12, &0x0130        ; aL * bL, the cross terms into its high half
+        mov r14, &0x0138
+        mov &0x013A, r12
+        mov &0x013C, r13
+        add r11, r13
         ret

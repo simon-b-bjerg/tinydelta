@@ -15,8 +15,10 @@ the target and checks the result.
   MSP430                MSP430 CC (default msp430-elf-gcc; clang works
                         too) -Os for classic MSP430, run in mspdebug's
                         simulator: exact cycles, the run's less a run that
-                        skips the decode. MSP430X -mlarge code is somewhat
-                        larger and slower.
+                        skips the decode, with a 16-bit hardware multiplier
+                        (most MSP430s have one; without, the coder's
+                        multiplies cost far more). MSP430X -mlarge code is
+                        somewhat larger and slower.
 
 Usage: scripts/c-time.py arm|msp430 [inputs dir]   (default: generate them)
 Needs: arm: arm-none-eabi-gcc, python3 unicorn (pip install unicorn).
@@ -151,7 +153,7 @@ def time_arm(directory):
 LAST_OUTPUT = ""
 
 def msp430_cycles(elf):
-    out = subprocess.run(["mspdebug", "-q", "sim", f"prog {elf}", "simio add tracer t", "step 1000000000", "md timing_result 2", "simio info t"],
+    out = subprocess.run(["mspdebug", "-q", "sim", f"prog {elf}", "simio add tracer t", "simio add hwmult m", "step 1000000000", "md timing_result 2", "simio info t"],
                          stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=3600).stdout
     globals()["LAST_OUTPUT"] = out
     result = re.search(r"^\s*[0-9a-f]+: ([0-9a-f]{2}) ([0-9a-f]{2})\s+\|", out, re.M)  # md's dump line, not the disassembly
@@ -168,7 +170,7 @@ def time_msp430(directory):
     if clang:  # no C library headers nor link driver: a string.h, our helpers, binutils' linker
         flags = ["--target=msp430", "-ffreestanding", "-fno-builtin", "-I", os.path.join(T_DIR, "clang")]
     else:
-        flags = ["-mcpu=msp430", "-ffreestanding"]
+        flags = ["-mcpu=msp430", "-mhwmult=16bit", "-ffreestanding"]
     rows = []
     with tempfile.TemporaryDirectory() as out:
         for arch, prefix, reloc in ARCHES:
@@ -198,7 +200,7 @@ def time_msp430(directory):
         print(f"| {name} | {n:,} | {n / size[name.split()[0]]:,.0f} | {n / 8e6 * 1000:,.0f} ms |")
     version = run([cc, "--version"]).splitlines()[0]
     print(f"\n{version}, `-Os`, classic MSP430 (16-bit addresses); exact cycles in mspdebug's simulator, "
-          "the run's less a run without the decode. MSP430X `-mlarge` code takes somewhat more.")
+          "the run's less a run without the decode; with a hardware multiplier. MSP430X `-mlarge` code takes somewhat more.")
 
 
 def old_size(directory):

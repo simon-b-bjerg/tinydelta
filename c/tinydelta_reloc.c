@@ -85,6 +85,15 @@ typedef struct {
     uint8_t units[SYNC_SLOTS]; /* units[i]: the length, in units, at next - (i + 1) units; 0 before position 0 */
 } sync_t;
 
+/* With the built-in table only, a generated filter (tinydelta rules
+ * compile): per rule, the top 4 bits of word 0 its conditions allow, so a
+ * rule that can't match there isn't tried. Not part of the table. */
+#if !TINYDELTA_RELOC_SHIPPED && defined(TINYDELTA_RELOC_RULES_FIRSTS)
+#define NIBBLE_FILTER 1
+#else
+#define NIBBLE_FILTER 0
+#endif
+
 /* The image's bytes at a position, as far as a rule reaches (fewer near the
  * image's end): read once, then checked against every rule of a list. */
 #if TINYDELTA_RELOC_SHIPPED
@@ -592,27 +601,28 @@ static uint32_t bit_byte(const tinydelta_reloc_t *p_reloc, uint32_t p, small_t w
 }
 
 /* An address's value at p (p_addr: its slices, most significant first),
- * gathered bit by bit (shifts by one only: cheap on 16-bit cores); its
- * width in *p_bits. */
+ * each slice taken from its word with one shift and mask; its width in
+ * *p_bits. */
 static uint32_t join(const tinydelta_reloc_t *p_reloc, const uint8_t *p_addr, uint32_t p, small_t *p_bits) {
     uint32_t value = 0u;
 
     *p_bits = 0u;
     for (small_t index = *p_addr; index > 0u; index--) {
-        small_t x = p_addr[1];
-        small_t y = p_addr[2];
+        small_t x     = p_addr[1];
+        small_t y     = p_addr[2];
+        small_t width = (y & 0x7Fu) + 1u;
+        uint32_t part = x; /* fixed bits: their value */
 
-        for (small_t bit = (y & 0x7Fu) + 1u; bit > 0u; bit--) { /* from the slice's most significant bit */
-            small_t one = (x >> (bit - 1u)) & 1u;               /* fixed bits: their value */
+        if ((y & SLICE_FIXED) == 0u) {
+            uint32_t word = 0u;
 
-            if ((y & SLICE_FIXED) == 0u) {
-                small_t at = (x & 0x1Fu) + (bit - 1u);
-
-                one = ((small_t)raw_byte(p_reloc, bit_byte(p_reloc, p, x >> 5, at)) >> (at & 7u)) & 1u; /* Cast: widens. */
+            for (small_t byte = word_bytes_of(p_reloc); byte > 0u; byte--) { /* from the most significant */
+                word = (word << 8) | raw_byte(p_reloc, bit_byte(p_reloc, p, x >> 5, (byte - 1u) << 3));
             }
-            value = (value << 1) | one;
+            part = (word >> (x & 0x1Fu)) & low_mask(width);
         }
-        *p_bits += (y & 0x7Fu) + 1u;
+        value = (width >= 32u) ? part : ((value << width) | part); /* a 32-bit slice is the whole address */
+        *p_bits += width;
         p_addr += 2u;
     }
     return value;
@@ -664,14 +674,35 @@ static const uint8_t *first_rule(const tinydelta_reloc_t *p_reloc, small_t list,
     const uint8_t *p_rule = p_reloc->p_rules + list_start_of(p_reloc, list);
     window_t window;
 
-    for (window.count = 0u; (window.count <= reach_of(p_reloc)) && inside(p_reloc, p, window.count + 1u); window.count++) {
-        window.bytes[window.count] = raw_byte(p_reloc, p + window.count);
+    /* reach + 1 bytes, or to the image's end (p is inside it, or nothing matches: count 0). */
+    window.count = (p < p_reloc->dict_len) ? (((p_reloc->dict_len - p) > reach_of(p_reloc)) ? (reach_of(p_reloc) + 1u) : (small_t)(p_reloc->dict_len - p))
+                                           : 0u; /* Cast: at most reach. */
+    for (small_t index = 0u; index < window.count; index++) {
+        window.bytes[index] = (p_reloc->p_dict != NULL) ? p_reloc->p_dict[p + index] : p_reloc->raw(p_reloc->p_raw_ctx, p + index);
     }
+
+#if NIBBLE_FILTER
+    static const uint8_t firsts[TINYDELTA_RULE_LISTS] = TINYDELTA_RELOC_RULES_FIRSTS;
+    const uint16_t *p_top                             = &tinydelta_reloc_nibbles_top[firsts[list]];
+    const uint16_t *p_low                             = &tinydelta_reloc_nibbles_low[firsts[list]];
+    /* Word 0's top nibble and bits 7-4, as one bit each (all, if word 0 isn't in the window: then only rules without conditions on it can match). */
+    small_t top                                       = 0xFFFFu;
+    small_t low                                       = 0xFFFFu;
+
+    if (window.count >= TINYDELTA_RELOC_RULES_WORD) {
+        top = (small_t)1u << (window.bytes[(TINYDELTA_RELOC_RULES_BIG != 0) ? 0u : (TINYDELTA_RELOC_RULES_WORD - 1u)] >> 4);
+        low = (small_t)1u << (window.bytes[(TINYDELTA_RELOC_RULES_BIG != 0) ? (TINYDELTA_RELOC_RULES_WORD - 1u) : 0u] >> 4);
+    }
+#endif
 
     for (small_t index = 0u; index < list_count_of(p_reloc, list); index++) {
         small_t bits;
 
-        if (matches(p_reloc, p_rule, p, &window) && ((list >= LIST_CODE) || inside(p_reloc, p, word_bytes_of(p_reloc))) &&
+        if (
+#if NIBBLE_FILTER
+            ((p_top[index] & top) != 0u) && ((p_low[index] & low) != 0u) &&
+#endif
+            matches(p_reloc, p_rule, p, &window) && ((list >= LIST_CODE) || inside(p_reloc, p, word_bytes_of(p_reloc))) &&
             (!uses(FEATURE_REQUIRE) || ((RULE_FLAGS(p_rule) & FLAG_REQUIRE) == 0u) ||
              (inside(p_reloc, p, RULE_N(p_rule)) && in_image(p_reloc, join(p_reloc, rule_addr(p_reloc, p_rule, 0u), p, &bits))))) {
             *p_index = index;

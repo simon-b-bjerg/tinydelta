@@ -207,6 +207,42 @@ func (r *Rules) CHeader(source string) string {
 		}
 	}
 	fmt.Fprintf(&b, "#define TINYDELTA_RELOC_RULES_FEATURES %du\n", features)
+	// A filter for the C engine, not part of the table: per rule (in table
+	// order), the values of two nibbles of word 0 its conditions allow, its
+	// top 4 bits (an opcode, typically) and bits 7-4 (MSP430: the
+	// addressing modes), so a rule isn't tried where one of its conditions
+	// on word 0 must fail.
+	if n := len(r.lists[0]) + len(r.lists[1]) + len(r.lists[2]) + len(r.lists[3]); n > 0 {
+		nibbleMasks := func(shift uint) []string {
+			var masks []string
+			for l := range r.lists {
+				for _, ru := range r.lists[l] {
+					mask := 0
+					for nib := uint32(0); nib < 16; nib++ {
+						ok := true
+						for _, c := range ru.conds {
+							if c.word == 0 && !c.neg && (nib<<shift)&c.mask&(0xF<<shift) != c.value&c.mask&(0xF<<shift) {
+								ok = false
+							}
+						}
+						if ok {
+							mask |= 1 << nib
+						}
+					}
+					masks = append(masks, fmt.Sprintf("0x%04Xu", mask))
+				}
+			}
+			return masks
+		}
+		firsts, first := []string{}, 0
+		for l := range r.lists {
+			firsts = append(firsts, fmt.Sprintf("%du", first))
+			first += len(r.lists[l])
+		}
+		fmt.Fprintf(&b, "#define TINYDELTA_RELOC_RULES_FIRSTS {%s}\n", strings.Join(firsts, ", "))
+		fmt.Fprintf(&b, "static const uint16_t tinydelta_reloc_nibbles_top[%d] = {%s};\n", n, strings.Join(nibbleMasks(uint(r.wordBytes*8-4)), ","))
+		fmt.Fprintf(&b, "static const uint16_t tinydelta_reloc_nibbles_low[%d] = {%s};\n", n, strings.Join(nibbleMasks(4), ","))
+	}
 	fmt.Fprintf(&b, "static const uint8_t tinydelta_reloc_rules[TINYDELTA_RELOC_RULES_SIZE] = {")
 	for i, c := range r.table {
 		if i%16 == 0 {
