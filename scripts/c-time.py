@@ -185,7 +185,7 @@ def time_msp430(directory):
                     if clang:
                         run(["msp430-ld", "-T", os.path.join(T_DIR, "msp430.ld"), *objs, "-o", elf])
                     else:
-                        run([cc, "-nostdlib", "-nostartfiles", "-T", os.path.join(T_DIR, "msp430.ld"), *objs, "-lgcc", "-o", elf])
+                        run([cc, *flags, "-nostdlib", "-nostartfiles", "-T", os.path.join(T_DIR, "msp430.ld"), *objs, "-lgcc", "-o", elf])  # flags: libgcc for MSP430, not MSP430X
                     result, n = msp430_cycles(elf)
                     if result != 0:
                         sys.exit(f"{elf}: decode failed ({result})\n{LAST_OUTPUT[-1500:]}")
